@@ -1,0 +1,82 @@
+# Build directories
+build/
+build-*/
+out/
+cmake-build-*/
+
+# CMake generated
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+install_manifest.txt
+*.cmake
+!CMakeLists.txt
+
+# Compiled SPIR-V shaders
+*.spv
+
+# Compiled objects and binaries
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Visual Studio
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# CLion
+.idea/
+cmake-build-debug/
+cmake-build-release/
+
+# vcpkg
+vcpkg_installed/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Logs
+*.log
+
+# Editor backups
+*.orig
+*.bak
+*.swp
+*.swo
+*#
+
+# Packaging
+*.tar.gz
+*.zip
+*.7z

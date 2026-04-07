@@ -1,0 +1,24 @@
+{
+  "name": "chiselcad",
+  "version": "0.1.0",
+  "description": "A fast, precise, GPU-accelerated CSG modeler with OpenSCAD-compatible syntax",
+  "dependencies": [
+    "vulkan",
+    "vulkan-memory-allocator",
+    "glfw3",
+    {
+      "name": "imgui",
+      "features": [
+        "vulkan-binding",
+        "glfw-binding",
+        "docking-experimental"
+      ]
+    },
+    "glm",
+    "manifold",
+    "embree3",
+    "spdlog",
+    "nlohmann-json",
+    "imguicolortextedit"
+  ]
+}
