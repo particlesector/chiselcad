@@ -13,7 +13,7 @@ to be merged.
 ## Getting the Code
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/chiselcad.git
+git clone https://github.com/particlesector/chiselcad.git
 cd chiselcad
 git submodule update --init --recursive
 ```

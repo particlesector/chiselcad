@@ -282,6 +282,14 @@ struct TessParams {
 };
 ```
 
+> **Design note — `$fn`/`$fs`/`$fa` scoping:** In OpenSCAD these are *special variables*
+> that cascade lexically through the tree (a child can override them for its subtree,
+> e.g. `sphere($fn = 64)`). In v1, `TessParams` is resolved globally from the top-level
+> values. Per-node overrides are **not** supported yet. The tessellator interface is
+> intentionally designed to accept `TessParams` by value so that per-node scoping can be
+> added later without changing call sites — the evaluator will simply pass a locally
+> modified copy when it encounters a `$fn`/`$fs`/`$fa` argument.
+
 - **Cube:** 12 triangles (2 per face)
 - **Sphere:** UV sphere, segment count resolved from `TessParams`
 - **Cylinder:** Triangle fan caps, resolved segment count for radial edges

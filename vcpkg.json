@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "A fast, precise, GPU-accelerated CSG modeler with OpenSCAD-compatible syntax",
   "dependencies": [
-    "vulkan",
     "vulkan-memory-allocator",
     "glfw3",
     {
@@ -16,9 +15,8 @@
     },
     "glm",
     "manifold",
-    "embree3",
     "spdlog",
     "nlohmann-json",
-    "imguicolortextedit"
+    "catch2"
   ]
 }

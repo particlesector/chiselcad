@@ -1,0 +1,9 @@
+# Normalize line endings to LF in the repo; checkout as-is on all platforms
+* text=auto eol=lf
+
+# Force binary for compiled outputs
+*.spv binary
+*.exe binary
+*.dll binary
+*.lib binary
+*.pdb binary

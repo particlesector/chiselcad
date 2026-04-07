@@ -28,21 +28,14 @@ find_package(glfw3 REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(manifold CONFIG REQUIRED)
-find_package(embree 3 REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-
-# VMA is header-only, often needs manual include path from vcpkg
-find_path(VMA_INCLUDE_DIR vk_mem_alloc.h)
-
-# ImGuiColorTextEdit — may need manual integration if not in vcpkg
-# Adjust this path if using FetchContent or a submodule instead
-find_path(IMGUICOLORTEXTEDIT_INCLUDE_DIR TextEditor.h)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 
 # ============================================================
 # Shader compilation (GLSL → SPIR-V)
 # ============================================================
-find_program(GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES bin)
+find_program(GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES bin REQUIRED)
 
 set(SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/render/shaders")
 set(SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
@@ -95,8 +88,7 @@ set(CHISELCAD_SOURCES
     src/app/Application.cpp
     src/app/Config.cpp
 
-    # Editor
-    src/editor/EditorPanel.cpp
+    # Editor (external editor + file watcher only; no embedded editor in v1)
     src/editor/ExternalEditor.cpp
     src/editor/DiagnosticsPanel.cpp
     ${PLATFORM_SOURCES}
@@ -126,24 +118,22 @@ set(CHISELCAD_SOURCES
 )
 
 # ============================================================
-# Target
+# Main target
 # ============================================================
 add_executable(chiselcad ${CHISELCAD_SOURCES})
 add_dependencies(chiselcad chiselcad_shaders)
 
 target_include_directories(chiselcad PRIVATE
     src/
-    ${VMA_INCLUDE_DIR}
-    ${IMGUICOLORTEXTEDIT_INCLUDE_DIR}
 )
 
 target_link_libraries(chiselcad PRIVATE
     Vulkan::Vulkan
+    GPUOpen::VulkanMemoryAllocator
     glfw
     imgui::imgui
     glm::glm
     manifold::manifold
-    embree
     spdlog::spdlog
     nlohmann_json::nlohmann_json
 )
@@ -164,6 +154,35 @@ target_compile_definitions(chiselcad PRIVATE
     CHISELCAD_SHADER_DIR="${SHADER_BINARY_DIR}/"
     CHISELCAD_VERSION="${PROJECT_VERSION}"
 )
+
+# ============================================================
+# Tests (Catch2)
+# ============================================================
+enable_testing()
+find_package(Catch2 CONFIG REQUIRED)
+
+set(CHISELCAD_TEST_SOURCES
+    tests/test_main.cpp
+)
+
+add_executable(chiselcad_tests ${CHISELCAD_TEST_SOURCES})
+
+target_include_directories(chiselcad_tests PRIVATE src/)
+
+target_link_libraries(chiselcad_tests PRIVATE
+    Catch2::Catch2WithMain
+    glm::glm
+    spdlog::spdlog
+)
+
+if(MSVC)
+    target_compile_options(chiselcad_tests PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(chiselcad_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+include(Catch)
+catch_discover_tests(chiselcad_tests)
 
 # ============================================================
 # Install
