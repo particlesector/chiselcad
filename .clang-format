@@ -1,0 +1,46 @@
+BasedOnStyle: LLVM
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# Braces
+BreakBeforeBraces: Attach
+BraceWrapping:
+  AfterFunction: false
+
+# Short forms
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: Inline
+
+# Includes
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Project headers (quoted)
+  - Regex: '^"'
+    Priority: 1
+  # System / third-party (angle-bracket)
+  - Regex: '^<'
+    Priority: 2
+
+# Alignment
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+
+# Pointers and references
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Namespaces
+NamespaceIndentation: None
+CompactNamespaces: false
+
+# Template
+AlwaysBreakTemplateDeclarations: Yes
+
+# C++20
+Standard: c++20
