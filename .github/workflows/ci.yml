@@ -8,6 +8,10 @@ on:
     branches:
       - main
 
+env:
+  # Enable vcpkg binary caching via GitHub Actions cache
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
 jobs:
   # ──────────────────────────────────────────────
   # Windows (primary platform)
@@ -18,6 +22,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Export vcpkg binary cache credentials
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Install Vulkan SDK
         uses: jakoch/install-vulkan-sdk-action@v1.0.0
@@ -54,16 +65,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-
-      - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.0.0
+      - name: Export vcpkg binary cache credentials
+        uses: actions/github-script@v7
         with:
-          vulkan_version: 1.3.290.0
-          install_runtime: true
-          cache: true
-          stripdown: true
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Install Vulkan SDK and build tools
+        run: |
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+          sudo apt-get update
+          sudo apt-get install -y vulkan-sdk ninja-build
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
