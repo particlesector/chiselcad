@@ -39,6 +39,8 @@ jobs:
           key: vcpkg-windows-x64-${{ hashFiles('vcpkg.json') }}-57987637
 
       - name: Configure CMake
+        env:
+          VCPKG_BINARY_SOURCES: "clear"
         run: >
           cmake -B build
           -G "Visual Studio 17 2022" -A x64
@@ -88,6 +90,8 @@ jobs:
           key: vcpkg-linux-x64-${{ hashFiles('vcpkg.json') }}-57987637
 
       - name: Configure CMake
+        env:
+          VCPKG_BINARY_SOURCES: "clear"
         run: >
           cmake -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
