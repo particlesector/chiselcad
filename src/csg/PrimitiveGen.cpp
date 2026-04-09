@@ -23,7 +23,7 @@ int PrimitiveGen::resolveSegments(double r, double fnOverride) const {
         return std::max(3, static_cast<int>(std::round(fn)));
 
     double byAngle = (globalFa > 0.0) ? 360.0 / globalFa : 360.0;
-    double bySize  = (globalFs > 0.0 && r > 0.0) ? (2.0 * M_PI * r / globalFs) : byAngle;
+    double bySize  = (globalFs > 0.0 && r > 0.0) ? (2.0 * 3.14159265358979323846 * r / globalFs) : byAngle;
     int segs = static_cast<int>(std::ceil(std::min(byAngle, bySize)));
     return std::max(segs, 5);
 }

@@ -1,7 +1,10 @@
 #include "MeshEvaluator.h"
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <cstdio>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace chisel::csg {
 
@@ -46,15 +49,17 @@ static std::string leafKey(const CsgLeaf& leaf) {
 }
 
 // ---------------------------------------------------------------------------
-// toAffine: glm::mat4 → glm::mat4x3 (the type Manifold::Transform expects).
-// Drops the homogeneous bottom row (always [0,0,0,1] for our transforms).
+// toAffine: glm::mat4 → manifold::mat3x4
+// Manifold::Transform expects manifold's own linalg type (mat3x4 = 3 rows,
+// 4 columns, column-major), not glm::mat4x3. We copy element-by-element to
+// avoid any type punning. The homogeneous bottom row is dropped.
 // ---------------------------------------------------------------------------
-static glm::mat4x3 toAffine(const glm::mat4& m) {
-    return glm::mat4x3(
-        glm::vec3(m[0]),
-        glm::vec3(m[1]),
-        glm::vec3(m[2]),
-        glm::vec3(m[3]));
+static manifold::mat3x4 toAffine(const glm::mat4& m) {
+    manifold::mat3x4 r;
+    for (int col = 0; col < 4; ++col)
+        for (int row = 0; row < 3; ++row)
+            r[col][row] = m[col][row];
+    return r;
 }
 
 // ---------------------------------------------------------------------------
