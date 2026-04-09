@@ -164,9 +164,11 @@ find_package(Catch2 CONFIG REQUIRED)
 set(CHISELCAD_TEST_SOURCES
     tests/test_main.cpp
     tests/test_lexer.cpp
+    tests/test_parser.cpp
 
     # Lang sources under test (no GPU deps — link directly)
     src/lang/Lexer.cpp
+    src/lang/Parser.cpp
 )
 
 add_executable(chiselcad_tests ${CHISELCAD_TEST_SOURCES})
