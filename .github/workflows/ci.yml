@@ -19,13 +19,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.0.0
+      - name: Cache Vulkan SDK
+        id: vulkan-cache
+        uses: actions/cache@v4
         with:
-          vulkan_version: 1.3.290.0
-          install_runtime: true
-          cache: false
-          stripdown: false
+          path: C:\VulkanSDK
+          key: vulkan-sdk-windows-1.3.290.0
+
+      - name: Install Vulkan SDK
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $version = "1.3.290.0"
+          Write-Host "Downloading Vulkan SDK $version..."
+          Invoke-WebRequest `
+            -Uri "https://sdk.lunarg.com/sdk/download/$version/windows/VulkanSDK-$version-Installer.exe" `
+            -OutFile "$env:TEMP\VulkanSDK-Installer.exe"
+          Write-Host "Installing (silent)..."
+          $p = Start-Process "$env:TEMP\VulkanSDK-Installer.exe" `
+            -ArgumentList "--accept-licenses","--accept-messages","--confirm-command","install" `
+            -Wait -PassThru
+          Write-Host "Installer exit code: $($p.ExitCode)"
+
+      - name: Set Vulkan SDK environment
+        shell: pwsh
+        run: |
+          $version = "1.3.290.0"
+          echo "VULKAN_SDK=C:\VulkanSDK\$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "C:\VulkanSDK\$version\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
