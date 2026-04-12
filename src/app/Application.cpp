@@ -10,6 +10,14 @@
 
 namespace chisel::app {
 
+// Formats an integer with comma thousands separators, e.g. 47024 → "47,024"
+static std::string formatCount(uint32_t n) {
+    std::string s = std::to_string(n);
+    int i = static_cast<int>(s.size()) - 3;
+    while (i > 0) { s.insert(static_cast<size_t>(i), ","); i -= 3; }
+    return s;
+}
+
 // ---------------------------------------------------------------------------
 // ctor / dtor
 // ---------------------------------------------------------------------------
@@ -199,11 +207,11 @@ void Application::drawImGui() {
             ImGui::Text("%s Converting...", kSpinner[spinIdx]);
             break;
         case BuildPhase::Done:
-            ImGui::TextColored({0.5f, 1.0f, 0.5f, 1.0f}, "Ready");
-            ImGui::SameLine();
-            ImGui::Text("%u tris  %.2fs",
-                m_meshBuilder.lastTriCount(),
+            ImGui::TextColored({0.5f, 1.0f, 0.5f, 1.0f}, "Render: %.3fs",
                 m_meshBuilder.elapsedMs() / 1000.0);
+            ImGui::Text("%s facets | %s vertices",
+                formatCount(m_meshBuilder.lastTriCount()).c_str(),
+                formatCount(m_meshBuilder.lastVertCount()).c_str());
             break;
         case BuildPhase::Error:
             ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f},

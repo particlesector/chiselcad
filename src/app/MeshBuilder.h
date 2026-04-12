@@ -26,9 +26,10 @@ struct BuildResult {
     std::vector<render::Vertex>  verts;
     std::vector<uint32_t>        indices;
     lang::DiagList               diags;
-    std::string                  errorMsg;   // empty = success
-    uint32_t                     triCount  = 0;
-    double                       elapsedMs = 0.0;
+    std::string                  errorMsg;    // empty = success
+    uint32_t                     triCount   = 0;
+    uint32_t                     vertCount  = 0;  // unique verts from Manifold mesh
+    double                       elapsedMs  = 0.0;
 };
 
 // ---------------------------------------------------------------------------
@@ -57,9 +58,10 @@ public:
     // discarded and nullptr is returned.
     std::unique_ptr<BuildResult> poll();
 
-    BuildPhase phase()         const noexcept { return m_phase.load(); }
-    double     elapsedMs()     const noexcept { return m_elapsedMs.load(); }
-    uint32_t   lastTriCount()  const noexcept { return m_lastTriCount.load(); }
+    BuildPhase phase()          const noexcept { return m_phase.load(); }
+    double     elapsedMs()      const noexcept { return m_elapsedMs.load(); }
+    uint32_t   lastTriCount()   const noexcept { return m_lastTriCount.load(); }
+    uint32_t   lastVertCount()  const noexcept { return m_lastVertCount.load(); }
 
 private:
     void workerLoop();
@@ -82,6 +84,7 @@ private:
     std::atomic<BuildPhase> m_phase{BuildPhase::Idle};
     std::atomic<double>     m_elapsedMs{0.0};
     std::atomic<uint32_t>   m_lastTriCount{0};
+    std::atomic<uint32_t>   m_lastVertCount{0};
 
     // Finished result — written by worker, consumed by poll().
     std::mutex                   m_resultMutex;
