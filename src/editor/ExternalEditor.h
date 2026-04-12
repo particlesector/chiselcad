@@ -1,3 +1,10 @@
 #pragma once
-// ChiselCAD — ExternalEditor: "Open in VS Code" + file sync
-// Stub: to be implemented
+#include <filesystem>
+#include <string>
+
+namespace chisel::editor {
+
+// Opens the given file in the system's default editor (or VS Code if available).
+void openInExternalEditor(const std::filesystem::path& path);
+
+} // namespace chisel::editor
