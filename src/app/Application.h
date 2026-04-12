@@ -1,6 +1,7 @@
 #pragma once
 #include "AppState.h"
 #include "Config.h"
+#include "MeshBuilder.h"
 #include "editor/DiagnosticsPanel.h"
 #include "editor/FileWatcher.h"
 #include "render/Camera.h"
@@ -34,7 +35,6 @@ private:
     void shutdownImGui();
 
     void onFileChanged(const std::filesystem::path& path);
-    void rebuildMesh();
 
     void drawImGui();
 
@@ -56,8 +56,9 @@ private:
     render::Renderer                   m_renderer;
     render::Camera                     m_camera;
 
+    MeshBuilder                          m_meshBuilder;
     std::unique_ptr<editor::FileWatcher> m_watcher;
-    editor::DiagnosticsPanel           m_diagPanel;
+    editor::DiagnosticsPanel             m_diagPanel;
 
     VkDescriptorPool                   m_imguiPool   = VK_NULL_HANDLE;
 };

@@ -87,6 +87,7 @@ set(CHISELCAD_SOURCES
     # App
     src/app/Application.cpp
     src/app/Config.cpp
+    src/app/MeshBuilder.cpp
 
     # Editor (external editor + file watcher only; no embedded editor in v1)
     src/editor/ExternalEditor.cpp

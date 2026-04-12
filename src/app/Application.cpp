@@ -1,65 +1,14 @@
 #include "Application.h"
-#include "csg/CsgEvaluator.h"
-#include "csg/MeshCache.h"
-#include "csg/MeshEvaluator.h"
-#include "lang/Lexer.h"
-#include "lang/Parser.h"
-#include "render/GpuMesh.h"
 #include <GLFW/glfw3.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <imgui.h>
-#include <manifold/manifold.h>
 #include <spdlog/spdlog.h>
 #include <array>
-#include <fstream>
-#include <glm/glm.hpp>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 namespace chisel::app {
-
-// ---------------------------------------------------------------------------
-// Manifold → flat-shaded vertex/index soup
-// ---------------------------------------------------------------------------
-static void manifoldToMesh(const manifold::Manifold& m,
-                            std::vector<render::Vertex>& verts,
-                            std::vector<uint32_t>& indices)
-{
-    verts.clear();
-    indices.clear();
-
-    auto mesh = m.GetMeshGL();
-    // mesh.numProp == 3 (x,y,z per vertex)
-    size_t triCount = mesh.triVerts.size() / 3;
-    verts.reserve(triCount * 3);
-    indices.reserve(triCount * 3);
-
-    for (size_t t = 0; t < triCount; ++t) {
-        uint32_t i0 = mesh.triVerts[t * 3 + 0];
-        uint32_t i1 = mesh.triVerts[t * 3 + 1];
-        uint32_t i2 = mesh.triVerts[t * 3 + 2];
-
-        auto vp = [&](uint32_t i) {
-            return glm::vec3(
-                mesh.vertProperties[i * mesh.numProp + 0],
-                mesh.vertProperties[i * mesh.numProp + 1],
-                mesh.vertProperties[i * mesh.numProp + 2]);
-        };
-
-        glm::vec3 p0 = vp(i0), p1 = vp(i1), p2 = vp(i2);
-        glm::vec3 n  = glm::normalize(glm::cross(p1 - p0, p2 - p0));
-
-        uint32_t base = static_cast<uint32_t>(verts.size());
-        verts.push_back({p0, n});
-        verts.push_back({p1, n});
-        verts.push_back({p2, n});
-        indices.push_back(base);
-        indices.push_back(base + 1);
-        indices.push_back(base + 2);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // ctor / dtor
@@ -97,12 +46,23 @@ void Application::run() {
         m_state.scadPath,
         [this](const auto& p) { onFileChanged(p); });
 
+    // Kick off the initial build
+    m_meshBuilder.requestBuild(m_state.scadPath);
+
     while (!glfwWindowShouldClose(m_window) && m_state.running) {
         glfwPollEvents();
         m_watcher->poll();
 
+        // Request a new async build if the file changed
         if (m_state.meshDirty.exchange(false))
-            rebuildMesh();
+            m_meshBuilder.requestBuild(m_state.scadPath);
+
+        // Upload finished mesh on the main (Vulkan) thread
+        if (auto result = m_meshBuilder.poll()) {
+            m_diagPanel.setDiagnostics(result->diags);
+            if (!result->verts.empty())
+                m_renderer.uploadMesh(m_ctx, m_vma, result->verts, result->indices);
+        }
 
         int w = 0, h = 0;
         glfwGetFramebufferSize(m_window, &w, &h);
@@ -123,9 +83,8 @@ void Application::run() {
             m_ctx, m_swapchain, m_pipeline, m_camera,
             static_cast<uint32_t>(w), static_cast<uint32_t>(h));
 
-        if (!ok) {
+        if (!ok)
             m_swapchain.recreate(m_ctx, static_cast<uint32_t>(w), static_cast<uint32_t>(h));
-        }
     }
 
     vkDeviceWaitIdle(m_ctx.device());
@@ -159,7 +118,6 @@ void Application::initVulkan() {
 }
 
 void Application::initImGui() {
-    // Descriptor pool for ImGui
     std::array<VkDescriptorPoolSize, 1> poolSizes{{
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16}
     }};
@@ -203,63 +161,56 @@ void Application::shutdownImGui() {
 }
 
 // ---------------------------------------------------------------------------
-// File change + mesh rebuild
+// File change
 // ---------------------------------------------------------------------------
 void Application::onFileChanged(const std::filesystem::path&) {
     m_state.meshDirty = true;
-}
-
-void Application::rebuildMesh() {
-    spdlog::info("Rebuilding mesh from {}", m_state.scadPath.string());
-
-    std::ifstream f(m_state.scadPath);
-    if (!f.is_open()) {
-        spdlog::error("Cannot open {}", m_state.scadPath.string());
-        return;
-    }
-    std::string src((std::istreambuf_iterator<char>(f)),
-                     std::istreambuf_iterator<char>());
-
-    lang::Lexer  lexer(src);
-    auto tokens = lexer.tokenize();
-    if (lexer.hasErrors()) {
-        m_diagPanel.setDiagnostics(lexer.diagnostics());
-        return;
-    }
-
-    lang::Parser parser(std::move(tokens));
-    auto result = parser.parse();
-    if (parser.hasErrors()) {
-        m_diagPanel.setDiagnostics(parser.diagnostics());
-        return;
-    }
-
-    m_diagPanel.setDiagnostics({});
-
-    csg::CsgEvaluator  csgEval;
-    auto scene = csgEval.evaluate(result);
-
-    csg::MeshCache     cache;
-    csg::MeshEvaluator meshEval(cache);
-    auto manifold = meshEval.evaluate(scene);
-
-    std::vector<render::Vertex>  verts;
-    std::vector<uint32_t>        indices;
-    manifoldToMesh(manifold, verts, indices);
-
-    if (!verts.empty())
-        m_renderer.uploadMesh(m_ctx, m_vma, verts, indices);
-
-    spdlog::info("Mesh: {} triangles", indices.size() / 3);
 }
 
 // ---------------------------------------------------------------------------
 // ImGui
 // ---------------------------------------------------------------------------
 void Application::drawImGui() {
+    // Animated spinner frames (cycles at ~8 fps)
+    static const char* kSpinner[] = { "|", "/", "-", "\\" };
+    int spinIdx = static_cast<int>(ImGui::GetTime() * 8.0) % 4;
+
     ImGui::Begin("ChiselCAD");
     ImGui::Text("File: %s", m_state.scadPath.filename().string().c_str());
-    if (ImGui::Button("Reload")) m_state.meshDirty = true;
+    if (ImGui::Button("Reload"))
+        m_meshBuilder.requestBuild(m_state.scadPath);
+
+    ImGui::Separator();
+
+    switch (m_meshBuilder.phase()) {
+        case BuildPhase::Idle:
+            ImGui::TextDisabled("Idle");
+            break;
+        case BuildPhase::Parsing:
+            ImGui::Text("%s Parsing...", kSpinner[spinIdx]);
+            break;
+        case BuildPhase::Evaluating:
+            ImGui::Text("%s Evaluating CSG...", kSpinner[spinIdx]);
+            break;
+        case BuildPhase::Meshing:
+            ImGui::Text("%s Meshing (Manifold)...", kSpinner[spinIdx]);
+            break;
+        case BuildPhase::Converting:
+            ImGui::Text("%s Converting...", kSpinner[spinIdx]);
+            break;
+        case BuildPhase::Done:
+            ImGui::TextColored({0.5f, 1.0f, 0.5f, 1.0f}, "Ready");
+            ImGui::SameLine();
+            ImGui::Text("%u tris  %.2fs",
+                m_meshBuilder.lastTriCount(),
+                m_meshBuilder.elapsedMs() / 1000.0);
+            break;
+        case BuildPhase::Error:
+            ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f},
+                               "Error — see Diagnostics");
+            break;
+    }
+
     ImGui::End();
 
     m_diagPanel.draw();
