@@ -19,6 +19,7 @@ public:
     glm::mat4 view()       const;
     glm::mat4 projection(float aspectRatio) const;
     glm::mat4 viewProjection(float aspectRatio) const;
+    glm::vec3 eye()        const;
 
     float fovDeg = 45.0f;
 

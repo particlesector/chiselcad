@@ -38,16 +38,19 @@ VkShaderModule Pipeline::loadShader(VkDevice device, const std::string& path) {
 // init
 // ---------------------------------------------------------------------------
 void Pipeline::init(VkDevice device, VkRenderPass renderPass, const std::string& shaderDir) {
-    // Push constants: mvp (mat4) + model (mat4) = 128 bytes
-    VkPushConstantRange pcRange{};
-    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    pcRange.offset     = 0;
-    pcRange.size       = 128;
+    // Push constants: vert=[mvp(64)+model(64)], frag=[eyePos vec4(16)] => 144 bytes total
+    std::array<VkPushConstantRange, 2> pcRanges{};
+    pcRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcRanges[0].offset     = 0;
+    pcRanges[0].size       = 128;
+    pcRanges[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pcRanges[1].offset     = 128;
+    pcRanges[1].size       = 16;  // vec4 eyePos (w unused)
 
     VkPipelineLayoutCreateInfo layoutCI{};
     layoutCI.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutCI.pushConstantRangeCount = 1;
-    layoutCI.pPushConstantRanges    = &pcRange;
+    layoutCI.pushConstantRangeCount = static_cast<uint32_t>(pcRanges.size());
+    layoutCI.pPushConstantRanges    = pcRanges.data();
     VK_CHECK(vkCreatePipelineLayout(device, &layoutCI, nullptr, &m_layout));
 
     auto vertMod = loadShader(device, shaderDir + "mesh.vert.spv");

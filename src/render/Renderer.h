@@ -39,7 +39,8 @@ private:
                         const Swapchain& swapchain,
                         const Pipeline& pipeline,
                         uint32_t imageIndex,
-                        const glm::mat4& mvp);
+                        const glm::mat4& mvp,
+                        const glm::vec3& eyePos);
 
     struct FrameData {
         VkCommandBuffer cmd             = VK_NULL_HANDLE;

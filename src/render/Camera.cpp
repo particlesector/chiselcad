@@ -54,12 +54,15 @@ void Camera::onMouseMove(double x, double y) {
 
 void Camera::processInput(GLFWwindow* /*window*/, float /*dt*/) {}
 
-glm::mat4 Camera::view() const {
+glm::vec3 Camera::eye() const {
     float cx = std::cos(m_pitch) * std::cos(m_yaw);
     float cy = std::sin(m_pitch);
     float cz = std::cos(m_pitch) * std::sin(m_yaw);
-    glm::vec3 eye = m_target + glm::vec3(cx, cy, cz) * m_distance;
-    return glm::lookAt(eye, m_target, glm::vec3(0, 1, 0));
+    return m_target + glm::vec3(cx, cy, cz) * m_distance;
+}
+
+glm::mat4 Camera::view() const {
+    return glm::lookAt(eye(), m_target, glm::vec3(0, 1, 0));
 }
 
 glm::mat4 Camera::projection(float aspect) const {
