@@ -87,9 +87,10 @@ bool Renderer::drawFrame(const VulkanContext& ctx,
     VK_CHECK(vkResetCommandBuffer(frame.cmd, 0));
 
     float aspect = (winHeight > 0) ? static_cast<float>(winWidth) / static_cast<float>(winHeight) : 1.0f;
-    glm::mat4 mvp = camera.viewProjection(aspect);
+    glm::mat4 mvp    = camera.viewProjection(aspect);
+    glm::vec3 eyePos = camera.eye();
 
-    recordCommands(frame.cmd, swapchain, pipeline, imageIndex, mvp);
+    recordCommands(frame.cmd, swapchain, pipeline, imageIndex, mvp, eyePos);
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si{};
@@ -129,7 +130,8 @@ void Renderer::recordCommands(VkCommandBuffer cmd,
                                const Swapchain& swapchain,
                                const Pipeline& pipeline,
                                uint32_t imageIndex,
-                               const glm::mat4& mvp)
+                               const glm::mat4& mvp,
+                               const glm::vec3& eyePos)
 {
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -160,12 +162,16 @@ void Renderer::recordCommands(VkCommandBuffer cmd,
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     if (m_mesh.valid()) {
-        // Push constants: mvp + model (identity)
+        // Vertex push constants: mvp (offset 0) + model identity (offset 64)
         glm::mat4 model(1.0f);
         vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
                            VK_SHADER_STAGE_VERTEX_BIT, 0, 64, &mvp);
         vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
                            VK_SHADER_STAGE_VERTEX_BIT, 64, 64, &model);
+        // Fragment push constant: eyePos (offset 128, vec4 with w=0)
+        glm::vec4 eyePad(eyePos, 0.0f);
+        vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 128, 16, &eyePad);
 
         VkBuffer     vb     = m_mesh.vertexBuffer();
         VkDeviceSize offset = 0;

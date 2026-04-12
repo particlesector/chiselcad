@@ -153,6 +153,7 @@ endif()
 target_compile_definitions(chiselcad PRIVATE
     CHISELCAD_SHADER_DIR="${SHADER_BINARY_DIR}/"
     CHISELCAD_VERSION="${PROJECT_VERSION}"
+    GLM_FORCE_DEPTH_ZERO_TO_ONE   # Vulkan depth range [0,1] not [-1,1]
 )
 
 # ============================================================
