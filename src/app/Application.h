@@ -57,6 +57,7 @@ private:
     render::Camera                     m_camera;
 
     MeshBuilder                          m_meshBuilder;
+    bool                                 m_useManifoldSphere = false;
     std::unique_ptr<editor::FileWatcher> m_watcher;
     editor::DiagnosticsPanel             m_diagPanel;
 

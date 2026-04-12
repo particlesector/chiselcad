@@ -18,6 +18,9 @@ class MeshEvaluator {
 public:
     explicit MeshEvaluator(MeshCache& cache);
 
+    // Use Manifold's built-in sphere instead of the OpenSCAD-compatible UV sphere.
+    bool useManifoldSphere = false;
+
     // Evaluate the full scene; returns the combined mesh.
     manifold::Manifold evaluate(const CsgScene& scene);
 

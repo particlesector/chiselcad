@@ -169,6 +169,7 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     m_phase = BuildPhase::Meshing;
     csg::MeshCache     cache;
     csg::MeshEvaluator meshEval(cache);
+    meshEval.useManifoldSphere = m_useManifoldSphere.load();
     manifold::Manifold manifoldMesh;
     try {
         manifoldMesh = meshEval.evaluate(scene);

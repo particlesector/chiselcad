@@ -190,6 +190,15 @@ void Application::drawImGui() {
 
     ImGui::Separator();
 
+    bool prev = m_useManifoldSphere;
+    ImGui::Checkbox("Manifold sphere", &m_useManifoldSphere);
+    if (m_useManifoldSphere != prev) {
+        m_meshBuilder.setUseManifoldSphere(m_useManifoldSphere);
+        m_meshBuilder.requestBuild(m_state.scadPath);
+    }
+
+    ImGui::Separator();
+
     switch (m_meshBuilder.phase()) {
         case BuildPhase::Idle:
             ImGui::TextDisabled("Idle");

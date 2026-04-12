@@ -54,6 +54,8 @@ public:
     // discarded when poll() is next called.
     void requestBuild(std::filesystem::path path);
 
+    void setUseManifoldSphere(bool v) noexcept { m_useManifoldSphere.store(v); }
+
     // Call once per frame from the main (Vulkan) thread.
     // Returns a finished BuildResult when one is ready, nullptr otherwise.
     // Stale results (superseded by a newer requestBuild) are automatically
@@ -83,6 +85,7 @@ private:
 
     // Incremented by requestBuild(); read by poll() to detect stale results.
     std::atomic<int>        m_currentGen{0};
+    std::atomic<bool>       m_useManifoldSphere{false};
 
     // Readable from main thread for UI without locks.
     std::atomic<BuildPhase> m_phase{BuildPhase::Idle};

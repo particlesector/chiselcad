@@ -70,9 +70,10 @@ MeshEvaluator::MeshEvaluator(MeshCache& cache)
 
 manifold::Manifold MeshEvaluator::evaluate(const CsgScene& scene) {
     PrimitiveGen gen;
-    gen.globalFn = scene.globalFn;
-    gen.globalFs = scene.globalFs;
-    gen.globalFa = scene.globalFa;
+    gen.globalFn           = scene.globalFn;
+    gen.globalFs           = scene.globalFs;
+    gen.globalFa           = scene.globalFa;
+    gen.useManifoldSphere  = useManifoldSphere;
 
     if (scene.roots.empty())
         return {};
