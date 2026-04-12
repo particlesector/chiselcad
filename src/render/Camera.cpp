@@ -66,7 +66,9 @@ glm::mat4 Camera::view() const {
 }
 
 glm::mat4 Camera::projection(float aspect) const {
-    return glm::perspective(glm::radians(fovDeg), aspect, 0.1f, 10000.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(fovDeg), aspect, 0.1f, 10000.0f);
+    proj[1][1] *= -1.0f;  // Vulkan NDC has Y pointing down; GLM uses OpenGL convention
+    return proj;
 }
 
 glm::mat4 Camera::viewProjection(float aspect) const {
