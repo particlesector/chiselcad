@@ -212,6 +212,8 @@ void Application::drawImGui() {
             ImGui::Text("%s facets | %s vertices",
                 formatCount(m_meshBuilder.lastTriCount()).c_str(),
                 formatCount(m_meshBuilder.lastVertCount()).c_str());
+            ImGui::Text("Volume:  %.4f", m_meshBuilder.lastVolume());
+            ImGui::Text("Area:    %.4f", m_meshBuilder.lastSurfaceArea());
             break;
         case BuildPhase::Error:
             ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f},

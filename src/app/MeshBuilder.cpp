@@ -183,8 +183,11 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     // ---- Phase: Converting to vertex buffers ----
     m_phase = BuildPhase::Converting;
 
-    // Capture unique vertex/facet counts from Manifold before flat-shading
+    // Capture mesh properties before flat-shading (volume is exact, counts comparable)
     {
+        result->volume      = manifoldMesh.Volume();
+        result->surfaceArea = manifoldMesh.SurfaceArea();
+
         auto rawMesh = manifoldMesh.GetMeshGL();
         result->triCount  = static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
         result->vertCount = static_cast<uint32_t>(
@@ -194,19 +197,21 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     manifoldToMesh(manifoldMesh, result->verts, result->indices);
     result->elapsedMs = elapsedMs();
 
-    m_elapsedMs     = result->elapsedMs;
-    m_lastTriCount  = result->triCount;
-    m_lastVertCount = result->vertCount;
+    m_elapsedMs        = result->elapsedMs;
+    m_lastVolume       = result->volume;
+    m_lastSurfaceArea  = result->surfaceArea;
+    m_lastTriCount     = result->triCount;
+    m_lastVertCount    = result->vertCount;
 
-    // Format with commas to match OpenSCAD's output style
     auto fmtN = [](uint32_t n) {
         std::string s = std::to_string(n);
         int i = static_cast<int>(s.size()) - 3;
         while (i > 0) { s.insert(static_cast<size_t>(i), ","); i -= 3; }
         return s;
     };
-    spdlog::info("[mesh] Render: {:.3f}s  |  {} facets  |  {} vertices",
-        result->elapsedMs / 1000.0, fmtN(result->triCount), fmtN(result->vertCount));
+    spdlog::info("[mesh] Render: {:.3f}s  |  {} facets  |  {} vertices  |  volume: {:.4f}  |  area: {:.4f}",
+        result->elapsedMs / 1000.0, fmtN(result->triCount), fmtN(result->vertCount),
+        result->volume, result->surfaceArea);
     m_phase = BuildPhase::Done;
 
     {

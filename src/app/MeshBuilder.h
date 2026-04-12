@@ -29,6 +29,8 @@ struct BuildResult {
     std::string                  errorMsg;    // empty = success
     uint32_t                     triCount   = 0;
     uint32_t                     vertCount  = 0;  // unique verts from Manifold mesh
+    double                       volume     = 0.0;
+    double                       surfaceArea = 0.0;
     double                       elapsedMs  = 0.0;
 };
 
@@ -58,10 +60,12 @@ public:
     // discarded and nullptr is returned.
     std::unique_ptr<BuildResult> poll();
 
-    BuildPhase phase()          const noexcept { return m_phase.load(); }
-    double     elapsedMs()      const noexcept { return m_elapsedMs.load(); }
-    uint32_t   lastTriCount()   const noexcept { return m_lastTriCount.load(); }
-    uint32_t   lastVertCount()  const noexcept { return m_lastVertCount.load(); }
+    BuildPhase phase()           const noexcept { return m_phase.load(); }
+    double     elapsedMs()       const noexcept { return m_elapsedMs.load(); }
+    double     lastVolume()      const noexcept { return m_lastVolume.load(); }
+    double     lastSurfaceArea() const noexcept { return m_lastSurfaceArea.load(); }
+    uint32_t   lastTriCount()    const noexcept { return m_lastTriCount.load(); }
+    uint32_t   lastVertCount()   const noexcept { return m_lastVertCount.load(); }
 
 private:
     void workerLoop();
@@ -83,6 +87,8 @@ private:
     // Readable from main thread for UI without locks.
     std::atomic<BuildPhase> m_phase{BuildPhase::Idle};
     std::atomic<double>     m_elapsedMs{0.0};
+    std::atomic<double>     m_lastVolume{0.0};
+    std::atomic<double>     m_lastSurfaceArea{0.0};
     std::atomic<uint32_t>   m_lastTriCount{0};
     std::atomic<uint32_t>   m_lastVertCount{0};
 
