@@ -1,6 +1,8 @@
 #include "Renderer.h"
 #include <array>
 #include <stdexcept>
+#include <imgui.h>
+#include <imgui_impl_vulkan.h>
 
 namespace chisel::render {
 
@@ -171,6 +173,8 @@ void Renderer::recordCommands(VkCommandBuffer cmd,
         vkCmdBindIndexBuffer(cmd, m_mesh.indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, m_mesh.indexCount(), 1, 0, 0, 0);
     }
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     vkCmdEndRenderPass(cmd);
     VK_CHECK(vkEndCommandBuffer(cmd));

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace chisel::render {
@@ -10,7 +11,7 @@ namespace chisel::render {
 #define VK_CHECK(expr) do { \
     VkResult r_ = (expr); \
     if (r_ != VK_SUCCESS) \
-        throw std::runtime_error("Vulkan error in Swapchain"); \
+        throw std::runtime_error(std::string("Vulkan error in Swapchain (") + std::to_string(r_) + ")"); \
 } while(0)
 
 // ---------------------------------------------------------------------------
@@ -121,7 +122,11 @@ void Swapchain::createSwapchain(const VulkanContext& ctx, uint32_t width, uint32
         ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     }
 
+    VkSwapchainKHR oldSwapchain = m_swapchain;
+    ci.oldSwapchain = oldSwapchain;
     VK_CHECK(vkCreateSwapchainKHR(ctx.device(), &ci, nullptr, &m_swapchain));
+    if (oldSwapchain != VK_NULL_HANDLE)
+        vkDestroySwapchainKHR(ctx.device(), oldSwapchain, nullptr);
 
     uint32_t count = 0;
     vkGetSwapchainImagesKHR(ctx.device(), m_swapchain, &count, nullptr);
