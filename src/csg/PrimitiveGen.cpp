@@ -1,8 +1,98 @@
 #include "PrimitiveGen.h"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace chisel::csg {
+
+// ---------------------------------------------------------------------------
+// UV sphere matching OpenSCAD's tessellation exactly.
+//
+// Algorithm from OpenSCAD src/core/primitives.cc:
+//   nRings = (fn + 1) / 2          — latitude rings (no explicit pole vertices)
+//   phi_i  = 180 * (i + 0.5) / nRings  — ring latitude in degrees (0.5 offset
+//                                         keeps rings away from the true poles)
+//   theta_j = 360 * j / nLon       — longitude in degrees
+//
+// Face layout (as polygons before triangulation):
+//   Top cap:    ring 0 vertices as a single polygon
+//   Quad strips: between adjacent rings, nLon quads each
+//   Bottom cap: ring nRings-1 vertices reversed (so normal faces outward)
+//
+// Vertex index: i * nLon + j
+// ---------------------------------------------------------------------------
+static manifold::Manifold makeUVSphere(float r, int fn) {
+    const int nLon   = fn;
+    const int nRings = (fn + 1) / 2;
+
+    constexpr double kPi = 3.14159265358979323846;
+    const int nVerts = nRings * nLon;
+
+    manifold::MeshGL mesh;
+    mesh.numProp = 3;
+    mesh.vertProperties.reserve(static_cast<size_t>(nVerts) * 3);
+
+    for (int i = 0; i < nRings; ++i) {
+        double phi = kPi * (i + 0.5) / nRings;   // radians, 0..π
+        float z  = r * static_cast<float>(std::cos(phi));
+        float rr = r * static_cast<float>(std::sin(phi));
+        for (int j = 0; j < nLon; ++j) {
+            double theta = 2.0 * kPi * j / nLon;
+            mesh.vertProperties.push_back(rr * static_cast<float>(std::cos(theta)));
+            mesh.vertProperties.push_back(rr * static_cast<float>(std::sin(theta)));
+            mesh.vertProperties.push_back(z);
+        }
+    }
+
+    // Estimate triangle count:
+    //   2*(nLon-2) cap triangles + (nRings-1)*nLon*2 strip triangles
+    const size_t estTris = static_cast<size_t>(2*(nLon-2) + (nRings-1)*nLon*2);
+    mesh.triVerts.reserve(estTris * 3);
+
+    auto vi = [&](int ring, int lon) -> uint32_t {
+        return static_cast<uint32_t>(ring * nLon + ((lon % nLon + nLon) % nLon));
+    };
+
+    // Top cap — ring 0, vertices in forward order, fan from vertex 0
+    for (int j = 1; j < nLon - 1; ++j) {
+        mesh.triVerts.push_back(vi(0, 0));
+        mesh.triVerts.push_back(vi(0, j));
+        mesh.triVerts.push_back(vi(0, j + 1));
+    }
+
+    // Quad strips — between ring i and ring i+1
+    // OpenSCAD quad winding: {ring_i[j+1], ring_i[j], ring_{i+1}[j], ring_{i+1}[j+1]}
+    // Split into two triangles maintaining outward normals:
+    //   T1: (ring_i[j+1], ring_i[j],   ring_{i+1}[j])
+    //   T2: (ring_i[j+1], ring_{i+1}[j], ring_{i+1}[j+1])
+    for (int i = 0; i < nRings - 1; ++i) {
+        for (int j = 0; j < nLon; ++j) {
+            uint32_t a = vi(i,     j);
+            uint32_t b = vi(i,     j + 1);
+            uint32_t c = vi(i + 1, j);
+            uint32_t d = vi(i + 1, j + 1);
+            // T1
+            mesh.triVerts.push_back(b);
+            mesh.triVerts.push_back(a);
+            mesh.triVerts.push_back(c);
+            // T2
+            mesh.triVerts.push_back(b);
+            mesh.triVerts.push_back(c);
+            mesh.triVerts.push_back(d);
+        }
+    }
+
+    // Bottom cap — ring nRings-1, vertices in REVERSE order (outward normal -z),
+    // fan from vertex nRings*nLon-1 (= ring[nRings-1][nLon-1])
+    const int lastRing = nRings - 1;
+    for (int j = 1; j < nLon - 1; ++j) {
+        mesh.triVerts.push_back(vi(lastRing, nLon - 1));
+        mesh.triVerts.push_back(vi(lastRing, nLon - 1 - j));
+        mesh.triVerts.push_back(vi(lastRing, nLon - 2 - j));
+    }
+
+    return manifold::Manifold(mesh);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,7 +144,9 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
         double r = getParam(p, "r", getParam(p, "_pos0", 1.0));
         double fnOvr = getParam(p, "$fn", 0.0);
         int segs = resolveSegments(r, fnOvr);
-        return manifold::Manifold::Sphere(static_cast<float>(r), segs);
+        if (useManifoldSphere)
+            return manifold::Manifold::Sphere(static_cast<float>(r), segs);
+        return makeUVSphere(static_cast<float>(r), segs);
     }
 
     // ------------------------------------------------------------------

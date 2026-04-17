@@ -18,6 +18,11 @@ struct PrimitiveGen {
     double globalFs = 2.0;
     double globalFa = 12.0;
 
+    // When false (default), use a UV sphere matching OpenSCAD's tessellation.
+    // When true, delegate to Manifold's built-in sphere (more uniform but
+    // different tessellation and facet counts).
+    bool useManifoldSphere = false;
+
     // Generate the untransformed Manifold for a leaf.
     // The caller (MeshEvaluator) applies leaf.transform afterwards.
     manifold::Manifold generate(const CsgLeaf& leaf) const;
