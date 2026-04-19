@@ -5,23 +5,24 @@
 namespace chisel::editor {
 
 void openInExternalEditor(const std::filesystem::path& path) {
-    std::string cmd;
+    std::string p = path.string();
 #if defined(_WIN32)
-    cmd = "code \"" + path.string() + "\"";
-    if (std::system(cmd.c_str()) != 0) {
-        [[maybe_unused]] int r = std::system(("start \"\" \"" + path.string() + "\"").c_str());
-    }
+    if (std::system(("code \"" + p + "\"").c_str()) != 0)
+        std::system(("start \"\" \"" + p + "\"").c_str());
 #elif defined(__APPLE__)
-    cmd = "open -a \"Visual Studio Code\" \"" + path.string() + "\"";
-    if (std::system(cmd.c_str()) != 0) {
-        [[maybe_unused]] int r = std::system(("open \"" + path.string() + "\"").c_str());
-    }
+    if (std::system(("open -a \"Visual Studio Code\" \"" + p + "\"").c_str()) != 0)
+        std::system(("open \"" + p + "\"").c_str());
 #else
-    cmd = "code \"" + path.string() + "\"";
-    if (std::system(cmd.c_str()) != 0) {
-        [[maybe_unused]] int r = std::system(("xdg-open \"" + path.string() + "\"").c_str());
-    }
+    if (std::system(("code \"" + p + "\"").c_str()) != 0)
+        std::system(("xdg-open \"" + p + "\"").c_str());
 #endif
+}
+
+void openInExternalEditor(const std::filesystem::path& path, int line, int col) {
+    // VS Code --goto file:line:col (line and col are 1-based)
+    std::string loc = path.string() + ":" + std::to_string(line) + ":" + std::to_string(col);
+    if (std::system(("code --goto \"" + loc + "\"").c_str()) != 0)
+        openInExternalEditor(path);
 }
 
 } // namespace chisel::editor

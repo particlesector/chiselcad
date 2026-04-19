@@ -69,7 +69,8 @@ bool Renderer::drawFrame(const VulkanContext& ctx,
                           Swapchain& swapchain,
                           const Pipeline& pipeline,
                           Camera& camera,
-                          uint32_t winWidth, uint32_t winHeight)
+                          uint32_t winWidth, uint32_t winHeight,
+                          RenderMode mode)
 {
     auto& frame = m_frames[m_currentFrame];
     VK_CHECK(vkWaitForFences(ctx.device(), 1, &frame.inFlight, VK_TRUE, UINT64_MAX));
@@ -90,7 +91,7 @@ bool Renderer::drawFrame(const VulkanContext& ctx,
     glm::mat4 mvp    = camera.viewProjection(aspect);
     glm::vec3 eyePos = camera.eye();
 
-    recordCommands(frame.cmd, swapchain, pipeline, imageIndex, mvp, eyePos);
+    recordCommands(frame.cmd, swapchain, pipeline, imageIndex, mvp, eyePos, mode);
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si{};
@@ -131,14 +132,15 @@ void Renderer::recordCommands(VkCommandBuffer cmd,
                                const Pipeline& pipeline,
                                uint32_t imageIndex,
                                const glm::mat4& mvp,
-                               const glm::vec3& eyePos)
+                               const glm::vec3& eyePos,
+                               RenderMode mode)
 {
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     VK_CHECK(vkBeginCommandBuffer(cmd, &bi));
 
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color        = {{0.12f, 0.12f, 0.12f, 1.0f}};
+    clearValues[0].color        = {{0.0f, 0.0f, 0.0f, 1.0f}}; // overwritten by bg pass
     clearValues[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo rpbi{};
@@ -150,8 +152,6 @@ void Renderer::recordCommands(VkCommandBuffer cmd,
     rpbi.pClearValues      = clearValues.data();
     vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline());
-
     VkViewport vp{};
     vp.width    = static_cast<float>(swapchain.extent().width);
     vp.height   = static_cast<float>(swapchain.extent().height);
@@ -161,23 +161,50 @@ void Renderer::recordCommands(VkCommandBuffer cmd,
     VkRect2D scissor{{0, 0}, swapchain.extent()};
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
+    // Background gradient — fullscreen triangle, no vertex input, no depth test
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.bgPipeline());
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
     if (m_mesh.valid()) {
-        // Vertex push constants: mvp (offset 0) + model identity (offset 64)
+        // Push constants shared by both passes
         glm::mat4 model(1.0f);
-        vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
-                           VK_SHADER_STAGE_VERTEX_BIT, 0, 64, &mvp);
-        vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
-                           VK_SHADER_STAGE_VERTEX_BIT, 64, 64, &model);
-        // Fragment push constant: eyePos (offset 128, vec4 with w=0)
         glm::vec4 eyePad(eyePos, 0.0f);
-        vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
-                           VK_SHADER_STAGE_FRAGMENT_BIT, 128, 16, &eyePad);
+
+        auto pushAll = [&]() {
+            vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
+                               VK_SHADER_STAGE_VERTEX_BIT, 0, 64, &mvp);
+            vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
+                               VK_SHADER_STAGE_VERTEX_BIT, 64, 64, &model);
+            vkCmdPushConstants(cmd, pipeline.pipelineLayout(),
+                               VK_SHADER_STAGE_FRAGMENT_BIT, 128, 16, &eyePad);
+        };
 
         VkBuffer     vb     = m_mesh.vertexBuffer();
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
         vkCmdBindIndexBuffer(cmd, m_mesh.indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, m_mesh.indexCount(), 1, 0, 0, 0);
+
+        if (mode == RenderMode::Wireframe && pipeline.wireSupported()) {
+            // Wireframe-only: line edges, no depth bias needed (single pass)
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.wirePipeline());
+            vkCmdSetDepthBias(cmd, 0.0f, 0.0f, 0.0f);
+            pushAll();
+            vkCmdDrawIndexed(cmd, m_mesh.indexCount(), 1, 0, 0, 0);
+        } else {
+            // Solid pass (used for both Solid and SolidEdges)
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.solidPipeline());
+            pushAll();
+            vkCmdDrawIndexed(cmd, m_mesh.indexCount(), 1, 0, 0, 0);
+
+            // Wireframe overlay for SolidEdges
+            if (mode == RenderMode::SolidEdges && pipeline.wireSupported()) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.wirePipeline());
+                // Negative bias nudges edges toward the camera to avoid z-fighting
+                vkCmdSetDepthBias(cmd, -2.0f, 0.0f, -1.0f);
+                pushAll();
+                vkCmdDrawIndexed(cmd, m_mesh.indexCount(), 1, 0, 0, 0);
+            }
+        }
     }
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);

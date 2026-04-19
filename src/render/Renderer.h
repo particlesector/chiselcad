@@ -32,7 +32,8 @@ public:
                    Swapchain& swapchain,
                    const Pipeline& pipeline,
                    Camera& camera,
-                   uint32_t winWidth, uint32_t winHeight);
+                   uint32_t winWidth, uint32_t winHeight,
+                   RenderMode mode = RenderMode::Solid);
 
 private:
     void recordCommands(VkCommandBuffer cmd,
@@ -40,7 +41,8 @@ private:
                         const Pipeline& pipeline,
                         uint32_t imageIndex,
                         const glm::mat4& mvp,
-                        const glm::vec3& eyePos);
+                        const glm::vec3& eyePos,
+                        RenderMode mode);
 
     struct FrameData {
         VkCommandBuffer cmd             = VK_NULL_HANDLE;

@@ -10,7 +10,7 @@ namespace chisel::app {
 // reads it and triggers re-evaluation.
 // ---------------------------------------------------------------------------
 struct AppState {
-    std::atomic<bool> meshDirty{true};  // true → re-evaluate .scad on next frame
+    std::atomic<bool> meshDirty{false}; // true → re-evaluate .scad on next frame
     std::atomic<bool> running{true};
 
     std::filesystem::path scadPath;     // set once at startup, read-only after

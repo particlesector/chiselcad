@@ -3,12 +3,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace chisel::render {
 
 static constexpr float kPi    = 3.14159265358979323846f;
 static constexpr float kPi2   = kPi * 2.0f;
-static constexpr float kHalfPi = kPi * 0.5f - 0.01f;
+static constexpr float kHalfPi = kPi * 0.5f;
 
 void Camera::init(float distance) {
     m_distance = distance;
@@ -54,15 +55,58 @@ void Camera::onMouseMove(double x, double y) {
 
 void Camera::processInput(GLFWwindow* /*window*/, float /*dt*/) {}
 
+void Camera::setNamedView(NamedView v) {
+    switch (v) {
+        // Front/Back: camera at -Y/+Y so screen-right = +X (non-mirrored)
+        case NamedView::Front:     m_yaw = -kPi / 2.0f;  m_pitch =  0.0f;    break;
+        case NamedView::Back:      m_yaw =  kPi / 2.0f;  m_pitch =  0.0f;    break;
+        case NamedView::Right:     m_yaw =  0.0f;         m_pitch =  0.0f;    break;
+        case NamedView::Left:      m_yaw =  kPi;          m_pitch =  0.0f;    break;
+        // Top/Bottom: same yaw as Front for smooth arc continuity
+        case NamedView::Top:       m_yaw = -kPi / 2.0f;  m_pitch =  kHalfPi; break;
+        case NamedView::Bottom:    m_yaw = -kPi / 2.0f;  m_pitch = -kHalfPi; break;
+        case NamedView::Isometric: m_yaw = -kPi / 4.0f;
+            m_pitch = std::asin(1.0f / std::sqrt(3.0f));                      break;
+    }
+}
+
+void Camera::orbitYaw(float delta) {
+    m_yaw += delta;
+    if (m_yaw >  kPi2) m_yaw -= kPi2;
+    if (m_yaw < -kPi2) m_yaw += kPi2;
+}
+
+void Camera::shiftTargetRight(float worldAmount) {
+    glm::mat4 v = view();
+    glm::vec3 right(v[0][0], v[1][0], v[2][0]);
+    m_target += right * worldAmount;
+}
+
+void Camera::fitToBounds(glm::vec3 minB, glm::vec3 maxB) {
+    m_target = (minB + maxB) * 0.5f;
+    float diagonal = glm::length(maxB - minB);
+    if (diagonal < 0.001f) diagonal = 1.0f;
+    float halfFov  = glm::radians(fovDeg * 0.5f);
+    m_distance     = (diagonal * 0.5f) / std::tan(halfFov) * 1.25f; // 25% padding
+    m_distance     = std::max(0.5f, m_distance);
+}
+
 glm::vec3 Camera::eye() const {
+    // Z-up spherical coordinates: yaw = azimuth in XY plane, pitch = elevation
     float cx = std::cos(m_pitch) * std::cos(m_yaw);
-    float cy = std::sin(m_pitch);
-    float cz = std::cos(m_pitch) * std::sin(m_yaw);
+    float cy = std::cos(m_pitch) * std::sin(m_yaw);
+    float cz = std::sin(m_pitch);
     return m_target + glm::vec3(cx, cy, cz) * m_distance;
 }
 
 glm::mat4 Camera::view() const {
-    return glm::lookAt(eye(), m_target, glm::vec3(0, 1, 0));
+    // Orbit-arc up: tangent of the pitch arc — identical to world-Z up after
+    // Gram-Schmidt for all non-degenerate pitches, but stays valid at ±90°
+    // where world-Z is parallel to the view direction and lookAt degenerates.
+    glm::vec3 up(-std::sin(m_pitch) * std::cos(m_yaw),
+                 -std::sin(m_pitch) * std::sin(m_yaw),
+                  std::cos(m_pitch));
+    return glm::lookAt(eye(), m_target, up);
 }
 
 glm::mat4 Camera::projection(float aspect) const {

@@ -35,6 +35,7 @@ Config Config::load(const std::filesystem::path& path) {
         if (j.contains("globalFn"))       cfg.globalFn       = j["globalFn"];
         if (j.contains("globalFs"))       cfg.globalFs       = j["globalFs"];
         if (j.contains("globalFa"))       cfg.globalFa       = j["globalFa"];
+        if (j.contains("fontSize"))       cfg.fontSize       = j["fontSize"];
     } catch (const std::exception& e) {
         spdlog::warn("Config load failed: {}", e.what());
     }
@@ -52,6 +53,7 @@ void Config::save(const std::filesystem::path& path) const {
         j["globalFn"]       = globalFn;
         j["globalFs"]       = globalFs;
         j["globalFa"]       = globalFa;
+        j["fontSize"]       = fontSize;
         std::ofstream f(path);
         f << j.dump(2);
     } catch (const std::exception& e) {

@@ -4,7 +4,10 @@
 
 namespace chisel::editor {
 
-// Opens the given file in the system's default editor (or VS Code if available).
+// Opens the file in VS Code (fallback: system default editor).
 void openInExternalEditor(const std::filesystem::path& path);
+
+// Opens the file and jumps to a specific line/column (1-based).
+void openInExternalEditor(const std::filesystem::path& path, int line, int col);
 
 } // namespace chisel::editor

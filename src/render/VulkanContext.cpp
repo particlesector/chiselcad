@@ -226,6 +226,15 @@ void VulkanContext::createLogicalDevice() {
         queueCIs.push_back(q);
     }
 
+    // Enable fillModeNonSolid if the GPU supports it (needed for wireframe)
+    VkPhysicalDeviceFeatures available{};
+    vkGetPhysicalDeviceFeatures(m_physDevice, &available);
+    VkPhysicalDeviceFeatures enabled{};
+    if (available.fillModeNonSolid) {
+        enabled.fillModeNonSolid = VK_TRUE;
+        m_fillModeNonSolid = true;
+    }
+
     const char* swapchainExt = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkDeviceCreateInfo ci{};
     ci.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -233,6 +242,7 @@ void VulkanContext::createLogicalDevice() {
     ci.pQueueCreateInfos       = queueCIs.data();
     ci.enabledExtensionCount   = 1;
     ci.ppEnabledExtensionNames = &swapchainExt;
+    ci.pEnabledFeatures        = &enabled;
 
     VK_CHECK(vkCreateDevice(m_physDevice, &ci, nullptr, &m_device));
     vkGetDeviceQueue(m_device, m_graphicsFamily, 0, &m_graphicsQueue);

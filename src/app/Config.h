@@ -9,12 +9,13 @@ namespace chisel::app {
 // (or the path passed to load()).  Missing keys use the defaults below.
 // ---------------------------------------------------------------------------
 struct Config {
-    int    windowWidth  = 1280;
-    int    windowHeight = 800;
+    int    windowWidth    = 1280;
+    int    windowHeight   = 800;
     float  cameraDistance = 50.0f;
-    double globalFn     = 0.0;
-    double globalFs     = 2.0;
-    double globalFa     = 12.0;
+    double globalFn       = 0.0;
+    double globalFs       = 2.0;
+    double globalFa       = 12.0;
+    int    fontSize       = 1; // 0=small(0.85×), 1=normal(1.0×), 2=large(1.3×)
 
     static Config load(const std::filesystem::path& path);
     void          save(const std::filesystem::path& path) const;
