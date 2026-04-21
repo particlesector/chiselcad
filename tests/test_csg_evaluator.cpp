@@ -226,10 +226,25 @@ TEST_CASE("CsgEval:minkowski produces CsgBoolean", "[csg]") {
     REQUIRE(b.children.size() == 2);
 }
 
-TEST_CASE("CsgEval:hull with transform wrapper", "[csg]") {
+TEST_CASE("CsgEval:hull stores outer transform", "[csg]") {
     auto s = evaluate("translate([5,0,0]) hull() { sphere(r=1); cube([2,2,2]); }");
     REQUIRE(s.roots.size() == 1);
     const auto& b = asBool(s.roots[0]);
     REQUIRE(b.op == CsgBoolean::Op::Hull);
     REQUIRE(b.children.size() == 2);
+    // Outer translate must be on the node, not baked into children
+    REQUIRE(b.transform[3][0] == Approx(5.0f));
+    const auto& child = asLeaf(b.children[0]);
+    REQUIRE(child.transform[3][0] == Approx(0.0f)); // local space — no x offset
+}
+
+TEST_CASE("CsgEval:minkowski stores outer transform", "[csg]") {
+    auto s = evaluate("translate([0,-35,0]) minkowski() { cube([10,10,10]); sphere(r=1); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Minkowski);
+    // Outer translate on node, children at origin
+    REQUIRE(b.transform[3][1] == Approx(-35.0f));
+    const auto& child = asLeaf(b.children[0]);
+    REQUIRE(child.transform[3][1] == Approx(0.0f)); // local space — no y offset
 }

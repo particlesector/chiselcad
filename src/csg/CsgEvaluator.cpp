@@ -69,8 +69,18 @@ CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xfor
     case BooleanNode::Op::Hull:         bnode.op = CsgBoolean::Op::Hull;         break;
     case BooleanNode::Op::Minkowski:    bnode.op = CsgBoolean::Op::Minkowski;    break;
     }
+
+    // Hull and Minkowski are not equivariant under per-child translation:
+    // MinkowskiSum(T(A), T(B)) places the result at 2T, not T.
+    // Evaluate children in local space and store the outer transform on the
+    // node so MeshEvaluator can apply it once after computing the result.
+    const bool isLocalSpaceOp = (bnode.op == CsgBoolean::Op::Hull ||
+                                  bnode.op == CsgBoolean::Op::Minkowski);
+    const glm::mat4 childXform = isLocalSpaceOp ? glm::mat4{1.0f} : xform;
+    if (isLocalSpaceOp) bnode.transform = xform;
+
     for (const auto& child : b.children) {
-        if (auto c = evalNode(*child, xform))
+        if (auto c = evalNode(*child, childXform))
             bnode.children.push_back(std::move(c));
     }
     return makeBoolean(std::move(bnode));

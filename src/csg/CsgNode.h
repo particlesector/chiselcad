@@ -40,6 +40,11 @@ struct CsgBoolean {
 
     Op op = Op::Union;
     std::vector<CsgNodePtr> children;
+    // Hull and Minkowski are not equivariant under per-child translation:
+    // MinkowskiSum(T(A),T(B)) = 2T + sum(shapes), not T + sum.
+    // So their children are evaluated in local space and this matrix is
+    // applied once to the final result. Identity for Union/Difference/Intersection.
+    glm::mat4 transform{1.0f};
 };
 
 // ---------------------------------------------------------------------------

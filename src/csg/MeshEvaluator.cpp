@@ -113,13 +113,14 @@ manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const Primiti
     if (b.children.empty())
         return {};
 
-    // Hull takes all children at once — collect before calling
+    // Hull takes all children at once in local space, then applies the stored transform
     if (b.op == CsgBoolean::Op::Hull) {
         std::vector<manifold::Manifold> meshes;
         meshes.reserve(b.children.size());
         for (const auto& child : b.children)
             meshes.push_back(evalNode(*child, gen));
-        return manifold::Manifold::Hull(meshes);
+        auto result = manifold::Manifold::Hull(meshes);
+        return result.Transform(toAffine(b.transform));
     }
 
     manifold::Manifold result = evalNode(*b.children[0], gen);
@@ -134,6 +135,11 @@ manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const Primiti
         case CsgBoolean::Op::Hull:         break; // handled above
         }
     }
+
+    // Minkowski is also a local-space op — apply the stored outer transform once
+    if (b.op == CsgBoolean::Op::Minkowski)
+        result = result.Transform(toAffine(b.transform));
+
     return result;
 }
 
