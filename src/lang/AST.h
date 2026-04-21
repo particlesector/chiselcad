@@ -39,7 +39,7 @@ struct PrimitiveNode {
 // BooleanNode — union / difference / intersection
 // ---------------------------------------------------------------------------
 struct BooleanNode {
-    enum class Op { Union, Difference, Intersection };
+    enum class Op { Union, Difference, Intersection, Hull, Minkowski };
 
     Op op;
     std::vector<AstNodePtr> children;

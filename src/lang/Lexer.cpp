@@ -17,6 +17,8 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"union",        TokenKind::Union},
     {"difference",   TokenKind::Difference},
     {"intersection", TokenKind::Intersection},
+    {"hull",         TokenKind::Hull},
+    {"minkowski",    TokenKind::Minkowski},
     {"translate",    TokenKind::Translate},
     {"rotate",       TokenKind::Rotate},
     {"scale",        TokenKind::Scale},

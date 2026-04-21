@@ -125,6 +125,30 @@ TEST_CASE("Parser:intersection", "[parser]") {
     REQUIRE(b.children.size() == 2);
 }
 
+TEST_CASE("Parser:hull with two children", "[parser]") {
+    auto r = parse("hull() { sphere(r=1); cube([2,2,2]); }");
+    REQUIRE(r.roots.size() == 1);
+    auto& b = asBool(r.roots[0]);
+    REQUIRE(b.op == BooleanNode::Op::Hull);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("Parser:minkowski", "[parser]") {
+    auto r = parse("minkowski() { cube([10,10,10]); sphere(r=1); }");
+    REQUIRE(r.roots.size() == 1);
+    auto& b = asBool(r.roots[0]);
+    REQUIRE(b.op == BooleanNode::Op::Minkowski);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("Parser:hull empty", "[parser]") {
+    auto r = parse("hull() {}");
+    REQUIRE(r.roots.size() == 1);
+    auto& b = asBool(r.roots[0]);
+    REQUIRE(b.op == BooleanNode::Op::Hull);
+    REQUIRE(b.children.empty());
+}
+
 TEST_CASE("Parser:empty union", "[parser]") {
     // edge case from chiselcad_test.scad line 305
     auto r = parse("union() {};");
