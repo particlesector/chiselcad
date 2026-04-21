@@ -206,3 +206,30 @@ TEST_CASE("CsgEval:multiple top-level roots", "[csg]") {
     auto s = evaluate("cube([1,1,1]); sphere(r=1);");
     REQUIRE(s.roots.size() == 2);
 }
+
+// ---------------------------------------------------------------------------
+// hull() and minkowski()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:hull produces CsgBoolean", "[csg]") {
+    auto s = evaluate("hull() { sphere(r=1); cube([2,2,2]); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Hull);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("CsgEval:minkowski produces CsgBoolean", "[csg]") {
+    auto s = evaluate("minkowski() { cube([10,10,10]); sphere(r=1); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Minkowski);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("CsgEval:hull with transform wrapper", "[csg]") {
+    auto s = evaluate("translate([5,0,0]) hull() { sphere(r=1); cube([2,2,2]); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Hull);
+    REQUIRE(b.children.size() == 2);
+}

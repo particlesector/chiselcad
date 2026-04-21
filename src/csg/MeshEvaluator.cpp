@@ -113,14 +113,25 @@ manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const Primiti
     if (b.children.empty())
         return {};
 
+    // Hull takes all children at once — collect before calling
+    if (b.op == CsgBoolean::Op::Hull) {
+        std::vector<manifold::Manifold> meshes;
+        meshes.reserve(b.children.size());
+        for (const auto& child : b.children)
+            meshes.push_back(evalNode(*child, gen));
+        return manifold::Manifold::Hull(meshes);
+    }
+
     manifold::Manifold result = evalNode(*b.children[0], gen);
 
     for (std::size_t i = 1; i < b.children.size(); ++i) {
         manifold::Manifold child = evalNode(*b.children[i], gen);
         switch (b.op) {
-        case CsgBoolean::Op::Union:        result = result + child; break;
-        case CsgBoolean::Op::Difference:   result = result - child; break;
-        case CsgBoolean::Op::Intersection: result = result ^ child; break;
+        case CsgBoolean::Op::Union:        result = result + child;                 break;
+        case CsgBoolean::Op::Difference:   result = result - child;                 break;
+        case CsgBoolean::Op::Intersection: result = result ^ child;                 break;
+        case CsgBoolean::Op::Minkowski:    result = result.MinkowskiSum(child);     break;
+        case CsgBoolean::Op::Hull:         break; // handled above
         }
     }
     return result;

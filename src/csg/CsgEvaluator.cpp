@@ -66,6 +66,8 @@ CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xfor
     case BooleanNode::Op::Union:        bnode.op = CsgBoolean::Op::Union;        break;
     case BooleanNode::Op::Difference:   bnode.op = CsgBoolean::Op::Difference;   break;
     case BooleanNode::Op::Intersection: bnode.op = CsgBoolean::Op::Intersection; break;
+    case BooleanNode::Op::Hull:         bnode.op = CsgBoolean::Op::Hull;         break;
+    case BooleanNode::Op::Minkowski:    bnode.op = CsgBoolean::Op::Minkowski;    break;
     }
     for (const auto& child : b.children) {
         if (auto c = evalNode(*child, xform))

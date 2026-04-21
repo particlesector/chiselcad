@@ -111,6 +111,8 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::Union:
     case TokenKind::Difference:
     case TokenKind::Intersection:
+    case TokenKind::Hull:
+    case TokenKind::Minkowski:
         return parseBoolean(k);
 
     case TokenKind::Translate:
@@ -159,6 +161,8 @@ AstNodePtr Parser::parseBoolean(TokenKind k) {
     case TokenKind::Union:        node.op = BooleanNode::Op::Union;        break;
     case TokenKind::Difference:   node.op = BooleanNode::Op::Difference;   break;
     case TokenKind::Intersection: node.op = BooleanNode::Op::Intersection; break;
+    case TokenKind::Hull:         node.op = BooleanNode::Op::Hull;         break;
+    case TokenKind::Minkowski:    node.op = BooleanNode::Op::Minkowski;    break;
     default: break;
     }
 

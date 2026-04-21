@@ -45,6 +45,11 @@ TEST_CASE("Lexer:boolean keywords", "[lexer]") {
     REQUIRE(kinds("intersection") == std::vector{TokenKind::Intersection});
 }
 
+TEST_CASE("Lexer:hull and minkowski keywords", "[lexer]") {
+    REQUIRE(kinds("hull")      == std::vector{TokenKind::Hull});
+    REQUIRE(kinds("minkowski") == std::vector{TokenKind::Minkowski});
+}
+
 // ---------------------------------------------------------------------------
 // Transform keywords
 // ---------------------------------------------------------------------------

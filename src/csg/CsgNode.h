@@ -36,7 +36,7 @@ using CsgNode    = std::variant<CsgLeaf, CsgBoolean>;
 using CsgNodePtr = std::shared_ptr<CsgNode>;
 
 struct CsgBoolean {
-    enum class Op { Union, Difference, Intersection };
+    enum class Op { Union, Difference, Intersection, Hull, Minkowski };
 
     Op op = Op::Union;
     std::vector<CsgNodePtr> children;

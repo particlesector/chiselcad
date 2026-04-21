@@ -37,6 +37,8 @@ enum class TokenKind : uint8_t {
     Union,
     Difference,
     Intersection,
+    Hull,
+    Minkowski,
 
     // Transforms
     Translate,
