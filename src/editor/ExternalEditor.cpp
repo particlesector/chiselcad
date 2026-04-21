@@ -8,13 +8,13 @@ void openInExternalEditor(const std::filesystem::path& path) {
     std::string p = path.string();
 #if defined(_WIN32)
     if (std::system(("code \"" + p + "\"").c_str()) != 0)
-        std::system(("start \"\" \"" + p + "\"").c_str());
+        (void)std::system(("start \"\" \"" + p + "\"").c_str());
 #elif defined(__APPLE__)
     if (std::system(("open -a \"Visual Studio Code\" \"" + p + "\"").c_str()) != 0)
-        std::system(("open \"" + p + "\"").c_str());
+        (void)std::system(("open \"" + p + "\"").c_str());
 #else
     if (std::system(("code \"" + p + "\"").c_str()) != 0)
-        std::system(("xdg-open \"" + p + "\"").c_str());
+        (void)std::system(("xdg-open \"" + p + "\"").c_str());
 #endif
 }
 
