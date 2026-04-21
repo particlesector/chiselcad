@@ -23,6 +23,7 @@ public:
     uint32_t         presentFamily()  const { return m_presentFamily; }
     VkCommandPool    commandPool()    const { return m_commandPool; }
     VkSurfaceKHR     surface()        const { return m_surface; }
+    bool fillModeNonSolidSupported()  const { return m_fillModeNonSolid; }
 
     // Submit a one-shot command buffer synchronously on the graphics queue
     VkCommandBuffer beginOneShot() const;
@@ -44,6 +45,7 @@ private:
     uint32_t         m_presentFamily  = 0;
     VkCommandPool    m_commandPool    = VK_NULL_HANDLE;
     VkSurfaceKHR     m_surface        = VK_NULL_HANDLE;
+    bool             m_fillModeNonSolid = false;
 
 #ifndef NDEBUG
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;

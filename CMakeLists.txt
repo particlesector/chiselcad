@@ -48,6 +48,8 @@ set(SHADER_SOURCES
     ${SHADER_SOURCE_DIR}/mesh.frag
     ${SHADER_SOURCE_DIR}/grid.vert
     ${SHADER_SOURCE_DIR}/grid.frag
+    ${SHADER_SOURCE_DIR}/background.vert
+    ${SHADER_SOURCE_DIR}/background.frag
 )
 
 set(SHADER_BINARIES "")
@@ -114,8 +116,9 @@ set(CHISELCAD_SOURCES
     src/render/Camera.cpp
     src/render/Renderer.cpp
 
-    # Export
+    # Export / Import
     src/export/StlExporter.cpp
+    src/import/StlImporter.cpp
 )
 
 # ============================================================

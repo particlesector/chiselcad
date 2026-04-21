@@ -8,18 +8,8 @@ int main(int argc, char** argv) {
     spdlog::set_level(spdlog::level::info);
 
     std::filesystem::path scadPath;
-    if (argc >= 2) {
+    if (argc >= 2)
         scadPath = argv[1];
-    } else {
-        // Default to chiselcad_test.scad in the working directory
-        scadPath = "chiselcad_test.scad";
-    }
-
-    if (!std::filesystem::exists(scadPath)) {
-        spdlog::error("File not found: {}", scadPath.string());
-        std::cerr << "Usage: chiselcad <file.scad>\n";
-        return 1;
-    }
 
     try {
         chisel::app::Application app(scadPath);
