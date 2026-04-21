@@ -1,9 +1,9 @@
-// hull() and minkowski() test file — V2 first ops
-// Load this file in ChiselCAD to visually verify the new operations.
+// hull() and minkowski() visual test — V2
+// To test one scene at a time, comment out all other translate() blocks below.
 $fn = 32;
 
 // ---------------------------------------------------------------------------
-// 1. hull() — two spheres at opposite ends produce a capsule shape
+// Scene 1: hull() — two spheres → capsule
 // ---------------------------------------------------------------------------
 translate([-30, 0, 0])
 hull() {
@@ -12,7 +12,7 @@ hull() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. hull() — three cylinders at triangle vertices produce a rounded triangle
+// Scene 2: hull() — three cylinders at triangle vertices → rounded triangle
 // ---------------------------------------------------------------------------
 translate([0, 0, 0])
 hull() {
@@ -22,7 +22,7 @@ hull() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. hull() — sphere + cube produces a rounded corner box
+// Scene 3: hull() — cube + sphere → rounded corner blob
 // ---------------------------------------------------------------------------
 translate([30, 0, 0])
 hull() {
@@ -31,7 +31,7 @@ hull() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. minkowski() — cube + sphere produces a box with rounded corners/edges
+// Scene 4: minkowski() — cube + sphere → box with fully rounded edges
 // ---------------------------------------------------------------------------
 translate([0, -35, 0])
 minkowski() {
@@ -40,7 +40,7 @@ minkowski() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. minkowski() — cylinder + sphere produces a rounded disc / pill
+// Scene 5: minkowski() — cylinder + sphere → rounded disc / pill
 // ---------------------------------------------------------------------------
 translate([35, -35, 0])
 minkowski() {
@@ -49,7 +49,7 @@ minkowski() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. hull() inside difference() — hull acts as the cutting tool
+// Scene 6: hull() inside difference() — hull used as cutting tool
 // ---------------------------------------------------------------------------
 translate([-30, -35, 0])
 difference() {
