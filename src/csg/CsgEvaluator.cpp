@@ -49,6 +49,8 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
             return evalTransform(n, xform);
         else if constexpr (std::is_same_v<T, IfNode>)
             return evalIf(n, xform);
+        else if constexpr (std::is_same_v<T, ForNode>)
+            return evalFor(n, xform);
         return nullptr;
     }, node);
 }
@@ -198,6 +200,53 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform) {
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;
     u.children = std::move(children);
+    return makeBoolean(std::move(u));
+}
+
+// ---------------------------------------------------------------------------
+// for — iterate range or list, union all child geometry
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
+    // Build the sequence of iteration values
+    std::vector<double> values;
+    static constexpr int kMaxIter = 10000;
+
+    if (node.range.isRange) {
+        double start = m_interp->evalNumber(*node.range.start);
+        double end   = m_interp->evalNumber(*node.range.end);
+        double step  = node.range.step
+                       ? m_interp->evalNumber(*node.range.step)
+                       : 1.0;
+        if (step == 0.0) return nullptr;
+        if (step > 0.0)
+            for (double v = start; v <= end + 1e-10 && (int)values.size() < kMaxIter; v += step)
+                values.push_back(v);
+        else
+            for (double v = start; v >= end - 1e-10 && (int)values.size() < kMaxIter; v += step)
+                values.push_back(v);
+    } else {
+        for (const auto& e : node.range.list)
+            values.push_back(m_interp->evalNumber(*e));
+    }
+
+    // Save the loop variable's current binding, iterate, then restore
+    const Value saved = m_interp->getVar(node.var);
+    std::vector<CsgNodePtr> all;
+    for (double v : values) {
+        m_interp->setVar(node.var, Value::fromNumber(v));
+        for (const auto& child : node.children) {
+            if (auto c = evalNode(*child, xform))
+                all.push_back(std::move(c));
+        }
+    }
+    m_interp->setVar(node.var, saved);
+
+    if (all.empty())     return nullptr;
+    if (all.size() == 1) return all[0];
+
+    CsgBoolean u;
+    u.op       = CsgBoolean::Op::Union;
+    u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
 

@@ -55,6 +55,21 @@ TEST_CASE("Lexer:if and else keywords", "[lexer]") {
     REQUIRE(kinds("else") == std::vector{TokenKind::Else});
 }
 
+TEST_CASE("Lexer:for keyword and colon", "[lexer]") {
+    REQUIRE(kinds("for") == std::vector{TokenKind::For});
+    REQUIRE(kinds(":")   == std::vector{TokenKind::Colon});
+}
+
+TEST_CASE("Lexer:for range tokens", "[lexer]") {
+    // for (i = [0:5]) → for ( i = [ 0 : 5 ] )
+    auto t = kinds("for (i = [0:5])");
+    REQUIRE(t[0] == TokenKind::For);
+    REQUIRE(t[4] == TokenKind::LBracket);
+    REQUIRE(t[5] == TokenKind::Number);
+    REQUIRE(t[6] == TokenKind::Colon);
+    REQUIRE(t[7] == TokenKind::Number);
+}
+
 // ---------------------------------------------------------------------------
 // Transform keywords
 // ---------------------------------------------------------------------------

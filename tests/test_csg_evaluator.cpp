@@ -300,3 +300,60 @@ TEST_CASE("CsgEval:if inherits outer transform", "[csg]") {
     REQUIRE(s.roots.size() == 1);
     REQUIRE(asLeaf(s.roots[0]).transform[3][0] == Approx(7.0f));
 }
+
+// ---------------------------------------------------------------------------
+// for loops
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:for range produces one child per step", "[csg]") {
+    // [0:2] → i=0,1,2 — three spheres wrapped in a union
+    auto s = evaluate("for (i = [0:2]) sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Union);
+    REQUIRE(b.children.size() == 3);
+}
+
+TEST_CASE("CsgEval:for range with step", "[csg]") {
+    // [0:2:6] → i=0,2,4,6 — four children
+    auto s = evaluate("for (i = [0:2:6]) sphere(r=1);");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 4);
+}
+
+TEST_CASE("CsgEval:for list produces one child per value", "[csg]") {
+    auto s = evaluate("for (v = [1, 5, 9]) cube([v, v, v]);");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Union);
+    REQUIRE(b.children.size() == 3);
+}
+
+TEST_CASE("CsgEval:for single iteration returns leaf directly", "[csg]") {
+    // [3:3] → i=3 only — no wrapping union needed
+    auto s = evaluate("for (i = [3:3]) sphere(r=2);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:for uses loop variable in child", "[csg]") {
+    // translate([i,0,0]) — each sphere should sit at x = i
+    auto s = evaluate("for (i = [0:2]) translate([i*5, 0, 0]) sphere(r=1);");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 3);
+    REQUIRE(asLeaf(b.children[0]).transform[3][0] == Approx(0.0f));
+    REQUIRE(asLeaf(b.children[1]).transform[3][0] == Approx(5.0f));
+    REQUIRE(asLeaf(b.children[2]).transform[3][0] == Approx(10.0f));
+}
+
+TEST_CASE("CsgEval:for restores outer variable after loop", "[csg]") {
+    // 'i' is set before the loop; the for loop should restore it afterward
+    auto s = evaluate("i = 99; for (i = [0:1]) sphere(r=1); cube([i,i,i]);");
+    // cube gets i=99 (restored), for produces 2 spheres
+    REQUIRE(s.roots.size() == 2);
+    REQUIRE(asLeaf(s.roots[1]).params.at("x") == Approx(99.0));
+}
+
+TEST_CASE("CsgEval:for empty range yields no geometry", "[csg]") {
+    // [5:3] with positive step — no iterations
+    auto s = evaluate("for (i = [5:3]) sphere(r=1);");
+    REQUIRE(s.roots.empty());
+}

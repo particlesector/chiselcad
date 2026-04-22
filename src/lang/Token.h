@@ -49,6 +49,10 @@ enum class TokenKind : uint8_t {
     // Control flow
     If,   // if
     Else, // else
+    For,  // for
+
+    // Range separator
+    Colon, // :
 
     // Arithmetic operators
     Plus,         // +
