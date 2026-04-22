@@ -13,13 +13,14 @@ namespace chisel::lang {
 struct PrimitiveNode;
 struct BooleanNode;
 struct TransformNode;
+struct IfNode;
 
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // All nodes are heap-allocated via unique_ptr so the tree is
 // easy to move/own and the variant stays small.
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,20 @@ inline AstNodePtr makeBoolean(BooleanNode n) {
     return std::make_unique<AstNode>(std::move(n));
 }
 inline AstNodePtr makeTransform(TransformNode n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
+
+// ---------------------------------------------------------------------------
+// IfNode — if (condition) { ... } else { ... }
+// ---------------------------------------------------------------------------
+struct IfNode {
+    ExprPtr                  condition;
+    std::vector<AstNodePtr>  thenChildren;
+    std::vector<AstNodePtr>  elseChildren; // empty when no else branch
+    SourceLoc                loc;
+};
+
+inline AstNodePtr makeIf(IfNode n) {
     return std::make_unique<AstNode>(std::move(n));
 }
 

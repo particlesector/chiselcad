@@ -273,6 +273,53 @@ TEST_CASE("Parser:multiple root statements", "[parser]") {
 }
 
 // ---------------------------------------------------------------------------
+// if / else
+// ---------------------------------------------------------------------------
+static const IfNode& asIf(const AstNodePtr& n) {
+    return std::get<IfNode>(*n);
+}
+
+TEST_CASE("Parser:if with single then child", "[parser]") {
+    auto r = parse("if (1) sphere(r=3);");
+    REQUIRE(r.roots.size() == 1);
+    auto& n = asIf(r.roots[0]);
+    REQUIRE(n.thenChildren.size() == 1);
+    REQUIRE(n.elseChildren.empty());
+    REQUIRE(asPrim(n.thenChildren[0]).kind == PrimitiveNode::Kind::Sphere);
+}
+
+TEST_CASE("Parser:if with brace body", "[parser]") {
+    auto r = parse("if (1) { cube([5,5,5]); sphere(r=2); }");
+    auto& n = asIf(r.roots[0]);
+    REQUIRE(n.thenChildren.size() == 2);
+    REQUIRE(n.elseChildren.empty());
+}
+
+TEST_CASE("Parser:if-else both branches", "[parser]") {
+    auto r = parse("if (0) sphere(r=3); else cube([4,4,4]);");
+    auto& n = asIf(r.roots[0]);
+    REQUIRE(n.thenChildren.size() == 1);
+    REQUIRE(n.elseChildren.size() == 1);
+    REQUIRE(asPrim(n.thenChildren[0]).kind == PrimitiveNode::Kind::Sphere);
+    REQUIRE(asPrim(n.elseChildren[0]).kind == PrimitiveNode::Kind::Cube);
+}
+
+TEST_CASE("Parser:if-else chained", "[parser]") {
+    // else branch is itself an if — chaining works naturally
+    auto r = parse("if (0) sphere(r=1); else if (1) cube([2,2,2]);");
+    auto& outer = asIf(r.roots[0]);
+    REQUIRE(outer.elseChildren.size() == 1);
+    auto& inner = asIf(outer.elseChildren[0]);
+    REQUIRE(inner.thenChildren.size() == 1);
+}
+
+TEST_CASE("Parser:if condition is expression", "[parser]") {
+    auto r = parse("if (3 > 2) sphere(r=1);");
+    REQUIRE(r.roots.size() == 1);
+    REQUIRE(std::holds_alternative<IfNode>(*r.roots[0]));
+}
+
+// ---------------------------------------------------------------------------
 // Error recovery
 // ---------------------------------------------------------------------------
 TEST_CASE("Parser:recovers from missing paren", "[parser]") {

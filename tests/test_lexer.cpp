@@ -50,6 +50,11 @@ TEST_CASE("Lexer:hull and minkowski keywords", "[lexer]") {
     REQUIRE(kinds("minkowski") == std::vector{TokenKind::Minkowski});
 }
 
+TEST_CASE("Lexer:if and else keywords", "[lexer]") {
+    REQUIRE(kinds("if")   == std::vector{TokenKind::If});
+    REQUIRE(kinds("else") == std::vector{TokenKind::Else});
+}
+
 // ---------------------------------------------------------------------------
 // Transform keywords
 // ---------------------------------------------------------------------------

@@ -23,6 +23,8 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"rotate",       TokenKind::Rotate},
     {"scale",        TokenKind::Scale},
     {"mirror",       TokenKind::Mirror},
+    {"if",           TokenKind::If},
+    {"else",         TokenKind::Else},
 };
 
 // ---------------------------------------------------------------------------

@@ -134,6 +134,9 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::Mirror:
         return parseTransform(k);
 
+    case TokenKind::If:
+        return parseIf();
+
     default:
         return nullptr;
     }
@@ -207,6 +210,28 @@ AstNodePtr Parser::parseTransform(TokenKind k) {
 
     node.children = parseBody();
     return makeTransform(std::move(node));
+}
+
+// ---------------------------------------------------------------------------
+// if / else
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseIf() {
+    const Token& kw = advance(); // consume 'if'
+    IfNode node;
+    node.loc = kw.loc;
+
+    expect(TokenKind::LParen, "expected '(' after 'if'");
+    node.condition = parseExpr();
+    expect(TokenKind::RParen, "expected ')' after condition");
+
+    node.thenChildren = parseBody();
+
+    if (check(TokenKind::Else)) {
+        advance(); // consume 'else'
+        node.elseChildren = parseBody();
+    }
+
+    return makeIf(std::move(node));
 }
 
 // ---------------------------------------------------------------------------

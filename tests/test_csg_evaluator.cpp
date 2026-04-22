@@ -248,3 +248,55 @@ TEST_CASE("CsgEval:minkowski stores outer transform", "[csg]") {
     const auto& child = asLeaf(b.children[0]);
     REQUIRE(child.transform[3][1] == Approx(0.0f)); // local space — no y offset
 }
+
+// ---------------------------------------------------------------------------
+// if / else
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:if true yields then geometry", "[csg]") {
+    auto s = evaluate("if (1) sphere(r=5);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:if false yields no geometry", "[csg]") {
+    auto s = evaluate("if (0) sphere(r=5);");
+    REQUIRE(s.roots.empty());
+}
+
+TEST_CASE("CsgEval:if false else yields else geometry", "[csg]") {
+    auto s = evaluate("if (0) sphere(r=5); else cube([3,3,3]);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Cube);
+}
+
+TEST_CASE("CsgEval:if true else skips else geometry", "[csg]") {
+    auto s = evaluate("if (1) sphere(r=5); else cube([3,3,3]);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:if condition from expression", "[csg]") {
+    auto s = evaluate("if (3 > 2) sphere(r=4);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:if condition from variable", "[csg]") {
+    auto s = evaluate("show = 1; if (show) cube([5,5,5]);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Cube);
+}
+
+TEST_CASE("CsgEval:if multiple then children wrapped in union", "[csg]") {
+    auto s = evaluate("if (1) { sphere(r=1); cube([2,2,2]); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Union);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("CsgEval:if inherits outer transform", "[csg]") {
+    auto s = evaluate("translate([7,0,0]) if (1) sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).transform[3][0] == Approx(7.0f));
+}
