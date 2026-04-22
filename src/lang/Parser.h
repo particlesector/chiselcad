@@ -36,6 +36,7 @@ private:
     AstNodePtr parsePrimitive(TokenKind k);
     AstNodePtr parseBoolean(TokenKind k);
     AstNodePtr parseTransform(TokenKind k);
+    AstNodePtr parseIf();
 
     // ---- expressions (Pratt parser) --------------------------------------
     ExprPtr parseExpr(int minPrec = 0);

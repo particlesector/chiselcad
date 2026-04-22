@@ -47,6 +47,8 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
             return evalBoolean(n, xform);
         else if constexpr (std::is_same_v<T, TransformNode>)
             return evalTransform(n, xform);
+        else if constexpr (std::is_same_v<T, IfNode>)
+            return evalIf(n, xform);
         return nullptr;
     }, node);
 }
@@ -174,6 +176,29 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
     }
     }
     return m;
+}
+
+// ---------------------------------------------------------------------------
+// if/else — evaluate condition, walk the live branch
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform) {
+    const bool cond = bool(m_interp->evaluate(*node.condition));
+    const auto& branch = cond ? node.thenChildren : node.elseChildren;
+
+    std::vector<CsgNodePtr> children;
+    children.reserve(branch.size());
+    for (const auto& child : branch) {
+        if (auto c = evalNode(*child, xform))
+            children.push_back(std::move(c));
+    }
+
+    if (children.empty())     return nullptr;
+    if (children.size() == 1) return children[0];
+
+    CsgBoolean u;
+    u.op       = CsgBoolean::Op::Union;
+    u.children = std::move(children);
+    return makeBoolean(std::move(u));
 }
 
 } // namespace chisel::csg

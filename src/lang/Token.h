@@ -46,6 +46,10 @@ enum class TokenKind : uint8_t {
     Scale,
     Mirror,
 
+    // Control flow
+    If,   // if
+    Else, // else
+
     // Arithmetic operators
     Plus,         // +
     Minus,        // -
