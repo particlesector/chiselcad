@@ -14,13 +14,14 @@ struct PrimitiveNode;
 struct BooleanNode;
 struct TransformNode;
 struct IfNode;
+struct ForNode;
 
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // All nodes are heap-allocated via unique_ptr so the tree is
 // easy to move/own and the variant stays small.
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -87,6 +88,30 @@ struct IfNode {
 };
 
 inline AstNodePtr makeIf(IfNode n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
+
+// ---------------------------------------------------------------------------
+// ForNode — for (var = [start:step:end]) { ... }
+//           for (var = [start:end])      { ... }   (step defaults to 1)
+//           for (var = [v0, v1, v2, ...]) { ... }  (explicit list)
+// ---------------------------------------------------------------------------
+struct ForRange {
+    bool             isRange = true;  // true: start/step/end; false: list
+    ExprPtr          start;           // range form — required
+    ExprPtr          step;            // range form — nullptr means step of 1
+    ExprPtr          end;             // range form — required
+    std::vector<ExprPtr> list;        // list form
+};
+
+struct ForNode {
+    std::string             var;
+    ForRange                range;
+    std::vector<AstNodePtr> children;
+    SourceLoc               loc;
+};
+
+inline AstNodePtr makeFor(ForNode n) {
     return std::make_unique<AstNode>(std::move(n));
 }
 

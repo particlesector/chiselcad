@@ -137,6 +137,9 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::If:
         return parseIf();
 
+    case TokenKind::For:
+        return parseFor();
+
     default:
         return nullptr;
     }
@@ -232,6 +235,57 @@ AstNodePtr Parser::parseIf() {
     }
 
     return makeIf(std::move(node));
+}
+
+// ---------------------------------------------------------------------------
+// for — for (var = [start:step:end]) or for (var = [v0, v1, ...])
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseFor() {
+    const Token& kw = advance(); // consume 'for'
+    ForNode node;
+    node.loc = kw.loc;
+
+    expect(TokenKind::LParen, "expected '(' after 'for'");
+    node.var = expect(TokenKind::Ident, "expected loop variable").text;
+    expect(TokenKind::Equals, "expected '=' after loop variable");
+    expect(TokenKind::LBracket, "expected '[' for range/list");
+
+    // Parse first expression — determines range vs list form
+    auto first = parseExpr();
+
+    if (check(TokenKind::Colon)) {
+        // Range form: [start : end] or [start : step : end]
+        advance(); // consume ':'
+        auto second = parseExpr();
+        if (check(TokenKind::Colon)) {
+            advance(); // consume ':'
+            auto third = parseExpr();
+            // [first:second:third] = [start:step:end]
+            node.range.isRange = true;
+            node.range.start   = std::move(first);
+            node.range.step    = std::move(second);
+            node.range.end     = std::move(third);
+        } else {
+            // [first:second] = [start:end], implicit step of 1
+            node.range.isRange = true;
+            node.range.start   = std::move(first);
+            node.range.end     = std::move(second);
+        }
+    } else {
+        // List form: [first, ...]
+        node.range.isRange = false;
+        node.range.list.push_back(std::move(first));
+        while (match(TokenKind::Comma)) {
+            if (check(TokenKind::RBracket)) break;
+            node.range.list.push_back(parseExpr());
+        }
+    }
+
+    expect(TokenKind::RBracket, "expected ']' after range/list");
+    expect(TokenKind::RParen,   "expected ')' after for header");
+
+    node.children = parseBody();
+    return makeFor(std::move(node));
 }
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"mirror",       TokenKind::Mirror},
     {"if",           TokenKind::If},
     {"else",         TokenKind::Else},
+    {"for",          TokenKind::For},
 };
 
 // ---------------------------------------------------------------------------
@@ -94,6 +95,7 @@ std::vector<Token> Lexer::tokenize() {
         case ']':  tokens.push_back(makeToken(TokenKind::RBracket,  startOffset)); break;
         case ',':  tokens.push_back(makeToken(TokenKind::Comma,     startOffset)); break;
         case ';':  tokens.push_back(makeToken(TokenKind::Semicolon, startOffset)); break;
+        case ':':  tokens.push_back(makeToken(TokenKind::Colon,     startOffset)); break;
         case '+':  tokens.push_back(makeToken(TokenKind::Plus,      startOffset)); break;
         case '-':  tokens.push_back(makeToken(TokenKind::Minus,     startOffset)); break;
         case '*':  tokens.push_back(makeToken(TokenKind::Star,      startOffset)); break;

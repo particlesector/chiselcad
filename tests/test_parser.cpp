@@ -320,6 +320,43 @@ TEST_CASE("Parser:if condition is expression", "[parser]") {
 }
 
 // ---------------------------------------------------------------------------
+// for loops
+// ---------------------------------------------------------------------------
+static const ForNode& asFor(const AstNodePtr& n) {
+    return std::get<ForNode>(*n);
+}
+
+TEST_CASE("Parser:for range [start:end]", "[parser]") {
+    auto r = parse("for (i = [0:4]) sphere(r=1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.var == "i");
+    REQUIRE(f.range.isRange == true);
+    REQUIRE(f.range.step == nullptr); // implicit step
+    REQUIRE(f.children.size() == 1);
+}
+
+TEST_CASE("Parser:for range [start:step:end]", "[parser]") {
+    auto r = parse("for (i = [0:2:8]) sphere(r=1);");
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.range.isRange == true);
+    REQUIRE(f.range.step != nullptr);
+}
+
+TEST_CASE("Parser:for list", "[parser]") {
+    auto r = parse("for (v = [1, 3, 7]) sphere(r=1);");
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.range.isRange == false);
+    REQUIRE(f.range.list.size() == 3);
+}
+
+TEST_CASE("Parser:for with brace body", "[parser]") {
+    auto r = parse("for (i = [0:2]) { cube([5,5,5]); sphere(r=2); }");
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.children.size() == 2);
+}
+
+// ---------------------------------------------------------------------------
 // Error recovery
 // ---------------------------------------------------------------------------
 TEST_CASE("Parser:recovers from missing paren", "[parser]") {

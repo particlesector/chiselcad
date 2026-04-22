@@ -29,6 +29,7 @@ private:
     CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform);
     CsgNodePtr evalTransform(const chisel::lang::TransformNode& t, const glm::mat4& xform);
     CsgNodePtr evalIf(const chisel::lang::IfNode& n, const glm::mat4& xform);
+    CsgNodePtr evalFor(const chisel::lang::ForNode& n, const glm::mat4& xform);
 
     glm::mat4 makeMatrix(const chisel::lang::TransformNode& t) const;
 };

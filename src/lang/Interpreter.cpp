@@ -137,6 +137,18 @@ std::array<double, 3> Interpreter::evalVec3(const ExprNode& expr) const {
 }
 
 // ---------------------------------------------------------------------------
+// getVar / setVar — used by CsgEvaluator to bind for-loop variables
+// ---------------------------------------------------------------------------
+Value Interpreter::getVar(const std::string& name) const {
+    auto it = m_env.find(name);
+    return it != m_env.end() ? it->second : Value::undef();
+}
+
+void Interpreter::setVar(const std::string& name, Value val) {
+    m_env[name] = std::move(val);
+}
+
+// ---------------------------------------------------------------------------
 // Built-in functions (V2a subset — math functions added in V2c)
 // ---------------------------------------------------------------------------
 Value Interpreter::callBuiltin(const std::string& name,
