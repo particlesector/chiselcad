@@ -1,4 +1,5 @@
 #pragma once
+#include "Expr.h"
 #include "Token.h"
 #include <memory>
 #include <string>
@@ -28,9 +29,10 @@ struct PrimitiveNode {
     enum class Kind { Cube, Sphere, Cylinder };
 
     Kind kind;
-    // Named params: "r", "h", "r1", "r2", "center", "$fn", "$fs", "$fa", etc.
-    std::unordered_map<std::string, double> params;
-    // center flag stored separately for clarity
+    // Named params: "r", "h", "r1", "r2", "$fn", "$fs", "$fa", etc.
+    // Values are expression trees; the Interpreter resolves them to doubles.
+    std::unordered_map<std::string, ExprPtr> params;
+    // center is always a boolean literal in practice — kept as bool.
     bool center = false;
     SourceLoc loc;
 };
@@ -53,7 +55,9 @@ struct TransformNode {
     enum class Kind { Translate, Rotate, Scale, Mirror };
 
     Kind kind;
-    double x = 0.0, y = 0.0, z = 0.0; // the [x, y, z] vector argument
+    // [x, y, z] vector argument — stored as a VectorLit expression so
+    // that variable references like translate([dx, 0, 0]) work.
+    ExprPtr vec;
     std::vector<AstNodePtr> children;
     SourceLoc loc;
 };
@@ -72,13 +76,23 @@ inline AstNodePtr makeTransform(TransformNode n) {
 }
 
 // ---------------------------------------------------------------------------
+// AssignStmt — a variable assignment at file or block scope: x = expr;
+// ---------------------------------------------------------------------------
+struct AssignStmt {
+    std::string name;
+    ExprPtr     value;
+    SourceLoc   loc;
+};
+
+// ---------------------------------------------------------------------------
 // ParseResult — the output of a successful parse
 // ---------------------------------------------------------------------------
 struct ParseResult {
-    std::vector<AstNodePtr> roots; // top-level statements
-    double globalFn = 0.0;         // $fn if set at file scope (0 = unset)
-    double globalFs = 2.0;         // $fs default
-    double globalFa = 12.0;        // $fa default
+    std::vector<AstNodePtr>  roots;       // geometry-producing top-level nodes
+    std::vector<AssignStmt>  assignments; // variable assignments (x = expr;)
+    double globalFn = 0.0;               // $fn if set at file scope (0 = unset)
+    double globalFs = 2.0;               // $fs default
+    double globalFa = 12.0;             // $fa default
 };
 
 } // namespace chisel::lang

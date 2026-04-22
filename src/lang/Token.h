@@ -46,6 +46,26 @@ enum class TokenKind : uint8_t {
     Scale,
     Mirror,
 
+    // Arithmetic operators
+    Plus,         // +
+    Minus,        // -
+    Star,         // *
+    Slash,        // /
+    Percent,      // %
+
+    // Comparison / equality
+    EqualEqual,   // ==
+    BangEqual,    // !=
+    Less,         // <
+    LessEqual,    // <=
+    Greater,      // >
+    GreaterEqual, // >=
+
+    // Logical
+    Bang,         // !
+    AmpAmp,       // &&
+    PipePipe,     // ||
+
     // Punctuation
     LParen,   // (
     RParen,   // )

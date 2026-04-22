@@ -10,7 +10,6 @@ namespace chisel::lang {
 // ---------------------------------------------------------------------------
 Parser::Parser(std::vector<Token> tokens, std::string filePath)
     : m_tokens(std::move(tokens)), m_filePath(std::move(filePath)) {
-    // Guarantee at least one Eof token so peek() is always safe
     if (m_tokens.empty() || m_tokens.back().kind != TokenKind::Eof)
         m_tokens.push_back({TokenKind::Eof, {}, ""});
 }
@@ -20,7 +19,6 @@ Parser::Parser(std::vector<Token> tokens, std::string filePath)
 // ---------------------------------------------------------------------------
 ParseResult Parser::parse() {
     ParseResult result;
-    // defaults
     result.globalFs = 2.0;
     result.globalFa = 12.0;
 
@@ -41,7 +39,7 @@ bool Parser::hasErrors() const {
 // ---------------------------------------------------------------------------
 const Token& Parser::peek(int offset) const {
     size_t idx = m_pos + static_cast<size_t>(offset);
-    if (idx >= m_tokens.size()) return m_tokens.back(); // Eof
+    if (idx >= m_tokens.size()) return m_tokens.back();
     return m_tokens[idx];
 }
 
@@ -58,7 +56,6 @@ bool Parser::match(TokenKind k) {
 const Token& Parser::expect(TokenKind k, const char* msg) {
     if (check(k)) return advance();
     addError(msg, peek().loc);
-    // return current token without advancing so caller can see what's there
     return peek();
 }
 
@@ -72,28 +69,44 @@ void Parser::parseStatement(ParseResult& result) {
         return;
     }
 
-    // Any node-producing statement
+    // Variable assignment: ident = expr;  (no '(' follows the ident)
+    if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
+        parseAssignment(result);
+        return;
+    }
+
+    // Geometry node
     auto node = parseNode();
     if (node) {
         result.roots.push_back(std::move(node));
     } else {
-        // Nothing was recognised — skip one token to avoid infinite loop
-        if (!atEnd()) advance();
+        if (!atEnd()) advance(); // skip unrecognised token
     }
-    // Optional trailing semicolon at the top level
     match(TokenKind::Semicolon);
 }
 
 void Parser::parseSpecialVarAssignment(ParseResult& result) {
-    const Token& var = advance(); // consume $fn / $fs / $fa
+    const Token& var = advance(); // $fn / $fs / $fa
     expect(TokenKind::Equals, "expected '=' after special variable");
-    double val = parseNumber();
+    // Special vars are always numeric literals in practice
+    auto expr = parseExpr();
     match(TokenKind::Semicolon);
 
-    if      (var.text == "$fn") result.globalFn = val;
-    else if (var.text == "$fs") result.globalFs = val;
-    else if (var.text == "$fa") result.globalFa = val;
-    // unknown special var — silently ignore
+    // Evaluate immediately — special vars must be compile-time constants
+    if (auto* lit = std::get_if<NumberLit>(expr.get())) {
+        if      (var.text == "$fn") result.globalFn = lit->value;
+        else if (var.text == "$fs") result.globalFs = lit->value;
+        else if (var.text == "$fa") result.globalFa = lit->value;
+    }
+    // Non-literal $fn/$fs/$fa silently ignored for now (V2b will handle)
+}
+
+void Parser::parseAssignment(ParseResult& result) {
+    const Token& name_tok = advance(); // identifier
+    advance();                         // consume '='
+    auto value = parseExpr();
+    match(TokenKind::Semicolon);
+    result.assignments.push_back({name_tok.text, std::move(value), name_tok.loc});
 }
 
 // ---------------------------------------------------------------------------
@@ -141,9 +154,8 @@ AstNodePtr Parser::parsePrimitive(TokenKind k) {
     default: break;
     }
 
-    // Parse argument list
     expect(TokenKind::LParen, "expected '(' after primitive name");
-    node.params = parseParamList(node.center);
+    parseParamList(node.params, node.center);
     expect(TokenKind::RParen, "expected ')' after primitive arguments");
 
     return makePrimitive(std::move(node));
@@ -166,7 +178,6 @@ AstNodePtr Parser::parseBoolean(TokenKind k) {
     default: break;
     }
 
-    // () — empty param list required by OpenSCAD syntax
     expect(TokenKind::LParen,  "expected '(' after boolean operator");
     expect(TokenKind::RParen,  "expected ')' after boolean operator");
 
@@ -191,7 +202,7 @@ AstNodePtr Parser::parseTransform(TokenKind k) {
     }
 
     expect(TokenKind::LParen, "expected '(' after transform name");
-    parseVec3(node.x, node.y, node.z);
+    node.vec = parseVecExpr();
     expect(TokenKind::RParen, "expected ')' after transform vector");
 
     node.children = parseBody();
@@ -199,98 +210,230 @@ AstNodePtr Parser::parseTransform(TokenKind k) {
 }
 
 // ---------------------------------------------------------------------------
-// parseVec3: consume [x, y, z]
+// parseVecExpr — parse a [x, y, z] literal into a VectorLit ExprPtr
 // ---------------------------------------------------------------------------
-void Parser::parseVec3(double& x, double& y, double& z) {
-    x = y = z = 0.0;
+ExprPtr Parser::parseVecExpr() {
+    SourceLoc loc = peek().loc;
     if (!match(TokenKind::LBracket)) {
         addError("expected '[' for vector argument", peek().loc);
-        return;
+        VectorLit vlit;
+        vlit.loc = loc;
+        for (int i = 0; i < 3; ++i)
+            vlit.elements.push_back(makeExpr(NumberLit{0.0, loc}));
+        return makeExpr(std::move(vlit));
     }
-    // Parse up to 3 comma-separated numbers
-    double* components[3] = {&x, &y, &z};
+
+    VectorLit vlit;
+    vlit.loc = loc;
     for (int i = 0; i < 3; ++i) {
-        if (check(TokenKind::RBracket)) break;
-        *components[i] = parseNumber();
-        if (i < 2 && !match(TokenKind::Comma)) break;
+        if (check(TokenKind::RBracket)) {
+            // Fewer than 3 components — fill rest with 0
+            vlit.elements.push_back(makeExpr(NumberLit{0.0, peek().loc}));
+            continue;
+        }
+        vlit.elements.push_back(parseExpr());
+        if (i < 2) match(TokenKind::Comma);
     }
     expect(TokenKind::RBracket, "expected ']' after vector");
+    return makeExpr(std::move(vlit));
 }
 
 // ---------------------------------------------------------------------------
-// parseParamList: (name = value, ...) — handles both named and positional
-// For cube:     ([x,y,z]) or ([x,y,z], center=true) or (size=[x,y,z])
-// For sphere:   (r=5) or (5)
-// For cylinder: (h=10, r=5) or (h=10, r1=3, r2=1, center=true)
-// Also handles per-node $fn/$fs/$fa overrides.
+// parseParamList — named and positional params → ExprPtr map + center flag
 // ---------------------------------------------------------------------------
-std::unordered_map<std::string, double> Parser::parseParamList(bool& center) {
-    std::unordered_map<std::string, double> params;
+void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
+                             bool& center) {
     center = false;
 
     while (!check(TokenKind::RParen) && !atEnd()) {
-        // Special variable override: $fn = 64
+        const size_t prevPos = m_pos; // guard against zero-progress infinite loops
+
+        // Special variable override: $fn = expr
         if (check(TokenKind::SpecialVar)) {
             std::string name = peek().text;
             advance();
             expect(TokenKind::Equals, "expected '=' after special variable");
-            params[name] = parseNumber();
+            params[name] = parseExpr();
             match(TokenKind::Comma);
             continue;
         }
 
-        // Named param: ident = value
-        if (check(TokenKind::Ident) &&
-            peek(1).kind == TokenKind::Equals) {
+        // Named param: ident = expr
+        if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
             std::string name = peek().text;
-            advance(); // consume ident
-            advance(); // consume '='
+            advance(); // ident
+            advance(); // =
 
             if (name == "center") {
-                // center = true / false
-                if (check(TokenKind::True))  { advance(); center = true;  }
+                if (check(TokenKind::True))       { advance(); center = true;  }
                 else if (check(TokenKind::False)) { advance(); center = false; }
-                else { center = (parseNumber() != 0.0); }
+                else {
+                    // Expression — evaluate it; treat non-zero as true
+                    auto expr = parseExpr();
+                    if (auto* lit = std::get_if<NumberLit>(expr.get()))
+                        center = (lit->value != 0.0);
+                    else if (auto* bl = std::get_if<BoolLit>(expr.get()))
+                        center = bl->value;
+                }
             } else {
-                params[name] = parseNumber();
+                params[name] = parseExpr();
             }
             match(TokenKind::Comma);
             continue;
         }
 
-        // Positional vector [x, y, z] — treat as "size" for cube
+        // Positional vector [x, y, z] — store as "x","y","z" params
         if (check(TokenKind::LBracket)) {
-            double x, y, z;
-            parseVec3(x, y, z);
-            params["x"] = x; params["y"] = y; params["z"] = z;
+            SourceLoc loc = peek().loc;
+            advance(); // [
+            for (int i = 0; i < 3 && !check(TokenKind::RBracket); ++i) {
+                static const char* keys[] = {"x", "y", "z"};
+                params[keys[i]] = parseExpr();
+                if (i < 2) match(TokenKind::Comma);
+            }
+            expect(TokenKind::RBracket, "expected ']'");
             match(TokenKind::Comma);
             continue;
         }
 
-        // Positional number — treat as first unnamed param (e.g. sphere(5))
-        if (check(TokenKind::Number)) {
-            params["_pos0"] = parseNumber();
+        // Positional number/expression — treat as _pos0
+        if (!check(TokenKind::RParen)) {
+            params["_pos0"] = parseExpr();
             match(TokenKind::Comma);
-            continue;
         }
 
-        // Unrecognised — stop to avoid spinning
-        break;
+        if (m_pos == prevPos) break; // no token consumed — stop to avoid infinite loop
     }
-    return params;
 }
 
 // ---------------------------------------------------------------------------
-// parseNumber: consume a Number token (or negative number)
+// Expression parser (Pratt / precedence climbing)
 // ---------------------------------------------------------------------------
-double Parser::parseNumber() {
-    if (check(TokenKind::Number)) {
-        double val = peek().numberValue();
-        advance();
-        return val;
+static int infixPrec(TokenKind k) {
+    switch (k) {
+    case TokenKind::PipePipe:    return 1;
+    case TokenKind::AmpAmp:      return 2;
+    case TokenKind::EqualEqual:
+    case TokenKind::BangEqual:   return 3;
+    case TokenKind::Less:
+    case TokenKind::LessEqual:
+    case TokenKind::Greater:
+    case TokenKind::GreaterEqual: return 4;
+    case TokenKind::Plus:
+    case TokenKind::Minus:        return 5;
+    case TokenKind::Star:
+    case TokenKind::Slash:
+    case TokenKind::Percent:      return 6;
+    default: return -1;
     }
-    addError("expected a number", peek().loc);
-    return 0.0;
+}
+
+static BinaryExpr::Op tokenToBinaryOp(TokenKind k) {
+    switch (k) {
+    case TokenKind::Plus:         return BinaryExpr::Op::Add;
+    case TokenKind::Minus:        return BinaryExpr::Op::Sub;
+    case TokenKind::Star:         return BinaryExpr::Op::Mul;
+    case TokenKind::Slash:        return BinaryExpr::Op::Div;
+    case TokenKind::Percent:      return BinaryExpr::Op::Mod;
+    case TokenKind::EqualEqual:   return BinaryExpr::Op::Eq;
+    case TokenKind::BangEqual:    return BinaryExpr::Op::Ne;
+    case TokenKind::Less:         return BinaryExpr::Op::Lt;
+    case TokenKind::LessEqual:    return BinaryExpr::Op::Le;
+    case TokenKind::Greater:      return BinaryExpr::Op::Gt;
+    case TokenKind::GreaterEqual: return BinaryExpr::Op::Ge;
+    case TokenKind::AmpAmp:       return BinaryExpr::Op::And;
+    case TokenKind::PipePipe:     return BinaryExpr::Op::Or;
+    default: return BinaryExpr::Op::Add; // unreachable
+    }
+}
+
+ExprPtr Parser::parseExpr(int minPrec) {
+    auto lhs = parseUnary();
+
+    while (true) {
+        int prec = infixPrec(peek().kind);
+        if (prec < minPrec) break;
+
+        const Token& op_tok = advance();
+        SourceLoc    loc     = op_tok.loc;
+        auto rhs = parseExpr(prec + 1); // left-associative
+
+        BinaryExpr bin;
+        bin.op    = tokenToBinaryOp(op_tok.kind);
+        bin.left  = std::move(lhs);
+        bin.right = std::move(rhs);
+        bin.loc   = loc;
+        lhs = makeExpr(std::move(bin));
+    }
+    return lhs;
+}
+
+ExprPtr Parser::parseUnary() {
+    if (check(TokenKind::Minus)) {
+        const Token& tok = advance();
+        auto operand = parseUnary();
+        return makeExpr(UnaryExpr{UnaryExpr::Op::Neg, std::move(operand), tok.loc});
+    }
+    if (check(TokenKind::Bang)) {
+        const Token& tok = advance();
+        auto operand = parseUnary();
+        return makeExpr(UnaryExpr{UnaryExpr::Op::Not, std::move(operand), tok.loc});
+    }
+    return parsePrimary();
+}
+
+ExprPtr Parser::parsePrimary() {
+    // Number literal
+    if (check(TokenKind::Number)) {
+        const Token& tok = advance();
+        return makeExpr(NumberLit{tok.numberValue(), tok.loc});
+    }
+    // Bool literals
+    if (check(TokenKind::True)) {
+        SourceLoc loc = advance().loc;
+        return makeExpr(BoolLit{true, loc});
+    }
+    if (check(TokenKind::False)) {
+        SourceLoc loc = advance().loc;
+        return makeExpr(BoolLit{false, loc});
+    }
+    // Parenthesised expression
+    if (match(TokenKind::LParen)) {
+        auto expr = parseExpr();
+        expect(TokenKind::RParen, "expected ')'");
+        return expr;
+    }
+    // Vector literal [e0, e1, ...]
+    if (check(TokenKind::LBracket)) {
+        SourceLoc loc = advance().loc; // consume [
+        VectorLit vlit;
+        vlit.loc = loc;
+        while (!check(TokenKind::RBracket) && !atEnd()) {
+            vlit.elements.push_back(parseExpr());
+            if (!match(TokenKind::Comma)) break;
+        }
+        expect(TokenKind::RBracket, "expected ']'");
+        return makeExpr(std::move(vlit));
+    }
+    // Identifier — variable reference or function call
+    if (check(TokenKind::Ident)) {
+        const Token& name_tok = advance();
+        if (match(TokenKind::LParen)) {
+            // Function call: name(arg, arg, ...)
+            FunctionCall fc;
+            fc.name = name_tok.text;
+            fc.loc  = name_tok.loc;
+            while (!check(TokenKind::RParen) && !atEnd()) {
+                fc.args.push_back(parseExpr());
+                if (!match(TokenKind::Comma)) break;
+            }
+            expect(TokenKind::RParen, "expected ')' after function arguments");
+            return makeExpr(std::move(fc));
+        }
+        return makeExpr(VarRef{name_tok.text, name_tok.loc});
+    }
+    addError("expected expression", peek().loc);
+    return makeExpr(NumberLit{0.0, peek().loc});
 }
 
 // ---------------------------------------------------------------------------
@@ -305,15 +448,14 @@ std::vector<AstNodePtr> Parser::parseBody() {
             if (child) {
                 children.push_back(std::move(child));
             } else if (check(TokenKind::Semicolon)) {
-                advance(); // empty statement
+                advance();
             } else if (!check(TokenKind::RBrace)) {
                 synchronize();
             }
         }
         expect(TokenKind::RBrace, "expected '}' to close block");
-        match(TokenKind::Semicolon); // optional trailing ;
+        match(TokenKind::Semicolon);
     } else {
-        // Single child node (no braces)
         auto child = parseNode();
         if (child) children.push_back(std::move(child));
         match(TokenKind::Semicolon);
@@ -323,7 +465,7 @@ std::vector<AstNodePtr> Parser::parseBody() {
 }
 
 // ---------------------------------------------------------------------------
-// Error recovery: skip to the next '}' or ';'
+// Error recovery
 // ---------------------------------------------------------------------------
 void Parser::synchronize() {
     while (!atEnd()) {
