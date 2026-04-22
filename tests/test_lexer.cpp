@@ -91,17 +91,21 @@ TEST_CASE("Lexer:leading dot float", "[lexer]") {
 }
 
 TEST_CASE("Lexer:negative number", "[lexer]") {
+    // '-' is now always a Minus token; negation is handled by the parser.
     auto t = lex("-1");
-    REQUIRE(t[0].kind == TokenKind::Number);
-    REQUIRE(t[0].numberValue() == -1.0);
+    REQUIRE(t.size() == 2);
+    REQUIRE(t[0].kind == TokenKind::Minus);
+    REQUIRE(t[1].kind == TokenKind::Number);
+    REQUIRE(t[1].numberValue() == 1.0);
 }
 
 TEST_CASE("Lexer:negative float in vector context", "[lexer]") {
-    // As seen in rotate([0, -30, 0])
+    // As seen in rotate([0, -30, 0]) — produces [ 0 , - 30 , 0 ]
     auto t = lex("[0, -30, 0]");
     REQUIRE(t[1].kind == TokenKind::Number); // 0
-    REQUIRE(t[3].kind == TokenKind::Number); // -30
-    REQUIRE(t[3].numberValue() == -30.0);
+    REQUIRE(t[3].kind == TokenKind::Minus);  // - (unary, parsed by the expression parser)
+    REQUIRE(t[4].kind == TokenKind::Number); // 30
+    REQUIRE(t[4].numberValue() == 30.0);
 }
 
 // ---------------------------------------------------------------------------

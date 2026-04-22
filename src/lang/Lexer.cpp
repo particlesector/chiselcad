@@ -81,7 +81,7 @@ std::vector<Token> Lexer::tokenize() {
             continue;
         }
 
-        // Single-character punctuation
+        // Punctuation and operators
         advance();
         switch (c) {
         case '(':  tokens.push_back(makeToken(TokenKind::LParen,    startOffset)); break;
@@ -92,21 +92,35 @@ std::vector<Token> Lexer::tokenize() {
         case ']':  tokens.push_back(makeToken(TokenKind::RBracket,  startOffset)); break;
         case ',':  tokens.push_back(makeToken(TokenKind::Comma,     startOffset)); break;
         case ';':  tokens.push_back(makeToken(TokenKind::Semicolon, startOffset)); break;
-        case '=':  tokens.push_back(makeToken(TokenKind::Equals,    startOffset)); break;
-        case '-': {
-            // Negative number literal (e.g. rotate([0, -30, 0]))
-            if (std::isdigit(static_cast<unsigned char>(peek())) ||
-                (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1))))) {
-                // Back up and let scanNumber handle the minus as part of the literal
-                --m_pos;
-                if (m_col > 0) --m_col;
-                tokens.push_back(scanNumber(startOffset));
-            } else {
-                addError(std::string("unexpected character '") + c + "'",
-                         makeToken(TokenKind::Eof, startOffset).loc);
-            }
+        case '+':  tokens.push_back(makeToken(TokenKind::Plus,      startOffset)); break;
+        case '-':  tokens.push_back(makeToken(TokenKind::Minus,     startOffset)); break;
+        case '*':  tokens.push_back(makeToken(TokenKind::Star,      startOffset)); break;
+        case '/':  tokens.push_back(makeToken(TokenKind::Slash,     startOffset)); break;
+        case '%':  tokens.push_back(makeToken(TokenKind::Percent,   startOffset)); break;
+        case '!':
+            if (match('=')) tokens.push_back(makeToken(TokenKind::BangEqual,    startOffset));
+            else            tokens.push_back(makeToken(TokenKind::Bang,         startOffset));
             break;
-        }
+        case '<':
+            if (match('=')) tokens.push_back(makeToken(TokenKind::LessEqual,    startOffset));
+            else            tokens.push_back(makeToken(TokenKind::Less,         startOffset));
+            break;
+        case '>':
+            if (match('=')) tokens.push_back(makeToken(TokenKind::GreaterEqual, startOffset));
+            else            tokens.push_back(makeToken(TokenKind::Greater,      startOffset));
+            break;
+        case '=':
+            if (match('=')) tokens.push_back(makeToken(TokenKind::EqualEqual,   startOffset));
+            else            tokens.push_back(makeToken(TokenKind::Equals,       startOffset));
+            break;
+        case '&':
+            if (match('&')) tokens.push_back(makeToken(TokenKind::AmpAmp,      startOffset));
+            else addError("expected '&&'", makeToken(TokenKind::Eof, startOffset).loc);
+            break;
+        case '|':
+            if (match('|')) tokens.push_back(makeToken(TokenKind::PipePipe,    startOffset));
+            else addError("expected '||'", makeToken(TokenKind::Eof, startOffset).loc);
+            break;
         default:
             addError(std::string("unexpected character '") + c + "'",
                      makeToken(TokenKind::Eof, startOffset).loc);
@@ -180,9 +194,6 @@ Token Lexer::scanNumber(uint32_t startOffset) {
     // Capture line/col at start
     uint32_t startLine = m_line;
     uint32_t startCol  = m_col;
-
-    // Optional leading minus
-    if (peek() == '-') advance();
 
     // Integer part
     while (std::isdigit(static_cast<unsigned char>(peek()))) advance();

@@ -3,9 +3,23 @@
 #include "lang/Lexer.h"
 #include "lang/Parser.h"
 #include "lang/AST.h"
+#include "lang/Interpreter.h"
 
 using namespace chisel::lang;
 using Catch::Approx;
+
+// Evaluate a primitive param ExprPtr to a double using a default interpreter.
+static double paramVal(const PrimitiveNode& p, const std::string& name) {
+    Interpreter interp;
+    return interp.evalNumber(*p.params.at(name));
+}
+
+// Evaluate component i of a TransformNode's vec ExprPtr.
+static double vecComp(const TransformNode& t, int i) {
+    Interpreter interp;
+    const auto& vlit = std::get<VectorLit>(*t.vec);
+    return interp.evalNumber(*vlit.elements[static_cast<std::size_t>(i)]);
+}
 
 // Helper: lex + parse, assert no errors, return result
 static ParseResult parse(std::string_view src) {
@@ -52,9 +66,9 @@ TEST_CASE("Parser:cube with vector size", "[parser]") {
     REQUIRE(r.roots.size() == 1);
     auto& p = asPrim(r.roots[0]);
     REQUIRE(p.kind == PrimitiveNode::Kind::Cube);
-    REQUIRE(p.params.at("x") == 10.0);
-    REQUIRE(p.params.at("y") == 20.0);
-    REQUIRE(p.params.at("z") == 30.0);
+    REQUIRE(paramVal(p, "x") == Approx(10.0));
+    REQUIRE(paramVal(p, "y") == Approx(20.0));
+    REQUIRE(paramVal(p, "z") == Approx(30.0));
     REQUIRE(p.center == false);
 }
 
@@ -67,30 +81,30 @@ TEST_CASE("Parser:sphere with r", "[parser]") {
     auto r = parse("sphere(r = 5);");
     auto& p = asPrim(r.roots[0]);
     REQUIRE(p.kind == PrimitiveNode::Kind::Sphere);
-    REQUIRE(p.params.at("r") == 5.0);
+    REQUIRE(paramVal(p, "r") == Approx(5.0));
 }
 
 TEST_CASE("Parser:sphere with $fn override", "[parser]") {
     auto r = parse("sphere(r = 5, $fn = 8);");
     auto& p = asPrim(r.roots[0]);
-    REQUIRE(p.params.at("r") == 5.0);
-    REQUIRE(p.params.at("$fn") == 8.0);
+    REQUIRE(paramVal(p, "r")   == Approx(5.0));
+    REQUIRE(paramVal(p, "$fn") == Approx(8.0));
 }
 
 TEST_CASE("Parser:cylinder h and r", "[parser]") {
     auto r = parse("cylinder(h = 10, r = 5);");
     auto& p = asPrim(r.roots[0]);
     REQUIRE(p.kind == PrimitiveNode::Kind::Cylinder);
-    REQUIRE(p.params.at("h") == 10.0);
-    REQUIRE(p.params.at("r") == 5.0);
+    REQUIRE(paramVal(p, "h") == Approx(10.0));
+    REQUIRE(paramVal(p, "r") == Approx(5.0));
 }
 
 TEST_CASE("Parser:cylinder r1 r2 cone", "[parser]") {
     auto r = parse("cylinder(h = 12, r1 = 7, r2 = 1);");
     auto& p = asPrim(r.roots[0]);
-    REQUIRE(p.params.at("h")  == 12.0);
-    REQUIRE(p.params.at("r1") == 7.0);
-    REQUIRE(p.params.at("r2") == 1.0);
+    REQUIRE(paramVal(p, "h")  == Approx(12.0));
+    REQUIRE(paramVal(p, "r1") == Approx(7.0));
+    REQUIRE(paramVal(p, "r2") == Approx(1.0));
 }
 
 TEST_CASE("Parser:cylinder centered", "[parser]") {
@@ -165,9 +179,9 @@ TEST_CASE("Parser:translate", "[parser]") {
     REQUIRE(r.roots.size() == 1);
     auto& t = asTrans(r.roots[0]);
     REQUIRE(t.kind == TransformNode::Kind::Translate);
-    REQUIRE(t.x == 1.0);
-    REQUIRE(t.y == 2.0);
-    REQUIRE(t.z == 3.0);
+    REQUIRE(vecComp(t, 0) == Approx(1.0));
+    REQUIRE(vecComp(t, 1) == Approx(2.0));
+    REQUIRE(vecComp(t, 2) == Approx(3.0));
     REQUIRE(t.children.size() == 1);
 }
 
@@ -175,41 +189,41 @@ TEST_CASE("Parser:rotate", "[parser]") {
     auto r = parse("rotate([45, 0, 0]) cube([8,8,8], center=true);");
     auto& t = asTrans(r.roots[0]);
     REQUIRE(t.kind == TransformNode::Kind::Rotate);
-    REQUIRE(t.x == 45.0);
-    REQUIRE(t.y == 0.0);
-    REQUIRE(t.z == 0.0);
+    REQUIRE(vecComp(t, 0) == Approx(45.0));
+    REQUIRE(vecComp(t, 1) == Approx(0.0));
+    REQUIRE(vecComp(t, 2) == Approx(0.0));
 }
 
 TEST_CASE("Parser:rotate with negative angle", "[parser]") {
     // rotate([0, -30, 0]) from chiselcad_test.scad
     auto r = parse("rotate([0, -30, 0]) cube([6,8,5]);");
     auto& t = asTrans(r.roots[0]);
-    REQUIRE(t.y == -30.0);
+    REQUIRE(vecComp(t, 1) == Approx(-30.0));
 }
 
 TEST_CASE("Parser:scale", "[parser]") {
     auto r = parse("scale([1.8, 1.8, 1.8]) sphere(r=3);");
     auto& t = asTrans(r.roots[0]);
     REQUIRE(t.kind == TransformNode::Kind::Scale);
-    REQUIRE(t.x == Approx(1.8));
+    REQUIRE(vecComp(t, 0) == Approx(1.8));
 }
 
 TEST_CASE("Parser:mirror", "[parser]") {
     auto r = parse("mirror([1, 0, 0]) sphere(r=3);");
     auto& t = asTrans(r.roots[0]);
     REQUIRE(t.kind == TransformNode::Kind::Mirror);
-    REQUIRE(t.x == 1.0);
-    REQUIRE(t.y == 0.0);
-    REQUIRE(t.z == 0.0);
+    REQUIRE(vecComp(t, 0) == Approx(1.0));
+    REQUIRE(vecComp(t, 1) == Approx(0.0));
+    REQUIRE(vecComp(t, 2) == Approx(0.0));
 }
 
 TEST_CASE("Parser:mirror identity [0,0,0]", "[parser]") {
     // edge case from chiselcad_test.scad line 303
     auto r = parse("mirror([0, 0, 0]) union() {};");
     auto& t = asTrans(r.roots[0]);
-    REQUIRE(t.x == 0.0);
-    REQUIRE(t.y == 0.0);
-    REQUIRE(t.z == 0.0);
+    REQUIRE(vecComp(t, 0) == Approx(0.0));
+    REQUIRE(vecComp(t, 1) == Approx(0.0));
+    REQUIRE(vecComp(t, 2) == Approx(0.0));
 }
 
 // ---------------------------------------------------------------------------

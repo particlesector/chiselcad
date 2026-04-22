@@ -99,6 +99,7 @@ set(CHISELCAD_SOURCES
     # Language
     src/lang/Lexer.cpp
     src/lang/Parser.cpp
+    src/lang/Interpreter.cpp
 
     # CSG
     src/csg/CsgEvaluator.cpp
@@ -171,10 +172,12 @@ set(CHISELCAD_TEST_SOURCES
     tests/test_lexer.cpp
     tests/test_parser.cpp
     tests/test_csg_evaluator.cpp
+    tests/test_interpreter.cpp
 
     # Sources under test (no GPU/Manifold deps)
     src/lang/Lexer.cpp
     src/lang/Parser.cpp
+    src/lang/Interpreter.cpp
     src/csg/CsgEvaluator.cpp
 )
 
