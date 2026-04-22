@@ -284,7 +284,6 @@ void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
 
         // Positional vector [x, y, z] — store as "x","y","z" params
         if (check(TokenKind::LBracket)) {
-            SourceLoc loc = peek().loc;
             advance(); // [
             for (int i = 0; i < 3 && !check(TokenKind::RBracket); ++i) {
                 static const char* keys[] = {"x", "y", "z"};
