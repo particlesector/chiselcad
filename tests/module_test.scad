@@ -59,4 +59,4 @@ translate([40, -120, 0])
     ball(6);
 // sphere at (65,-120,0) should use r=99 (caller's env restored after ball())
 translate([65, -120, 0])
-    sphere(r = r);
+   sphere(r = r);

@@ -107,7 +107,20 @@ void Application::run() {
     initImGui();
 
     m_camera.init(m_config.cameraDistance);
+    m_camera.setState(m_config.cameraYaw, m_config.cameraPitch,
+                      m_config.cameraDistance,
+                      {m_config.cameraTargetX, m_config.cameraTargetY, m_config.cameraTargetZ});
     m_meshBuilder.setWarnOverlappingRoots(m_config.warnOverlappingRoots);
+
+    // Restore last-opened file when none was provided on the command line
+    if (m_state.scadPath.empty() && !m_config.lastFilePath.empty()) {
+        std::filesystem::path lastPath(m_config.lastFilePath);
+        std::error_code ec;
+        if (std::filesystem::exists(lastPath, ec)) {
+            m_state.scadPath = lastPath;
+            m_firstMesh = false; // use restored camera, don't auto-fit
+        }
+    }
 
     if (!m_state.scadPath.empty()) {
         auto ext = m_state.scadPath.extension().string();
@@ -189,6 +202,26 @@ void Application::run() {
     }
 
     vkDeviceWaitIdle(m_ctx.device());
+
+    // Persist window state
+    int ww = 0, wh = 0;
+    glfwGetWindowSize(m_window, &ww, &wh);
+    if (ww > 0 && wh > 0) {
+        m_config.windowWidth  = ww;
+        m_config.windowHeight = wh;
+    }
+
+    // Persist camera state
+    m_config.cameraDistance = m_camera.distance();
+    m_config.cameraYaw      = m_camera.yaw();
+    m_config.cameraPitch    = m_camera.pitch();
+    m_config.cameraTargetX  = m_camera.target().x;
+    m_config.cameraTargetY  = m_camera.target().y;
+    m_config.cameraTargetZ  = m_camera.target().z;
+
+    // Persist last opened file
+    m_config.lastFilePath = m_state.scadPath.string();
+
     m_config.save(Config::defaultPath());
 }
 
