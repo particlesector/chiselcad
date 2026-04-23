@@ -69,6 +69,12 @@ void Parser::parseStatement(ParseResult& result) {
         return;
     }
 
+    // Module definition: module name(...) { ... }
+    if (check(TokenKind::Module)) {
+        parseModuleDef(result);
+        return;
+    }
+
     // Variable assignment: ident = expr;  (no '(' follows the ident)
     if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
         parseAssignment(result);
@@ -139,6 +145,12 @@ AstNodePtr Parser::parseNode() {
 
     case TokenKind::For:
         return parseFor();
+
+    case TokenKind::Ident:
+        // Could be a module call: name(args) { ... }
+        if (peek(1).kind == TokenKind::LParen)
+            return parseModuleCall();
+        return nullptr;
 
     default:
         return nullptr;
@@ -512,6 +524,82 @@ ExprPtr Parser::parsePrimary() {
     }
     addError("expected expression", peek().loc);
     return makeExpr(NumberLit{0.0, peek().loc});
+}
+
+// ---------------------------------------------------------------------------
+// module — module name(param, param = default, ...) { body }
+// ---------------------------------------------------------------------------
+void Parser::parseModuleDef(ParseResult& result) {
+    const Token& kw = advance(); // consume 'module'
+    ModuleDef def;
+    def.loc  = kw.loc;
+    def.name = expect(TokenKind::Ident, "expected module name").text;
+
+    expect(TokenKind::LParen, "expected '(' after module name");
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        ModuleParam param;
+        param.name = expect(TokenKind::Ident, "expected parameter name").text;
+        if (match(TokenKind::Equals))
+            param.defaultVal = parseExpr();
+        def.params.push_back(std::move(param));
+        if (!match(TokenKind::Comma)) break;
+    }
+    expect(TokenKind::RParen, "expected ')' after parameter list");
+
+    // Body must be a brace block for module definitions
+    expect(TokenKind::LBrace, "expected '{' for module body");
+    while (!check(TokenKind::RBrace) && !atEnd()) {
+        auto child = parseNode();
+        if (child) {
+            def.body.push_back(std::move(child));
+        } else if (check(TokenKind::Semicolon)) {
+            advance();
+        } else if (!check(TokenKind::RBrace)) {
+            // Handle assignments inside module body
+            if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
+                // Variable assignment in module body — ignore for now (not scope-captured)
+                advance(); advance(); parseExpr(); match(TokenKind::Semicolon);
+            } else {
+                synchronize();
+            }
+        }
+    }
+    expect(TokenKind::RBrace, "expected '}' to close module body");
+
+    result.moduleDefs.push_back(std::move(def));
+}
+
+// ---------------------------------------------------------------------------
+// module call — name(arg, name = arg, ...) { optional children }
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseModuleCall() {
+    const Token& name_tok = advance(); // consume identifier
+    ModuleCallNode node;
+    node.loc  = name_tok.loc;
+    node.name = name_tok.text;
+
+    expect(TokenKind::LParen, "expected '(' in module call");
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        ModuleArg arg;
+        // Named argument: ident = expr
+        if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
+            arg.name = advance().text; // ident
+            advance();                 // =
+        }
+        arg.value = parseExpr();
+        node.args.push_back(std::move(arg));
+        if (!match(TokenKind::Comma)) break;
+    }
+    expect(TokenKind::RParen, "expected ')' after module arguments");
+
+    // Optional children body (not yet used by the evaluator)
+    if (check(TokenKind::LBrace) || (!check(TokenKind::Semicolon) && !atEnd() && peek().kind != TokenKind::RBrace)) {
+        node.children = parseBody();
+    } else {
+        match(TokenKind::Semicolon);
+    }
+
+    return makeModuleCall(std::move(node));
 }
 
 // ---------------------------------------------------------------------------

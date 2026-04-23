@@ -43,6 +43,7 @@ private:
     // ImGui drawing
     void drawMenuBar();
     void drawImGui();
+    void drawPrefsPopup();
 
     // Camera / file helpers
     void fitToView();
@@ -99,6 +100,7 @@ private:
     // UI state
     bool      m_showChiselPanel = true;
     bool      m_showAbout       = false;
+    bool      m_showPrefs       = false;
     float     m_fontScale       = 1.0f;
 
     // Export error shown in a modal

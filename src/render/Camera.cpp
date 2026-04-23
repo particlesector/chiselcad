@@ -15,6 +15,13 @@ void Camera::init(float distance) {
     m_distance = distance;
 }
 
+void Camera::setState(float yaw, float pitch, float distance, glm::vec3 target) {
+    m_yaw      = yaw;
+    m_pitch    = pitch;
+    m_distance = distance;
+    m_target   = target;
+}
+
 void Camera::onScroll(double dy) {
     m_distance -= static_cast<float>(dy) * m_distance * 0.1f;
     m_distance  = std::max(0.5f, m_distance);

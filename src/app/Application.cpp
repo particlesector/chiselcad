@@ -107,6 +107,20 @@ void Application::run() {
     initImGui();
 
     m_camera.init(m_config.cameraDistance);
+    m_camera.setState(m_config.cameraYaw, m_config.cameraPitch,
+                      m_config.cameraDistance,
+                      {m_config.cameraTargetX, m_config.cameraTargetY, m_config.cameraTargetZ});
+    m_meshBuilder.setWarnOverlappingRoots(m_config.warnOverlappingRoots);
+
+    // Restore last-opened file when none was provided on the command line
+    if (m_state.scadPath.empty() && !m_config.lastFilePath.empty()) {
+        std::filesystem::path lastPath(m_config.lastFilePath);
+        std::error_code ec;
+        if (std::filesystem::exists(lastPath, ec)) {
+            m_state.scadPath = lastPath;
+            m_firstMesh = false; // use restored camera, don't auto-fit
+        }
+    }
 
     if (!m_state.scadPath.empty()) {
         auto ext = m_state.scadPath.extension().string();
@@ -188,6 +202,26 @@ void Application::run() {
     }
 
     vkDeviceWaitIdle(m_ctx.device());
+
+    // Persist window state
+    int ww = 0, wh = 0;
+    glfwGetWindowSize(m_window, &ww, &wh);
+    if (ww > 0 && wh > 0) {
+        m_config.windowWidth  = ww;
+        m_config.windowHeight = wh;
+    }
+
+    // Persist camera state
+    m_config.cameraDistance = m_camera.distance();
+    m_config.cameraYaw      = m_camera.yaw();
+    m_config.cameraPitch    = m_camera.pitch();
+    m_config.cameraTargetX  = m_camera.target().x;
+    m_config.cameraTargetY  = m_camera.target().y;
+    m_config.cameraTargetZ  = m_camera.target().z;
+
+    // Persist last opened file
+    m_config.lastFilePath = m_state.scadPath.string();
+
     m_config.save(Config::defaultPath());
 }
 
@@ -387,6 +421,9 @@ void Application::drawMenuBar() {
         if (ImGui::MenuItem("Presentation Mode", "P", m_presentationMode))
             m_presentationMode = !m_presentationMode;
         ImGui::Separator();
+        if (ImGui::MenuItem("Preferences..."))
+            m_showPrefs = true;
+        ImGui::Separator();
 
         if (ImGui::BeginMenu("Rendering")) {
             bool isSolid     = (m_renderMode == render::RenderMode::Solid);
@@ -429,6 +466,44 @@ void Application::drawMenuBar() {
     }
 
     ImGui::EndMenuBar();
+}
+
+// ---------------------------------------------------------------------------
+// Preferences popup
+// ---------------------------------------------------------------------------
+void Application::drawPrefsPopup() {
+    if (m_showPrefs) {
+        ImGui::OpenPopup("Preferences");
+        m_showPrefs = false;
+    }
+
+    ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("Preferences", nullptr,
+                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+
+        // ── Analysis ─────────────────────────────────────────────────────
+        ImGui::SeparatorText("Analysis");
+
+        bool prev = m_config.warnOverlappingRoots;
+        ImGui::Checkbox("Warn on overlapping root objects", &m_config.warnOverlappingRoots);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(
+                "After each build, test whether any top-level objects\n"
+                "overlap and warn if so. Has a small per-pair cost;\n"
+                "disable for large scenes with many root objects.");
+        if (m_config.warnOverlappingRoots != prev) {
+            m_meshBuilder.setWarnOverlappingRoots(m_config.warnOverlappingRoots);
+            if (!m_state.scadPath.empty())
+                m_meshBuilder.requestBuild(m_state.scadPath);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (ImGui::Button("Close", {80, 0}))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -564,6 +639,8 @@ void Application::drawImGui() {
         }
         ImGui::EndPopup();
     }
+
+    drawPrefsPopup();
 
     if (m_showAbout)
         ImGui::OpenPopup("About ChiselCAD");

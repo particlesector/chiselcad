@@ -47,9 +47,10 @@ enum class TokenKind : uint8_t {
     Mirror,
 
     // Control flow
-    If,   // if
-    Else, // else
-    For,  // for
+    If,     // if
+    Else,   // else
+    For,    // for
+    Module, // module
 
     // Range separator
     Colon, // :

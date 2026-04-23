@@ -15,13 +15,14 @@ struct BooleanNode;
 struct TransformNode;
 struct IfNode;
 struct ForNode;
+struct ModuleCallNode;
 
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // All nodes are heap-allocated via unique_ptr so the tree is
 // easy to move/own and the variant stays small.
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -125,11 +126,52 @@ struct AssignStmt {
 };
 
 // ---------------------------------------------------------------------------
+// ModuleParam — one formal parameter in a module definition
+// ---------------------------------------------------------------------------
+struct ModuleParam {
+    std::string name;
+    ExprPtr     defaultVal; // nullptr means no default (required)
+};
+
+// ---------------------------------------------------------------------------
+// ModuleDef — a user-defined module: module name(params) { body }
+// ---------------------------------------------------------------------------
+struct ModuleDef {
+    std::string              name;
+    std::vector<ModuleParam> params;
+    std::vector<AstNodePtr>  body;
+    SourceLoc                loc;
+};
+
+// ---------------------------------------------------------------------------
+// ModuleArg — one actual argument in a module call
+// ---------------------------------------------------------------------------
+struct ModuleArg {
+    std::string name;  // empty string = positional argument
+    ExprPtr     value;
+};
+
+// ---------------------------------------------------------------------------
+// ModuleCallNode — a call to a user-defined module: name(args) { children }
+// ---------------------------------------------------------------------------
+struct ModuleCallNode {
+    std::string              name;
+    std::vector<ModuleArg>   args;
+    std::vector<AstNodePtr>  children; // body passed as children (future use)
+    SourceLoc                loc;
+};
+
+inline AstNodePtr makeModuleCall(ModuleCallNode n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
+
+// ---------------------------------------------------------------------------
 // ParseResult — the output of a successful parse
 // ---------------------------------------------------------------------------
 struct ParseResult {
     std::vector<AstNodePtr>  roots;       // geometry-producing top-level nodes
     std::vector<AssignStmt>  assignments; // variable assignments (x = expr;)
+    std::vector<ModuleDef>   moduleDefs;  // user-defined module definitions
     double globalFn = 0.0;               // $fn if set at file scope (0 = unset)
     double globalFs = 2.0;               // $fs default
     double globalFa = 12.0;             // $fa default

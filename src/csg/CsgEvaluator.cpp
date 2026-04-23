@@ -20,6 +20,11 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result) {
 CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) {
     m_interp = &interp;
 
+    // Index module definitions by name for O(1) lookup during calls
+    m_moduleDefs.clear();
+    for (const auto& def : result.moduleDefs)
+        m_moduleDefs[def.name] = &def;
+
     CsgScene scene;
     scene.globalFn = result.globalFn;
     scene.globalFs = result.globalFs;
@@ -32,6 +37,7 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
     }
 
     m_interp = nullptr;
+    m_moduleDefs.clear();
     return scene;
 }
 
@@ -51,6 +57,8 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
             return evalIf(n, xform);
         else if constexpr (std::is_same_v<T, ForNode>)
             return evalFor(n, xform);
+        else if constexpr (std::is_same_v<T, ModuleCallNode>)
+            return evalModuleCall(n, xform);
         return nullptr;
     }, node);
 }
@@ -240,6 +248,67 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
         }
     }
     m_interp->setVar(node.var, saved);
+
+    if (all.empty())     return nullptr;
+    if (all.size() == 1) return all[0];
+
+    CsgBoolean u;
+    u.op       = CsgBoolean::Op::Union;
+    u.children = std::move(all);
+    return makeBoolean(std::move(u));
+}
+
+// ---------------------------------------------------------------------------
+// Module call — bind args, evaluate body, restore environment
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::mat4& xform) {
+    auto it = m_moduleDefs.find(call.name);
+    if (it == m_moduleDefs.end()) return nullptr; // undefined module
+
+    const ModuleDef& def = *it->second;
+
+    // Snapshot the interpreter env so we can restore it after the call
+    auto savedEnv = m_interp->snapshotEnv();
+
+    // Bind positional and named arguments to module parameters
+    std::size_t posIdx = 0;
+    for (const auto& arg : call.args) {
+        if (arg.name.empty()) {
+            // Positional: bind to parameter at posIdx
+            if (posIdx < def.params.size())
+                m_interp->setVar(def.params[posIdx].name,
+                                 Value::fromNumber(m_interp->evalNumber(*arg.value)));
+            ++posIdx;
+        } else {
+            // Named: bind to the matching parameter
+            m_interp->setVar(arg.name,
+                             Value::fromNumber(m_interp->evalNumber(*arg.value)));
+        }
+    }
+
+    // Fill in defaults for parameters that were not supplied
+    for (std::size_t i = 0; i < def.params.size(); ++i) {
+        const auto& param = def.params[i];
+        // Skip params already bound by positional or named args
+        bool alreadyBound = (i < posIdx);
+        if (!alreadyBound) {
+            for (const auto& arg : call.args)
+                if (arg.name == param.name) { alreadyBound = true; break; }
+        }
+        if (!alreadyBound && param.defaultVal)
+            m_interp->setVar(param.name,
+                             Value::fromNumber(m_interp->evalNumber(*param.defaultVal)));
+    }
+
+    // Evaluate the module body and collect geometry
+    std::vector<CsgNodePtr> all;
+    for (const auto& child : def.body) {
+        if (auto c = evalNode(*child, xform))
+            all.push_back(std::move(c));
+    }
+
+    // Restore the caller's environment
+    m_interp->restoreEnv(std::move(savedEnv));
 
     if (all.empty())     return nullptr;
     if (all.size() == 1) return all[0];

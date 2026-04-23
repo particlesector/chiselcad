@@ -170,9 +170,9 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     csg::MeshCache     cache;
     csg::MeshEvaluator meshEval(cache);
     meshEval.useManifoldSphere = m_useManifoldSphere.load();
-    manifold::Manifold manifoldMesh;
+    std::vector<manifold::Manifold> rootMeshes;
     try {
-        manifoldMesh = meshEval.evaluate(scene);
+        rootMeshes = meshEval.evaluate(scene);
     } catch (const std::exception& e) {
         result->errorMsg = std::string("Mesh error: ") + e.what();
         storeError(std::move(result));
@@ -184,18 +184,78 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     // ---- Phase: Converting to vertex buffers ----
     m_phase = BuildPhase::Converting;
 
-    // Capture mesh properties before flat-shading (volume is exact, counts comparable)
-    {
-        result->volume      = manifoldMesh.Volume();
-        result->surfaceArea = manifoldMesh.SurfaceArea();
+    // Each root is converted independently and appended — this keeps objects
+    // that are spatially inside other objects visible (no boolean union across roots).
+    std::vector<uint32_t> rootVertStart; // per-root start index into result->verts
+    rootVertStart.reserve(rootMeshes.size());
 
-        auto rawMesh = manifoldMesh.GetMeshGL();
-        result->triCount  = static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
-        result->vertCount = static_cast<uint32_t>(
+    for (const auto& m : rootMeshes) {
+        rootVertStart.push_back(static_cast<uint32_t>(result->verts.size()));
+
+        result->volume      += m.Volume();
+        result->surfaceArea += m.SurfaceArea();
+
+        auto rawMesh = m.GetMeshGL();
+        result->triCount  += static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
+        result->vertCount += static_cast<uint32_t>(
             rawMesh.numProp > 0 ? rawMesh.vertProperties.size() / rawMesh.numProp : 0);
+
+        std::vector<render::Vertex>  verts;
+        std::vector<uint32_t>        indices;
+        manifoldToMesh(m, verts, indices);
+
+        // Offset indices by the current vertex count before appending
+        const auto base = static_cast<uint32_t>(result->verts.size());
+        for (auto& idx : indices) idx += base;
+
+        result->verts.insert(result->verts.end(), verts.begin(), verts.end());
+        result->indices.insert(result->indices.end(), indices.begin(), indices.end());
     }
 
-    manifoldToMesh(manifoldMesh, result->verts, result->indices);
+    // ---- Optional: pairwise overlap detection ----
+    if (m_warnOverlappingRoots.load() && rootMeshes.size() > 1) {
+        // Compute per-root AABB from the already-converted vertex data
+        const auto totalVerts = static_cast<uint32_t>(result->verts.size());
+        auto rootAABB = [&](std::size_t ri) -> std::pair<glm::vec3, glm::vec3> {
+            uint32_t start = rootVertStart[ri];
+            uint32_t end   = (ri + 1 < rootVertStart.size())
+                             ? rootVertStart[ri + 1] : totalVerts;
+            glm::vec3 bmin{ 1e30f,  1e30f,  1e30f};
+            glm::vec3 bmax{-1e30f, -1e30f, -1e30f};
+            for (uint32_t vi = start; vi < end; ++vi) {
+                bmin = glm::min(bmin, result->verts[vi].pos);
+                bmax = glm::max(bmax, result->verts[vi].pos);
+            }
+            return {bmin, bmax};
+        };
+
+        auto aabbOverlap = [](glm::vec3 mn1, glm::vec3 mx1,
+                               glm::vec3 mn2, glm::vec3 mx2) {
+            return (mn1.x <= mx2.x && mx1.x >= mn2.x) &&
+                   (mn1.y <= mx2.y && mx1.y >= mn2.y) &&
+                   (mn1.z <= mx2.z && mx1.z >= mn2.z);
+        };
+
+        for (std::size_t i = 0; i < rootMeshes.size(); ++i) {
+            if (gen != m_currentGen.load()) return; // newer build queued — abort
+            auto [mn1, mx1] = rootAABB(i);
+            for (std::size_t j = i + 1; j < rootMeshes.size(); ++j) {
+                auto [mn2, mx2] = rootAABB(j);
+                if (!aabbOverlap(mn1, mx1, mn2, mx2)) continue;
+
+                // AABBs overlap — run exact Manifold intersection
+                manifold::Manifold sect = rootMeshes[i] ^ rootMeshes[j];
+                if (std::abs(sect.Volume()) > 1e-6) {
+                    lang::Diagnostic warn;
+                    warn.level   = lang::DiagLevel::Warning;
+                    warn.message = "Objects " + std::to_string(i + 1) +
+                                   " and " + std::to_string(j + 1) +
+                                   " overlap — wrap in union() or difference() if intentional";
+                    result->diags.push_back(std::move(warn));
+                }
+            }
+        }
+    }
     result->elapsedMs = elapsedMs();
 
     m_elapsedMs        = result->elapsedMs;

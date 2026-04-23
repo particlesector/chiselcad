@@ -3,6 +3,7 @@
 #include "lang/AST.h"
 #include "lang/Interpreter.h"
 #include <glm/glm.hpp>
+#include <unordered_map>
 
 namespace chisel::csg {
 
@@ -24,12 +25,16 @@ public:
 private:
     chisel::lang::Interpreter* m_interp = nullptr; // non-owning, set during evaluate()
 
+    // Module definitions indexed by name — populated at evaluate() entry.
+    std::unordered_map<std::string, const chisel::lang::ModuleDef*> m_moduleDefs;
+
     CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform);
     CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform);
     CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform);
     CsgNodePtr evalTransform(const chisel::lang::TransformNode& t, const glm::mat4& xform);
     CsgNodePtr evalIf(const chisel::lang::IfNode& n, const glm::mat4& xform);
     CsgNodePtr evalFor(const chisel::lang::ForNode& n, const glm::mat4& xform);
+    CsgNodePtr evalModuleCall(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform);
 
     glm::mat4 makeMatrix(const chisel::lang::TransformNode& t) const;
 };

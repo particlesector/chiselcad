@@ -31,9 +31,13 @@ public:
     // Missing elements default to 0.0.
     std::array<double, 3> evalVec3(const ExprNode& expr) const;
 
-    // For-loop variable binding — used by CsgEvaluator::evalFor.
+    // For-loop / module call variable binding.
     Value       getVar(const std::string& name) const;
     void        setVar(const std::string& name, Value val);
+
+    // Environment snapshot/restore for module call scoping.
+    std::unordered_map<std::string, Value> snapshotEnv() const { return m_env; }
+    void restoreEnv(std::unordered_map<std::string, Value> env) { m_env = std::move(env); }
 
 private:
     std::unordered_map<std::string, Value> m_env;

@@ -32,10 +32,17 @@ Config Config::load(const std::filesystem::path& path) {
         if (j.contains("windowWidth"))    cfg.windowWidth    = j["windowWidth"];
         if (j.contains("windowHeight"))   cfg.windowHeight   = j["windowHeight"];
         if (j.contains("cameraDistance")) cfg.cameraDistance = j["cameraDistance"];
+        if (j.contains("cameraYaw"))      cfg.cameraYaw      = j["cameraYaw"].get<float>();
+        if (j.contains("cameraPitch"))    cfg.cameraPitch    = j["cameraPitch"].get<float>();
+        if (j.contains("cameraTargetX"))  cfg.cameraTargetX  = j["cameraTargetX"].get<float>();
+        if (j.contains("cameraTargetY"))  cfg.cameraTargetY  = j["cameraTargetY"].get<float>();
+        if (j.contains("cameraTargetZ"))  cfg.cameraTargetZ  = j["cameraTargetZ"].get<float>();
+        if (j.contains("lastFilePath"))   cfg.lastFilePath   = j["lastFilePath"];
         if (j.contains("globalFn"))       cfg.globalFn       = j["globalFn"];
         if (j.contains("globalFs"))       cfg.globalFs       = j["globalFs"];
         if (j.contains("globalFa"))       cfg.globalFa       = j["globalFa"];
-        if (j.contains("fontSize"))       cfg.fontSize       = j["fontSize"];
+        if (j.contains("fontSize"))            cfg.fontSize            = j["fontSize"];
+        if (j.contains("warnOverlappingRoots")) cfg.warnOverlappingRoots = j["warnOverlappingRoots"];
     } catch (const std::exception& e) {
         spdlog::warn("Config load failed: {}", e.what());
     }
@@ -50,10 +57,17 @@ void Config::save(const std::filesystem::path& path) const {
         j["windowWidth"]    = windowWidth;
         j["windowHeight"]   = windowHeight;
         j["cameraDistance"] = cameraDistance;
+        j["cameraYaw"]      = cameraYaw;
+        j["cameraPitch"]    = cameraPitch;
+        j["cameraTargetX"]  = cameraTargetX;
+        j["cameraTargetY"]  = cameraTargetY;
+        j["cameraTargetZ"]  = cameraTargetZ;
+        j["lastFilePath"]   = lastFilePath;
         j["globalFn"]       = globalFn;
         j["globalFs"]       = globalFs;
         j["globalFa"]       = globalFa;
-        j["fontSize"]       = fontSize;
+        j["fontSize"]            = fontSize;
+        j["warnOverlappingRoots"] = warnOverlappingRoots;
         std::ofstream f(path);
         f << j.dump(2);
     } catch (const std::exception& e) {

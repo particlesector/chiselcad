@@ -32,7 +32,12 @@ public:
     // mesh appears centered in the visible area rather than the full framebuffer).
     void shiftTargetRight(float worldAmount);
 
-    float distance() const { return m_distance; }
+    float     distance() const { return m_distance; }
+    float     yaw()      const { return m_yaw; }
+    float     pitch()    const { return m_pitch; }
+    glm::vec3 target()   const { return m_target; }
+
+    void setState(float yaw, float pitch, float distance, glm::vec3 target);
 
     glm::mat4 view()       const;
     glm::mat4 projection(float aspectRatio) const;

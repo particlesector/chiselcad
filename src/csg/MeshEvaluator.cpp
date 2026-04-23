@@ -68,23 +68,17 @@ static manifold::mat3x4 toAffine(const glm::mat4& m) {
 MeshEvaluator::MeshEvaluator(MeshCache& cache)
     : m_cache(cache) {}
 
-manifold::Manifold MeshEvaluator::evaluate(const CsgScene& scene) {
+std::vector<manifold::Manifold> MeshEvaluator::evaluate(const CsgScene& scene) {
     PrimitiveGen gen;
     gen.globalFn           = scene.globalFn;
     gen.globalFs           = scene.globalFs;
     gen.globalFa           = scene.globalFa;
     gen.useManifoldSphere  = useManifoldSphere;
 
-    if (scene.roots.empty())
-        return {};
-
-    if (scene.roots.size() == 1)
-        return evalNode(*scene.roots[0], gen);
-
-    // Multiple roots → union (OpenSCAD semantics)
-    manifold::Manifold result = evalNode(*scene.roots[0], gen);
-    for (std::size_t i = 1; i < scene.roots.size(); ++i)
-        result = result + evalNode(*scene.roots[i], gen);
+    std::vector<manifold::Manifold> result;
+    result.reserve(scene.roots.size());
+    for (const auto& root : scene.roots)
+        result.push_back(evalNode(*root, gen));
     return result;
 }
 

@@ -357,3 +357,95 @@ TEST_CASE("CsgEval:for empty range yields no geometry", "[csg]") {
     auto s = evaluate("for (i = [5:3]) sphere(r=1);");
     REQUIRE(s.roots.empty());
 }
+
+// ---------------------------------------------------------------------------
+// User-defined modules
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:simple module call produces geometry", "[csg]") {
+    auto s = evaluate(
+        "module ball(r) { sphere(r=r); }"
+        "ball(5);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+    REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(5.0));
+}
+
+TEST_CASE("CsgEval:module call with named args", "[csg]") {
+    auto s = evaluate(
+        "module pill(r, h) { cylinder(r=r, h=h); }"
+        "pill(h=10, r=3);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Cylinder);
+    REQUIRE(leaf.params.at("r") == Approx(3.0));
+    REQUIRE(leaf.params.at("h") == Approx(10.0));
+}
+
+TEST_CASE("CsgEval:module call with default param", "[csg]") {
+    auto s = evaluate(
+        "module disk(r, h = 2) { cylinder(r=r, h=h); }"
+        "disk(r=6);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("r") == Approx(6.0));
+    REQUIRE(leaf.params.at("h") == Approx(2.0));
+}
+
+TEST_CASE("CsgEval:module with multi-primitive body wraps in union", "[csg]") {
+    auto s = evaluate(
+        "module combo() { sphere(r=1); cube([2,2,2]); }"
+        "combo();"
+    );
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Union);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("CsgEval:module call restores caller env", "[csg]") {
+    // 'r' exists in caller scope; module should not clobber it
+    auto s = evaluate(
+        "module ball(r) { sphere(r=r); }"
+        "r = 99;"
+        "ball(3);"
+        "sphere(r=r);"
+    );
+    REQUIRE(s.roots.size() == 2);
+    REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(3.0));
+    REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(99.0));
+}
+
+TEST_CASE("CsgEval:undefined module call yields no geometry", "[csg]") {
+    // unknown_module() is not defined — should silently produce nothing
+    Lexer  lexer("unknown_module(5);");
+    auto   tokens = lexer.tokenize();
+    Parser parser(std::move(tokens));
+    auto   result = parser.parse();
+    // Parser produces a ModuleCallNode (structural), no errors
+    CsgEvaluator ev;
+    auto s = ev.evaluate(result);
+    REQUIRE(s.roots.empty());
+}
+
+TEST_CASE("CsgEval:module call inherits outer transform", "[csg]") {
+    auto s = evaluate(
+        "module dot() { sphere(r=1); }"
+        "translate([4, 0, 0]) dot();"
+    );
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).transform[3][0] == Approx(4.0f));
+}
+
+TEST_CASE("CsgEval:module called multiple times", "[csg]") {
+    auto s = evaluate(
+        "module dot(r) { sphere(r=r); }"
+        "dot(1); dot(2); dot(3);"
+    );
+    REQUIRE(s.roots.size() == 3);
+    REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(1.0));
+    REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(2.0));
+    REQUIRE(asLeaf(s.roots[2]).params.at("r") == Approx(3.0));
+}
