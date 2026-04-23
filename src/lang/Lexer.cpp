@@ -26,6 +26,7 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"if",           TokenKind::If},
     {"else",         TokenKind::Else},
     {"for",          TokenKind::For},
+    {"module",       TokenKind::Module},
 };
 
 // ---------------------------------------------------------------------------

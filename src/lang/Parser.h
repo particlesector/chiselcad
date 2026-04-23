@@ -38,6 +38,10 @@ private:
     AstNodePtr parseTransform(TokenKind k);
     AstNodePtr parseIf();
     AstNodePtr parseFor();
+    AstNodePtr parseModuleCall();
+
+    // ---- module definitions -----------------------------------------------
+    void parseModuleDef(ParseResult& result);
 
     // ---- expressions (Pratt parser) --------------------------------------
     ExprPtr parseExpr(int minPrec = 0);

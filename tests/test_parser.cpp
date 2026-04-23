@@ -357,6 +357,68 @@ TEST_CASE("Parser:for with brace body", "[parser]") {
 }
 
 // ---------------------------------------------------------------------------
+// Module definitions and calls
+// ---------------------------------------------------------------------------
+static const ModuleCallNode& asModuleCall(const AstNodePtr& n) {
+    return std::get<ModuleCallNode>(*n);
+}
+
+TEST_CASE("Parser:module definition stored in moduleDefs", "[parser]") {
+    auto r = parse("module my_box(w, h) { cube([w, h, h]); }");
+    REQUIRE(r.roots.empty());
+    REQUIRE(r.moduleDefs.size() == 1);
+    REQUIRE(r.moduleDefs[0].name == "my_box");
+    REQUIRE(r.moduleDefs[0].params.size() == 2);
+    REQUIRE(r.moduleDefs[0].params[0].name == "w");
+    REQUIRE(r.moduleDefs[0].params[1].name == "h");
+    REQUIRE(r.moduleDefs[0].body.size() == 1);
+}
+
+TEST_CASE("Parser:module param with default value", "[parser]") {
+    auto r = parse("module pill(r = 2, h = 5) { cylinder(r=r, h=h); }");
+    REQUIRE(r.moduleDefs.size() == 1);
+    REQUIRE(r.moduleDefs[0].params[0].name == "r");
+    REQUIRE(r.moduleDefs[0].params[0].defaultVal != nullptr);
+    REQUIRE(r.moduleDefs[0].params[1].name == "h");
+}
+
+TEST_CASE("Parser:module call positional args", "[parser]") {
+    auto r = parse(
+        "module box(w, h) { cube([w, h, h]); }"
+        "box(10, 5);"
+    );
+    REQUIRE(r.moduleDefs.size() == 1);
+    REQUIRE(r.roots.size() == 1);
+    auto& c = asModuleCall(r.roots[0]);
+    REQUIRE(c.name == "box");
+    REQUIRE(c.args.size() == 2);
+    REQUIRE(c.args[0].name.empty()); // positional
+    REQUIRE(c.args[1].name.empty());
+}
+
+TEST_CASE("Parser:module call named args", "[parser]") {
+    auto r = parse(
+        "module pill(r, h) { cylinder(r=r, h=h); }"
+        "pill(h = 10, r = 3);"
+    );
+    REQUIRE(r.roots.size() == 1);
+    auto& c = asModuleCall(r.roots[0]);
+    REQUIRE(c.args.size() == 2);
+    REQUIRE(c.args[0].name == "h");
+    REQUIRE(c.args[1].name == "r");
+}
+
+TEST_CASE("Parser:multiple module defs", "[parser]") {
+    auto r = parse(
+        "module a() { sphere(r=1); }"
+        "module b() { cube([2,2,2]); }"
+        "a(); b();"
+    );
+    REQUIRE(r.moduleDefs.size() == 2);
+    REQUIRE(r.roots.size() == 2);
+}
+
+// ---------------------------------------------------------------------------
 // Error recovery
 // ---------------------------------------------------------------------------
 TEST_CASE("Parser:recovers from missing paren", "[parser]") {

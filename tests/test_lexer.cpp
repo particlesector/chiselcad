@@ -60,6 +60,21 @@ TEST_CASE("Lexer:for keyword and colon", "[lexer]") {
     REQUIRE(kinds(":")   == std::vector{TokenKind::Colon});
 }
 
+TEST_CASE("Lexer:module keyword", "[lexer]") {
+    REQUIRE(kinds("module") == std::vector{TokenKind::Module});
+}
+
+TEST_CASE("Lexer:module definition header", "[lexer]") {
+    // module foo(r, h) {
+    auto t = kinds("module foo(r, h) {");
+    REQUIRE(t[0] == TokenKind::Module);
+    REQUIRE(t[1] == TokenKind::Ident);
+    REQUIRE(t[2] == TokenKind::LParen);
+    REQUIRE(t[3] == TokenKind::Ident);
+    REQUIRE(t[5] == TokenKind::Ident);
+    REQUIRE(t[6] == TokenKind::RParen);
+}
+
 TEST_CASE("Lexer:for range tokens", "[lexer]") {
     // for (i = [0:5]) → for ( i = [ 0 : 5 ] )
     auto t = kinds("for (i = [0:5])");
