@@ -54,7 +54,8 @@ public:
     // discarded when poll() is next called.
     void requestBuild(std::filesystem::path path);
 
-    void setUseManifoldSphere(bool v) noexcept { m_useManifoldSphere.store(v); }
+    void setUseManifoldSphere(bool v)      noexcept { m_useManifoldSphere.store(v); }
+    void setWarnOverlappingRoots(bool v)  noexcept { m_warnOverlappingRoots.store(v); }
 
     // Call once per frame from the main (Vulkan) thread.
     // Returns a finished BuildResult when one is ready, nullptr otherwise.
@@ -86,6 +87,7 @@ private:
     // Incremented by requestBuild(); read by poll() to detect stale results.
     std::atomic<int>        m_currentGen{0};
     std::atomic<bool>       m_useManifoldSphere{false};
+    std::atomic<bool>       m_warnOverlappingRoots{false};
 
     // Readable from main thread for UI without locks.
     std::atomic<BuildPhase> m_phase{BuildPhase::Idle};

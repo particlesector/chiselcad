@@ -25,22 +25,32 @@ void DiagnosticsPanel::drawInline() {
             : ImVec4{1.0f, 0.8f, 0.3f, 1.0f};
 
         ImGui::PushStyleColor(ImGuiCol_Text, col);
-        char label[512];
-        std::snprintf(label, sizeof(label), "%d:%d: %s##diag%d",
-            d.loc.line + 1, d.loc.col + 1, d.message.c_str(), i);
 
-        if (ImGui::Selectable(label)) {
-            std::filesystem::path filePath =
-                d.filePath.empty() ? m_scadPath : std::filesystem::path(d.filePath);
-            if (!filePath.empty())
-                openInExternalEditor(filePath,
-                    static_cast<int>(d.loc.line + 1),
-                    static_cast<int>(d.loc.col + 1));
+        // Diagnostics with no file and no source location are runtime warnings
+        // (e.g. geometry analysis) — show as plain text with no line:col prefix.
+        const bool isRuntimeWarning = d.filePath.empty() &&
+                                      d.loc == (chisel::lang::SourceLoc{});
+
+        if (isRuntimeWarning) {
+            ImGui::TextUnformatted(d.message.c_str());
+        } else {
+            char label[512];
+            std::snprintf(label, sizeof(label), "%d:%d: %s##diag%d",
+                d.loc.line + 1, d.loc.col + 1, d.message.c_str(), i);
+
+            if (ImGui::Selectable(label)) {
+                std::filesystem::path filePath =
+                    d.filePath.empty() ? m_scadPath : std::filesystem::path(d.filePath);
+                if (!filePath.empty())
+                    openInExternalEditor(filePath,
+                        static_cast<int>(d.loc.line + 1),
+                        static_cast<int>(d.loc.col + 1));
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Click to open in editor");
         }
-        ImGui::PopStyleColor();
 
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Click to open in editor");
+        ImGui::PopStyleColor();
     }
 }
 

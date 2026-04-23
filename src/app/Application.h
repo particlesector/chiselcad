@@ -43,6 +43,7 @@ private:
     // ImGui drawing
     void drawMenuBar();
     void drawImGui();
+    void drawPrefsPopup();
 
     // Camera / file helpers
     void fitToView();
@@ -96,9 +97,16 @@ private:
     bool   m_presentationMode = false;
     double m_lastFrameTime    = 0.0;
 
+    // User preferences (opt-in analysis / rendering flags)
+    struct AppPrefs {
+        bool warnOverlappingRoots = false;
+    };
+    AppPrefs  m_prefs;
+
     // UI state
     bool      m_showChiselPanel = true;
     bool      m_showAbout       = false;
+    bool      m_showPrefs       = false;
     float     m_fontScale       = 1.0f;
 
     // Export error shown in a modal

@@ -387,6 +387,9 @@ void Application::drawMenuBar() {
         if (ImGui::MenuItem("Presentation Mode", "P", m_presentationMode))
             m_presentationMode = !m_presentationMode;
         ImGui::Separator();
+        if (ImGui::MenuItem("Preferences..."))
+            m_showPrefs = true;
+        ImGui::Separator();
 
         if (ImGui::BeginMenu("Rendering")) {
             bool isSolid     = (m_renderMode == render::RenderMode::Solid);
@@ -429,6 +432,44 @@ void Application::drawMenuBar() {
     }
 
     ImGui::EndMenuBar();
+}
+
+// ---------------------------------------------------------------------------
+// Preferences popup
+// ---------------------------------------------------------------------------
+void Application::drawPrefsPopup() {
+    if (m_showPrefs) {
+        ImGui::OpenPopup("Preferences");
+        m_showPrefs = false;
+    }
+
+    ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("Preferences", nullptr,
+                               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
+
+        // ── Analysis ─────────────────────────────────────────────────────
+        ImGui::SeparatorText("Analysis");
+
+        bool prev = m_prefs.warnOverlappingRoots;
+        ImGui::Checkbox("Warn on overlapping root objects", &m_prefs.warnOverlappingRoots);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(
+                "After each build, test whether any top-level objects\n"
+                "overlap and warn if so. Has a small per-pair cost;\n"
+                "disable for large scenes with many root objects.");
+        if (m_prefs.warnOverlappingRoots != prev) {
+            m_meshBuilder.setWarnOverlappingRoots(m_prefs.warnOverlappingRoots);
+            if (!m_state.scadPath.empty())
+                m_meshBuilder.requestBuild(m_state.scadPath);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (ImGui::Button("Close", {80, 0}))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -564,6 +605,8 @@ void Application::drawImGui() {
         }
         ImGui::EndPopup();
     }
+
+    drawPrefsPopup();
 
     if (m_showAbout)
         ImGui::OpenPopup("About ChiselCAD");
