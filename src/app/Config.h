@@ -17,6 +17,9 @@ struct Config {
     double globalFa       = 12.0;
     int    fontSize       = 1; // 0=small(0.85×), 1=normal(1.0×), 2=large(1.3×)
 
+    // Analysis preferences
+    bool   warnOverlappingRoots = false;
+
     static Config load(const std::filesystem::path& path);
     void          save(const std::filesystem::path& path) const;
 

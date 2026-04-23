@@ -107,6 +107,7 @@ void Application::run() {
     initImGui();
 
     m_camera.init(m_config.cameraDistance);
+    m_meshBuilder.setWarnOverlappingRoots(m_config.warnOverlappingRoots);
 
     if (!m_state.scadPath.empty()) {
         auto ext = m_state.scadPath.extension().string();
@@ -450,15 +451,15 @@ void Application::drawPrefsPopup() {
         // ── Analysis ─────────────────────────────────────────────────────
         ImGui::SeparatorText("Analysis");
 
-        bool prev = m_prefs.warnOverlappingRoots;
-        ImGui::Checkbox("Warn on overlapping root objects", &m_prefs.warnOverlappingRoots);
+        bool prev = m_config.warnOverlappingRoots;
+        ImGui::Checkbox("Warn on overlapping root objects", &m_config.warnOverlappingRoots);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
                 "After each build, test whether any top-level objects\n"
                 "overlap and warn if so. Has a small per-pair cost;\n"
                 "disable for large scenes with many root objects.");
-        if (m_prefs.warnOverlappingRoots != prev) {
-            m_meshBuilder.setWarnOverlappingRoots(m_prefs.warnOverlappingRoots);
+        if (m_config.warnOverlappingRoots != prev) {
+            m_meshBuilder.setWarnOverlappingRoots(m_config.warnOverlappingRoots);
             if (!m_state.scadPath.empty())
                 m_meshBuilder.requestBuild(m_state.scadPath);
         }
