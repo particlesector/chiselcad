@@ -170,9 +170,9 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     csg::MeshCache     cache;
     csg::MeshEvaluator meshEval(cache);
     meshEval.useManifoldSphere = m_useManifoldSphere.load();
-    manifold::Manifold manifoldMesh;
+    std::vector<manifold::Manifold> rootMeshes;
     try {
-        manifoldMesh = meshEval.evaluate(scene);
+        rootMeshes = meshEval.evaluate(scene);
     } catch (const std::exception& e) {
         result->errorMsg = std::string("Mesh error: ") + e.what();
         storeError(std::move(result));
@@ -184,18 +184,28 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     // ---- Phase: Converting to vertex buffers ----
     m_phase = BuildPhase::Converting;
 
-    // Capture mesh properties before flat-shading (volume is exact, counts comparable)
-    {
-        result->volume      = manifoldMesh.Volume();
-        result->surfaceArea = manifoldMesh.SurfaceArea();
+    // Each root is converted independently and appended — this keeps objects
+    // that are spatially inside other objects visible (no boolean union across roots).
+    for (const auto& m : rootMeshes) {
+        result->volume      += m.Volume();
+        result->surfaceArea += m.SurfaceArea();
 
-        auto rawMesh = manifoldMesh.GetMeshGL();
-        result->triCount  = static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
-        result->vertCount = static_cast<uint32_t>(
+        auto rawMesh = m.GetMeshGL();
+        result->triCount  += static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
+        result->vertCount += static_cast<uint32_t>(
             rawMesh.numProp > 0 ? rawMesh.vertProperties.size() / rawMesh.numProp : 0);
-    }
 
-    manifoldToMesh(manifoldMesh, result->verts, result->indices);
+        std::vector<render::Vertex>  verts;
+        std::vector<uint32_t>        indices;
+        manifoldToMesh(m, verts, indices);
+
+        // Offset indices by the current vertex count before appending
+        const auto base = static_cast<uint32_t>(result->verts.size());
+        for (auto& idx : indices) idx += base;
+
+        result->verts.insert(result->verts.end(), verts.begin(), verts.end());
+        result->indices.insert(result->indices.end(), indices.begin(), indices.end());
+    }
     result->elapsedMs = elapsedMs();
 
     m_elapsedMs        = result->elapsedMs;
