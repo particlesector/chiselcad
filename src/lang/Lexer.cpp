@@ -32,6 +32,9 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"polygon",        TokenKind::Polygon},
     {"linear_extrude", TokenKind::LinearExtrude},
     {"rotate_extrude", TokenKind::RotateExtrude},
+    {"undef",          TokenKind::Undef},
+    {"function",       TokenKind::Function},
+    {"let",            TokenKind::Let},
 };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +126,7 @@ std::vector<Token> Lexer::tokenize() {
             if (match('=')) tokens.push_back(makeToken(TokenKind::EqualEqual,   startOffset));
             else            tokens.push_back(makeToken(TokenKind::Equals,       startOffset));
             break;
+        case '?':  tokens.push_back(makeToken(TokenKind::Question, startOffset)); break;
         case '&':
             if (match('&')) tokens.push_back(makeToken(TokenKind::AmpAmp,      startOffset));
             else addError("expected '&&'", makeToken(TokenKind::Eof, startOffset).loc);

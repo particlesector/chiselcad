@@ -14,6 +14,7 @@ static constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
 CsgScene CsgEvaluator::evaluate(const ParseResult& result) {
     Interpreter defaultInterp;
     defaultInterp.loadAssignments(result);
+    defaultInterp.loadFunctions(result);
     return evaluate(result, defaultInterp);
 }
 
@@ -61,6 +62,8 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
             return evalModuleCall(n, xform);
         else if constexpr (std::is_same_v<T, ExtrusionNode>)
             return evalExtrusion(n, xform);
+        else if constexpr (std::is_same_v<T, LetNode>)
+            return evalLet(n, xform);
         return nullptr;
     }, node);
 }
@@ -307,7 +310,7 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform) {
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
     // Build the sequence of iteration values
-    std::vector<double> values;
+    std::vector<Value> values;
     static constexpr int kMaxIter = 10000;
 
     if (node.range.isRange) {
@@ -319,20 +322,21 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
         if (step == 0.0) return nullptr;
         if (step > 0.0)
             for (double v = start; v <= end + 1e-10 && (int)values.size() < kMaxIter; v += step)
-                values.push_back(v);
+                values.push_back(Value::fromNumber(v));
         else
             for (double v = start; v >= end - 1e-10 && (int)values.size() < kMaxIter; v += step)
-                values.push_back(v);
+                values.push_back(Value::fromNumber(v));
     } else {
+        // List form — preserve full Value (supports iterating over vectors)
         for (const auto& e : node.range.list)
-            values.push_back(m_interp->evalNumber(*e));
+            values.push_back(m_interp->evaluate(*e));
     }
 
     // Save the loop variable's current binding, iterate, then restore
     const Value saved = m_interp->getVar(node.var);
     std::vector<CsgNodePtr> all;
-    for (double v : values) {
-        m_interp->setVar(node.var, Value::fromNumber(v));
+    for (const Value& v : values) {
+        m_interp->setVar(node.var, v);
         for (const auto& child : node.children) {
             if (auto c = evalNode(*child, xform))
                 all.push_back(std::move(c));
@@ -365,30 +369,25 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     std::size_t posIdx = 0;
     for (const auto& arg : call.args) {
         if (arg.name.empty()) {
-            // Positional: bind to parameter at posIdx
             if (posIdx < def.params.size())
                 m_interp->setVar(def.params[posIdx].name,
-                                 Value::fromNumber(m_interp->evalNumber(*arg.value)));
+                                 m_interp->evaluate(*arg.value));
             ++posIdx;
         } else {
-            // Named: bind to the matching parameter
-            m_interp->setVar(arg.name,
-                             Value::fromNumber(m_interp->evalNumber(*arg.value)));
+            m_interp->setVar(arg.name, m_interp->evaluate(*arg.value));
         }
     }
 
-    // Fill in defaults for parameters that were not supplied
+    // Fill in defaults for parameters not supplied
     for (std::size_t i = 0; i < def.params.size(); ++i) {
         const auto& param = def.params[i];
-        // Skip params already bound by positional or named args
         bool alreadyBound = (i < posIdx);
         if (!alreadyBound) {
             for (const auto& arg : call.args)
                 if (arg.name == param.name) { alreadyBound = true; break; }
         }
         if (!alreadyBound && param.defaultVal)
-            m_interp->setVar(param.name,
-                             Value::fromNumber(m_interp->evalNumber(*param.defaultVal)));
+            m_interp->setVar(param.name, m_interp->evaluate(*param.defaultVal));
     }
 
     // Evaluate the module body and collect geometry
@@ -447,6 +446,30 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
     }
 
     return makeExtrusion(std::move(ext));
+}
+
+// ---------------------------------------------------------------------------
+// let — bind variables in scope, evaluate children, restore
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform) {
+    auto savedEnv = m_interp->snapshotEnv();
+    for (const auto& [name, valExpr] : node.bindings)
+        m_interp->setVar(name, m_interp->evaluate(*valExpr));
+
+    std::vector<CsgNodePtr> all;
+    for (const auto& child : node.children) {
+        if (auto c = evalNode(*child, xform))
+            all.push_back(std::move(c));
+    }
+    m_interp->restoreEnv(std::move(savedEnv));
+
+    if (all.empty())     return nullptr;
+    if (all.size() == 1) return std::move(all[0]);
+
+    CsgBoolean u;
+    u.op       = CsgBoolean::Op::Union;
+    u.children = std::move(all);
+    return makeBoolean(std::move(u));
 }
 
 } // namespace chisel::csg

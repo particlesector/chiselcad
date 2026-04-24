@@ -35,7 +35,7 @@ translate([25, 30, 0])
 
 // Scene 7: linear_extrude with twist → helical prism
 translate([50, 30, 0])
-    linear_extrude(height=20, twist=90, $fn=24)
+    linear_extrude(height=20, twist=90)
         square([5, 5], center=true);
 
 // Scene 8: 2-D boolean inside extrude → hollow tube

@@ -46,11 +46,16 @@ enum class TokenKind : uint8_t {
     Scale,
     Mirror,
 
-    // Control flow
-    If,     // if
-    Else,   // else
-    For,    // for
-    Module, // module
+    // Control flow / definitions
+    If,       // if
+    Else,     // else
+    For,      // for
+    Module,   // module
+    Function, // function
+    Let,      // let
+
+    // Literals
+    Undef,    // undef
 
     // 2-D primitives
     Square, Circle, Polygon,
@@ -75,10 +80,11 @@ enum class TokenKind : uint8_t {
     Greater,      // >
     GreaterEqual, // >=
 
-    // Logical
+    // Logical / ternary
     Bang,         // !
     AmpAmp,       // &&
     PipePipe,     // ||
+    Question,     // ?
 
     // Punctuation
     LParen,   // (

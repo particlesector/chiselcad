@@ -2,25 +2,30 @@
 #include "Token.h"
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
 namespace chisel::lang {
 
 // ---------------------------------------------------------------------------
-// Forward declarations — allows ExprPtr to be used inside node structs
-// before ExprNode is fully defined (same pattern as AST.h).
+// Forward declarations
 // ---------------------------------------------------------------------------
 struct NumberLit;
 struct BoolLit;
+struct UndefLit;
 struct VectorLit;
 struct VarRef;
 struct BinaryExpr;
 struct UnaryExpr;
+struct TernaryExpr;
+struct IndexExpr;
+struct LetExpr;
 struct FunctionCall;
 
-using ExprNode = std::variant<NumberLit, BoolLit, VectorLit, VarRef,
-                               BinaryExpr, UnaryExpr, FunctionCall>;
+using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, VectorLit, VarRef,
+                               BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr,
+                               LetExpr, FunctionCall>;
 using ExprPtr  = std::unique_ptr<ExprNode>;
 
 template<typename T>
@@ -41,8 +46,12 @@ struct BoolLit {
     SourceLoc loc;
 };
 
+struct UndefLit {
+    SourceLoc loc;
+};
+
 struct VectorLit {
-    std::vector<ExprPtr> elements; // each element is an expression
+    std::vector<ExprPtr> elements;
     SourceLoc loc;
 };
 
@@ -56,10 +65,10 @@ struct VarRef {
 // ---------------------------------------------------------------------------
 struct BinaryExpr {
     enum class Op {
-        Add, Sub, Mul, Div, Mod,    // arithmetic
-        Eq,  Ne,                     // equality
-        Lt,  Le,  Gt,  Ge,          // comparison
-        And, Or                      // logical
+        Add, Sub, Mul, Div, Mod,
+        Eq,  Ne,
+        Lt,  Le,  Gt,  Ge,
+        And, Or
     };
     Op        op;
     ExprPtr   left;
@@ -74,10 +83,38 @@ struct UnaryExpr {
     SourceLoc loc;
 };
 
+// condition ? then : else_
+struct TernaryExpr {
+    ExprPtr   condition;
+    ExprPtr   then;
+    ExprPtr   else_;
+    SourceLoc loc;
+};
+
+// target[index]
+struct IndexExpr {
+    ExprPtr   target;
+    ExprPtr   index;
+    SourceLoc loc;
+};
+
+// let(x = expr, ...) body_expr
+struct LetExpr {
+    std::vector<std::pair<std::string, ExprPtr>> bindings;
+    ExprPtr   body;
+    SourceLoc loc;
+};
+
+// One argument in a function call — named or positional
+struct FunctionArg {
+    std::string name;  // empty = positional
+    ExprPtr     value;
+};
+
 struct FunctionCall {
-    std::string          name;
-    std::vector<ExprPtr> args; // positional arguments
-    SourceLoc            loc;
+    std::string              name;
+    std::vector<FunctionArg> args;
+    SourceLoc                loc;
 };
 
 } // namespace chisel::lang

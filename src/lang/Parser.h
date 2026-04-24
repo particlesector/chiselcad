@@ -41,14 +41,20 @@ private:
     AstNodePtr parseModuleCall();
     AstNodePtr parseExtrusion(TokenKind k);
 
-    // ---- module definitions -----------------------------------------------
+    // ---- module / function definitions ------------------------------------
     void parseModuleDef(ParseResult& result);
+    void parseFunctionDef(ParseResult& result);
+
+    // ---- let statement ---------------------------------------------------
+    AstNodePtr parseLetNode();
 
     // ---- expressions (Pratt parser) --------------------------------------
     ExprPtr parseExpr(int minPrec = 0);
     ExprPtr parseUnary();
+    ExprPtr parsePostfix();     // handles postfix [idx] after primary
     ExprPtr parsePrimary();
-    ExprPtr parseVecExpr(); // parse [x, y, z] → VectorLit ExprPtr
+    ExprPtr parseLetExpr();
+    ExprPtr parseVecExpr();     // parse [x, y, z] → VectorLit ExprPtr
 
     // ---- argument helpers ------------------------------------------------
     void parseParamList(std::unordered_map<std::string, ExprPtr>& params,

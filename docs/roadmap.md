@@ -27,6 +27,42 @@
 - [ ] Extrusion: `linear_extrude`, `rotate_extrude`
 - [ ] `hull()` and `minkowski()`
 
+## v2.5 — OpenSCAD Language Completeness
+
+### Tier A — High Impact (used constantly)
+- [ ] List indexing `v[i]`
+- [ ] Ternary operator `condition ? a : b`
+- [ ] User-defined functions `function f(x) = expr;`
+- [ ] `let` expression `let (x=10) child`
+- [ ] `undef` literal
+- [ ] `concat()` built-in
+
+### Tier B — Math & String Completeness
+- [ ] Inverse trig: `asin()`, `acos()`, `atan()`, `atan2()`
+- [ ] Vector math: `norm()`, `cross()`, `sign()`
+- [ ] `rands()`, `lookup()`
+- [ ] String literals + `str()`, `chr()`, `ord()`
+- [ ] `len()` on strings
+
+### Tier C — Module System Completeness
+- [ ] `children()` / `$children`
+- [ ] `echo()`
+- [ ] `assert()`
+- [ ] Recursive functions (enabled by user-defined functions)
+
+### Tier D — Geometry Operations
+- [ ] `multmatrix()`
+- [ ] `color()`
+- [ ] `offset()`
+- [ ] `projection()`
+- [ ] `render()`
+
+### Tier E — File I/O (complex)
+- [ ] `include <>` / `use <>`
+- [ ] `import()`
+- [ ] `surface()`
+- [ ] `text()` (requires font rendering — significant work)
+
 ## v3 — Tooling & Visual Quality
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)
