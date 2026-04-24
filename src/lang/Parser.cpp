@@ -359,10 +359,11 @@ void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
             continue;
         }
 
-        // Named param: ident = expr
-        if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
+        // Named param: any token (Ident or keyword like 'scale') followed by '='
+        if (peek(1).kind == TokenKind::Equals && !peek().text.empty() &&
+            !check(TokenKind::SpecialVar)) {
             std::string name = peek().text;
-            advance(); // ident
+            advance(); // name token
             advance(); // =
 
             if (name == "center") {
@@ -644,7 +645,8 @@ void Parser::parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& para
             match(TokenKind::Comma);
             continue;
         }
-        if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
+        // Accept any token (Ident or keyword like 'scale') when followed by '='
+        if (peek(1).kind == TokenKind::Equals && !peek().text.empty()) {
             std::string name = advance().text;
             advance(); // consume '='
             params[name] = parseExpr();
