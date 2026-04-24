@@ -208,7 +208,9 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
         float  scaleX = static_cast<float>(getP("scale_x", 1.0));
         float  scaleY = static_cast<float>(getP("scale_y", 1.0));
         double fnOvr  = getP("$fn",   0.0);
-        int    nDivs  = (twist != 0.0 || scaleX != 1.0f || scaleY != 1.0f)
+        // Divisions are only needed for twist (to smoothly interpolate the
+        // rotation). A plain scale taper works correctly with 0 divisions.
+        int    nDivs  = (twist != 0.0)
                         ? std::max(1, static_cast<int>(fnOvr > 0 ? fnOvr : 10))
                         : 0;
         bool   center = (getP("center", 0.0) != 0.0);
