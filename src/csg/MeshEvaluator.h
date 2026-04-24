@@ -3,6 +3,7 @@
 #include "MeshCache.h"
 #include "PrimitiveGen.h"
 #include <manifold/manifold.h>
+#include <manifold/cross_section.h>
 #include <vector>
 
 namespace chisel::csg {
@@ -28,9 +29,11 @@ public:
     std::vector<manifold::Manifold> evaluate(const CsgScene& scene);
 
 private:
-    manifold::Manifold evalNode(const CsgNode& node, const PrimitiveGen& gen);
-    manifold::Manifold evalLeaf(const CsgLeaf& leaf, const PrimitiveGen& gen);
-    manifold::Manifold evalBoolean(const CsgBoolean& b, const PrimitiveGen& gen);
+    manifold::Manifold    evalNode(const CsgNode& node, const PrimitiveGen& gen);
+    manifold::Manifold    evalLeaf(const CsgLeaf& leaf, const PrimitiveGen& gen);
+    manifold::Manifold    evalBoolean(const CsgBoolean& b, const PrimitiveGen& gen);
+    manifold::Manifold    evalExtrusion(const CsgExtrusion& e, const PrimitiveGen& gen);
+    manifold::CrossSection getChildCrossSection(const CsgNode& node, const PrimitiveGen& gen);
 
     MeshCache& m_cache;
 };

@@ -59,6 +59,8 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
             return evalFor(n, xform);
         else if constexpr (std::is_same_v<T, ModuleCallNode>)
             return evalModuleCall(n, xform);
+        else if constexpr (std::is_same_v<T, ExtrusionNode>)
+            return evalExtrusion(n, xform);
         return nullptr;
     }, node);
 }
@@ -68,18 +70,107 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& xform) {
     CsgLeaf leaf;
-    switch (p.kind) {
-    case PrimitiveNode::Kind::Cube:     leaf.kind = CsgLeaf::Kind::Cube;     break;
-    case PrimitiveNode::Kind::Sphere:   leaf.kind = CsgLeaf::Kind::Sphere;   break;
-    case PrimitiveNode::Kind::Cylinder: leaf.kind = CsgLeaf::Kind::Cylinder; break;
-    }
-
-    // Resolve every expression param to a concrete double
-    for (const auto& [name, exprPtr] : p.params)
-        leaf.params[name] = m_interp->evalNumber(*exprPtr);
-
     leaf.center    = p.center;
     leaf.transform = xform;
+
+    switch (p.kind) {
+    // ---- 3-D primitives: resolve all params as scalars --------------------
+    case PrimitiveNode::Kind::Cube:
+        leaf.kind = CsgLeaf::Kind::Cube;
+        for (const auto& [name, exprPtr] : p.params)
+            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        break;
+
+    case PrimitiveNode::Kind::Sphere:
+        leaf.kind = CsgLeaf::Kind::Sphere;
+        for (const auto& [name, exprPtr] : p.params)
+            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        break;
+
+    case PrimitiveNode::Kind::Cylinder:
+        leaf.kind = CsgLeaf::Kind::Cylinder;
+        for (const auto& [name, exprPtr] : p.params)
+            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        break;
+
+    // ---- square([w,h]) / square(s) / square(size=[w,h]) ------------------
+    case PrimitiveNode::Kind::Square2D: {
+        leaf.kind = CsgLeaf::Kind::Square2D;
+        // Resolve scalar params ($fn, etc.) — skip "size" which may be a vector
+        for (const auto& [name, exprPtr] : p.params) {
+            if (name == "size") continue;
+            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        }
+        // "size" overrides x/y if present
+        if (p.params.count("size")) {
+            Value sv = m_interp->evaluate(*p.params.at("size"));
+            if (sv.isNumber()) {
+                leaf.params["sx"] = sv.asNumber();
+                leaf.params["sy"] = sv.asNumber();
+            } else if (sv.isVector() && sv.asVec().size() >= 2) {
+                leaf.params["sx"] = sv.asVec()[0].asNumber();
+                leaf.params["sy"] = sv.asVec()[1].asNumber();
+            }
+        }
+        // If sx/sy not set yet, fall back to positional vector "x","y" or scalar "_pos0"
+        if (!leaf.params.count("sx")) {
+            double sx = leaf.params.count("x") ? leaf.params["x"] : 1.0;
+            double sy = leaf.params.count("y") ? leaf.params["y"] : 1.0;
+            if (leaf.params.count("_pos0")) {
+                double s = leaf.params["_pos0"];
+                sx = sy = s;
+            }
+            leaf.params["sx"] = sx;
+            leaf.params["sy"] = sy;
+        }
+        break;
+    }
+
+    // ---- circle(r) / circle(d) --------------------------------------------
+    case PrimitiveNode::Kind::Circle2D:
+        leaf.kind = CsgLeaf::Kind::Circle2D;
+        for (const auto& [name, exprPtr] : p.params)
+            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        // diameter → radius
+        if (!leaf.params.count("r") && leaf.params.count("d"))
+            leaf.params["r"] = leaf.params["d"] * 0.5;
+        break;
+
+    // ---- polygon(points=[[x,y],...], paths=[[i,j,...],...]) ---------------
+    case PrimitiveNode::Kind::Polygon2D: {
+        leaf.kind = CsgLeaf::Kind::Polygon2D;
+        if (p.params.count("points")) {
+            Value pts = m_interp->evaluate(*p.params.at("points"));
+            if (pts.isVector()) {
+                leaf.polyPoints.reserve(pts.asVec().size());
+                for (const auto& pt : pts.asVec()) {
+                    if (pt.isVector() && pt.asVec().size() >= 2) {
+                        leaf.polyPoints.push_back({
+                            static_cast<float>(pt.asVec()[0].asNumber()),
+                            static_cast<float>(pt.asVec()[1].asNumber())
+                        });
+                    }
+                }
+            }
+        }
+        if (p.params.count("paths")) {
+            Value paths = m_interp->evaluate(*p.params.at("paths"));
+            if (paths.isVector()) {
+                for (const auto& path : paths.asVec()) {
+                    if (path.isVector()) {
+                        std::vector<int> indices;
+                        indices.reserve(path.asVec().size());
+                        for (const auto& idx : path.asVec())
+                            indices.push_back(static_cast<int>(idx.asNumber()));
+                        leaf.polyPaths.push_back(std::move(indices));
+                    }
+                }
+            }
+        }
+        break;
+    }
+    }
+
     return makeLeaf(std::move(leaf));
 }
 
@@ -317,6 +408,45 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     u.op       = CsgBoolean::Op::Union;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
+}
+
+// ---------------------------------------------------------------------------
+// Extrusion — build a CsgExtrusion from an ExtrusionNode
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& xform) {
+    CsgExtrusion ext;
+    ext.kind      = (e.kind == ExtrusionNode::Kind::Linear) ? CsgExtrusion::Kind::Linear
+                                                             : CsgExtrusion::Kind::Rotate;
+    ext.transform = xform;
+
+    // Resolve numeric params; treat "scale" and "center" specially
+    for (const auto& [name, exprPtr] : e.params) {
+        if (name == "scale") {
+            Value sv = m_interp->evaluate(*exprPtr);
+            if (sv.isNumber()) {
+                ext.params["scale_x"] = sv.asNumber();
+                ext.params["scale_y"] = sv.asNumber();
+            } else if (sv.isVector() && sv.asVec().size() >= 2) {
+                ext.params["scale_x"] = sv.asVec()[0].asNumber();
+                ext.params["scale_y"] = sv.asVec()[1].asNumber();
+            }
+        } else if (name == "center") {
+            Value cv = m_interp->evaluate(*exprPtr);
+            ext.params["center"] = bool(cv) ? 1.0 : 0.0;
+        } else {
+            ext.params[name] = m_interp->evalNumber(*exprPtr);
+        }
+    }
+
+    // Evaluate 2-D children in local space (identity xform)
+    // The outer xform is stored in ext.transform and applied to the final solid.
+    const glm::mat4 identity{1.0f};
+    for (const auto& child : e.children) {
+        if (auto c = evalNode(*child, identity))
+            ext.children.push_back(std::move(c));
+    }
+
+    return makeExtrusion(std::move(ext));
 }
 
 } // namespace chisel::csg

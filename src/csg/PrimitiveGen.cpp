@@ -166,9 +166,63 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
             segs,
             leaf.center);
     }
+
+    case CsgLeaf::Kind::Square2D:
+    case CsgLeaf::Kind::Circle2D:
+    case CsgLeaf::Kind::Polygon2D:
+        return {}; // 2-D only — use generateCrossSection() instead
     }
 
-    return {}; // unreachable
+    return {};
+}
+
+// ---------------------------------------------------------------------------
+// generateCrossSection — 2-D leaf → Manifold CrossSection
+// ---------------------------------------------------------------------------
+manifold::CrossSection PrimitiveGen::generateCrossSection(const CsgLeaf& leaf) const {
+    const auto& p = leaf.params;
+
+    switch (leaf.kind) {
+    case CsgLeaf::Kind::Square2D: {
+        double sx = getParam(p, "sx", 1.0);
+        double sy = getParam(p, "sy", 1.0);
+        return manifold::CrossSection::Square(
+            {static_cast<float>(sx), static_cast<float>(sy)}, leaf.center);
+    }
+
+    case CsgLeaf::Kind::Circle2D: {
+        double r    = getParam(p, "r", getParam(p, "_pos0", 1.0));
+        double fnOvr = getParam(p, "$fn", 0.0);
+        int    segs  = resolveSegments(r, fnOvr);
+        return manifold::CrossSection::Circle(static_cast<float>(r), segs);
+    }
+
+    case CsgLeaf::Kind::Polygon2D: {
+        manifold::Polygons polys;
+        if (!leaf.polyPaths.empty()) {
+            for (const auto& path : leaf.polyPaths) {
+                manifold::SimplePolygon contour;
+                contour.reserve(path.size());
+                for (int idx : path) {
+                    if (idx >= 0 && static_cast<size_t>(idx) < leaf.polyPoints.size())
+                        contour.push_back({leaf.polyPoints[idx].x,
+                                           leaf.polyPoints[idx].y});
+                }
+                if (!contour.empty()) polys.push_back(std::move(contour));
+            }
+        } else {
+            manifold::SimplePolygon contour;
+            contour.reserve(leaf.polyPoints.size());
+            for (const auto& pt : leaf.polyPoints)
+                contour.push_back({pt.x, pt.y});
+            if (!contour.empty()) polys.push_back(std::move(contour));
+        }
+        return polys.empty() ? manifold::CrossSection{} : manifold::CrossSection(polys);
+    }
+
+    default:
+        return {}; // 3-D primitive — no 2-D representation
+    }
 }
 
 } // namespace chisel::csg

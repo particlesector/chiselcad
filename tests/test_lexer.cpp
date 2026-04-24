@@ -285,3 +285,23 @@ TEST_CASE("Lexer:Eof token is always last", "[lexer]") {
     auto tokens = lexer.tokenize();
     REQUIRE(tokens.back().kind == TokenKind::Eof);
 }
+
+// ---------------------------------------------------------------------------
+// 2-D primitives and extrusion keywords (Tier 4)
+// ---------------------------------------------------------------------------
+TEST_CASE("Lexer:2D primitive keywords", "[lexer]") {
+    REQUIRE(kinds("square")  == std::vector{TokenKind::Square});
+    REQUIRE(kinds("circle")  == std::vector{TokenKind::Circle});
+    REQUIRE(kinds("polygon") == std::vector{TokenKind::Polygon});
+}
+
+TEST_CASE("Lexer:extrusion keywords", "[lexer]") {
+    REQUIRE(kinds("linear_extrude") == std::vector{TokenKind::LinearExtrude});
+    REQUIRE(kinds("rotate_extrude") == std::vector{TokenKind::RotateExtrude});
+}
+
+TEST_CASE("Lexer:linear_extrude with underscores tokenizes as single keyword", "[lexer]") {
+    auto t = lex("linear_extrude(height=10)");
+    REQUIRE(t[0].kind == TokenKind::LinearExtrude);
+    REQUIRE(t[0].text == "linear_extrude");
+}

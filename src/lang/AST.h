@@ -16,20 +16,21 @@ struct TransformNode;
 struct IfNode;
 struct ForNode;
 struct ModuleCallNode;
+struct ExtrusionNode;
 
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // All nodes are heap-allocated via unique_ptr so the tree is
 // easy to move/own and the variant stays small.
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
 // PrimitiveNode — cube / sphere / cylinder
 // ---------------------------------------------------------------------------
 struct PrimitiveNode {
-    enum class Kind { Cube, Sphere, Cylinder };
+    enum class Kind { Cube, Sphere, Cylinder, Square2D, Circle2D, Polygon2D };
 
     Kind kind;
     // Named params: "r", "h", "r1", "r2", "$fn", "$fs", "$fa", etc.
@@ -162,6 +163,24 @@ struct ModuleCallNode {
 };
 
 inline AstNodePtr makeModuleCall(ModuleCallNode n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
+
+// ---------------------------------------------------------------------------
+// ExtrusionNode — linear_extrude / rotate_extrude
+// Wraps 2-D children and extrudes them into a 3-D solid.
+// ---------------------------------------------------------------------------
+struct ExtrusionNode {
+    enum class Kind { Linear, Rotate };
+
+    Kind kind;
+    // Named params stored as expressions (height, twist, scale, angle, $fn …)
+    std::unordered_map<std::string, ExprPtr> params;
+    std::vector<AstNodePtr> children; // 2-D geometry
+    SourceLoc loc;
+};
+
+inline AstNodePtr makeExtrusion(ExtrusionNode n) {
     return std::make_unique<AstNode>(std::move(n));
 }
 

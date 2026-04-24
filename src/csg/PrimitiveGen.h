@@ -1,6 +1,7 @@
 #pragma once
 #include "CsgNode.h"
 #include <manifold/manifold.h>
+#include <manifold/cross_section.h>
 
 namespace chisel::csg {
 
@@ -23,9 +24,13 @@ struct PrimitiveGen {
     // different tessellation and facet counts).
     bool useManifoldSphere = false;
 
-    // Generate the untransformed Manifold for a leaf.
+    // Generate the untransformed Manifold for a 3-D leaf.
     // The caller (MeshEvaluator) applies leaf.transform afterwards.
     manifold::Manifold generate(const CsgLeaf& leaf) const;
+
+    // Generate a 2-D CrossSection for a 2-D leaf (Square2D / Circle2D / Polygon2D).
+    // Returns an empty CrossSection for 3-D leaf kinds.
+    manifold::CrossSection generateCrossSection(const CsgLeaf& leaf) const;
 
     // Compute how many circular segments to use for a feature of radius r,
     // respecting $fn / $fs / $fa in the same way OpenSCAD does.

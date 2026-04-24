@@ -125,7 +125,14 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::Cube:
     case TokenKind::Sphere:
     case TokenKind::Cylinder:
+    case TokenKind::Square:
+    case TokenKind::Circle:
+    case TokenKind::Polygon:
         return parsePrimitive(k);
+
+    case TokenKind::LinearExtrude:
+    case TokenKind::RotateExtrude:
+        return parseExtrusion(k);
 
     case TokenKind::Union:
     case TokenKind::Difference:
@@ -169,6 +176,9 @@ AstNodePtr Parser::parsePrimitive(TokenKind k) {
     case TokenKind::Cube:     node.kind = PrimitiveNode::Kind::Cube;     break;
     case TokenKind::Sphere:   node.kind = PrimitiveNode::Kind::Sphere;   break;
     case TokenKind::Cylinder: node.kind = PrimitiveNode::Kind::Cylinder; break;
+    case TokenKind::Square:   node.kind = PrimitiveNode::Kind::Square2D; break;
+    case TokenKind::Circle:   node.kind = PrimitiveNode::Kind::Circle2D; break;
+    case TokenKind::Polygon:  node.kind = PrimitiveNode::Kind::Polygon2D; break;
     default: break;
     }
 
@@ -600,6 +610,54 @@ AstNodePtr Parser::parseModuleCall() {
     }
 
     return makeModuleCall(std::move(node));
+}
+
+// ---------------------------------------------------------------------------
+// Extrusions — linear_extrude / rotate_extrude
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseExtrusion(TokenKind k) {
+    const Token& kw = advance();
+    ExtrusionNode node;
+    node.loc  = kw.loc;
+    node.kind = (k == TokenKind::LinearExtrude) ? ExtrusionNode::Kind::Linear
+                                                 : ExtrusionNode::Kind::Rotate;
+
+    expect(TokenKind::LParen, "expected '(' after extrude keyword");
+    parseExtrusionParams(node.params);
+    expect(TokenKind::RParen, "expected ')' after extrude params");
+
+    node.children = parseBody();
+    return makeExtrusion(std::move(node));
+}
+
+// Parses key=value params for linear/rotate_extrude.  Unlike parseParamList,
+// all values are kept as ExprPtr (including center and scale vectors).
+void Parser::parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& params) {
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        const size_t prevPos = m_pos;
+
+        if (check(TokenKind::SpecialVar)) {
+            std::string name = peek().text;
+            advance();
+            expect(TokenKind::Equals, "expected '='");
+            params[name] = parseExpr();
+            match(TokenKind::Comma);
+            continue;
+        }
+        if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
+            std::string name = advance().text;
+            advance(); // consume '='
+            params[name] = parseExpr();
+            match(TokenKind::Comma);
+            continue;
+        }
+        // Positional scalar (height for linear_extrude)
+        if (!check(TokenKind::RParen)) {
+            params["_pos0"] = parseExpr();
+            match(TokenKind::Comma);
+        }
+        if (m_pos == prevPos) break;
+    }
 }
 
 // ---------------------------------------------------------------------------

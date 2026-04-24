@@ -39,6 +39,7 @@ private:
     AstNodePtr parseIf();
     AstNodePtr parseFor();
     AstNodePtr parseModuleCall();
+    AstNodePtr parseExtrusion(TokenKind k);
 
     // ---- module definitions -----------------------------------------------
     void parseModuleDef(ParseResult& result);
@@ -52,6 +53,7 @@ private:
     // ---- argument helpers ------------------------------------------------
     void parseParamList(std::unordered_map<std::string, ExprPtr>& params,
                         bool& center);
+    void parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& params);
 
     // ---- child body ------------------------------------------------------
     std::vector<AstNodePtr> parseBody();
