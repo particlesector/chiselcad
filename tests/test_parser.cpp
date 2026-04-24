@@ -430,3 +430,85 @@ TEST_CASE("Parser:recovers from missing paren", "[parser]") {
     // Should still produce a node (partial parse)
     // The important thing is it doesn't crash or hang
 }
+
+// ---------------------------------------------------------------------------
+// Tier 4 — 2-D primitives and extrusions
+// ---------------------------------------------------------------------------
+static const ExtrusionNode& asExtrude(const AstNodePtr& n) {
+    return std::get<ExtrusionNode>(*n);
+}
+
+TEST_CASE("Parser:square positional vector", "[parser]") {
+    auto r = parse("square([10, 5]);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& p = asPrim(r.roots[0]);
+    REQUIRE(p.kind == PrimitiveNode::Kind::Square2D);
+    // Positional [10,5] → x=10, y=5
+    REQUIRE(paramVal(p, "x") == Approx(10.0));
+    REQUIRE(paramVal(p, "y") == Approx(5.0));
+}
+
+TEST_CASE("Parser:square named size scalar", "[parser]") {
+    auto r = parse("square(size=8);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& p = asPrim(r.roots[0]);
+    REQUIRE(p.kind == PrimitiveNode::Kind::Square2D);
+    REQUIRE(p.params.count("size") == 1);
+}
+
+TEST_CASE("Parser:circle named r", "[parser]") {
+    auto r = parse("circle(r=5);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& p = asPrim(r.roots[0]);
+    REQUIRE(p.kind == PrimitiveNode::Kind::Circle2D);
+    REQUIRE(paramVal(p, "r") == Approx(5.0));
+}
+
+TEST_CASE("Parser:circle positional radius", "[parser]") {
+    auto r = parse("circle(3);");
+    const auto& p = asPrim(r.roots[0]);
+    REQUIRE(p.kind == PrimitiveNode::Kind::Circle2D);
+    REQUIRE(paramVal(p, "_pos0") == Approx(3.0));
+}
+
+TEST_CASE("Parser:polygon with points", "[parser]") {
+    auto r = parse("polygon(points=[[0,0],[10,0],[5,8]]);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& p = asPrim(r.roots[0]);
+    REQUIRE(p.kind == PrimitiveNode::Kind::Polygon2D);
+    REQUIRE(p.params.count("points") == 1);
+}
+
+TEST_CASE("Parser:linear_extrude with height", "[parser]") {
+    auto r = parse("linear_extrude(height=10) { circle(r=5); }");
+    REQUIRE(r.roots.size() == 1);
+    const auto& e = asExtrude(r.roots[0]);
+    REQUIRE(e.kind == ExtrusionNode::Kind::Linear);
+    REQUIRE(e.params.count("height") == 1);
+    REQUIRE(e.children.size() == 1);
+}
+
+TEST_CASE("Parser:linear_extrude positional height", "[parser]") {
+    auto r = parse("linear_extrude(15) square([4,4]);");
+    const auto& e = asExtrude(r.roots[0]);
+    REQUIRE(e.kind == ExtrusionNode::Kind::Linear);
+    REQUIRE(e.params.count("_pos0") == 1);
+    REQUIRE(e.children.size() == 1);
+}
+
+TEST_CASE("Parser:rotate_extrude with angle", "[parser]") {
+    auto r = parse("rotate_extrude(angle=180) circle(r=3);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& e = asExtrude(r.roots[0]);
+    REQUIRE(e.kind == ExtrusionNode::Kind::Rotate);
+    REQUIRE(e.params.count("angle") == 1);
+    REQUIRE(e.children.size() == 1);
+}
+
+TEST_CASE("Parser:linear_extrude with twist and center", "[parser]") {
+    auto r = parse("linear_extrude(height=20, twist=90, center=true) square([5,5]);");
+    const auto& e = asExtrude(r.roots[0]);
+    REQUIRE(e.params.count("height") == 1);
+    REQUIRE(e.params.count("twist")  == 1);
+    REQUIRE(e.params.count("center") == 1);
+}

@@ -9,9 +9,10 @@
 namespace chisel::csg {
 
 // ---------------------------------------------------------------------------
-// Forward declaration needed for the recursive variant
+// Forward declarations needed for the recursive variant
 // ---------------------------------------------------------------------------
 struct CsgBoolean;
+struct CsgExtrusion;
 
 // ---------------------------------------------------------------------------
 // CsgLeaf — a primitive with its fully-accumulated world transform.
@@ -19,20 +20,25 @@ struct CsgBoolean;
 // this node in the AST; the MeshEvaluator applies it after tessellation.
 // ---------------------------------------------------------------------------
 struct CsgLeaf {
-    enum class Kind { Cube, Sphere, Cylinder };
+    enum class Kind { Cube, Sphere, Cylinder, Square2D, Circle2D, Polygon2D };
 
     Kind kind = Kind::Cube;
     // Named params carried forward from the parser ("r", "h", "r1", "r2",
-    // "$fn", "$fs", "$fa", "x"/"y"/"z" for cube size, "_pos0" for sphere(5)).
+    // "$fn", "$fs", "$fa", "x"/"y"/"z" for cube size, "_pos0" for sphere(5),
+    // "sx"/"sy" for square, etc.)
     std::unordered_map<std::string, double> params;
     bool center = false;
     glm::mat4 transform{1.0f}; // accumulated model-to-world matrix
+
+    // Polygon2D only — resolved contour points and optional path indices
+    std::vector<glm::vec2>           polyPoints;
+    std::vector<std::vector<int>>    polyPaths;
 };
 
 // ---------------------------------------------------------------------------
 // CsgNode — the CSG IR variant
 // ---------------------------------------------------------------------------
-using CsgNode    = std::variant<CsgLeaf, CsgBoolean>;
+using CsgNode    = std::variant<CsgLeaf, CsgBoolean, CsgExtrusion>;
 using CsgNodePtr = std::shared_ptr<CsgNode>;
 
 struct CsgBoolean {
@@ -48,6 +54,22 @@ struct CsgBoolean {
 };
 
 // ---------------------------------------------------------------------------
+// CsgExtrusion — linear_extrude / rotate_extrude in the CSG IR.
+// Children are 2-D CsgLeafs (Square2D / Circle2D / Polygon2D) or CsgBooleans
+// of 2-D leaves; MeshEvaluator converts them to CrossSections.
+// ---------------------------------------------------------------------------
+struct CsgExtrusion {
+    enum class Kind { Linear, Rotate };
+
+    Kind kind = Kind::Linear;
+    // Resolved numeric params: "height", "twist", "scale_x", "scale_y",
+    // "angle", "$fn", "center", "_pos0"
+    std::unordered_map<std::string, double> params;
+    std::vector<CsgNodePtr> children;
+    glm::mat4 transform{1.0f}; // outer 3-D transform applied to the final solid
+};
+
+// ---------------------------------------------------------------------------
 // Factory helpers
 // ---------------------------------------------------------------------------
 inline CsgNodePtr makeLeaf(CsgLeaf leaf) {
@@ -55,6 +77,9 @@ inline CsgNodePtr makeLeaf(CsgLeaf leaf) {
 }
 inline CsgNodePtr makeBoolean(CsgBoolean b) {
     return std::make_shared<CsgNode>(std::move(b));
+}
+inline CsgNodePtr makeExtrusion(CsgExtrusion e) {
+    return std::make_shared<CsgNode>(std::move(e));
 }
 
 // ---------------------------------------------------------------------------

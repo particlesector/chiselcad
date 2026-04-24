@@ -52,6 +52,11 @@ enum class TokenKind : uint8_t {
     For,    // for
     Module, // module
 
+    // 2-D primitives
+    Square, Circle, Polygon,
+    // Extrusion operations
+    LinearExtrude, RotateExtrude,
+
     // Range separator
     Colon, // :
 
