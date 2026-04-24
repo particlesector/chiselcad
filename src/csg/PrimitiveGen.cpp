@@ -217,7 +217,10 @@ manifold::CrossSection PrimitiveGen::generateCrossSection(const CsgLeaf& leaf) c
                 contour.push_back({pt.x, pt.y});
             if (!contour.empty()) polys.push_back(std::move(contour));
         }
-        return polys.empty() ? manifold::CrossSection{} : manifold::CrossSection(polys);
+        // EvenOdd matches OpenSCAD's polygon fill rule: nested same-winding
+        // contours create holes (inner area has even crossing count → outside).
+        return polys.empty() ? manifold::CrossSection{}
+                             : manifold::CrossSection(polys, manifold::CrossSection::FillRule::EvenOdd);
     }
 
     default:
