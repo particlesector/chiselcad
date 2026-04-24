@@ -204,7 +204,7 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
 
     if (e.kind == CsgExtrusion::Kind::Linear) {
         double height = getP("height", getP("h", getP("_pos0", 1.0)));
-        double twist  = getP("twist",  0.0);
+        double twist  = -getP("twist",  0.0); // OpenSCAD uses left-hand rule; Manifold uses right-hand
         float  scaleX = static_cast<float>(getP("scale_x", 1.0));
         float  scaleY = static_cast<float>(getP("scale_y", 1.0));
         double fnOvr  = getP("$fn",   0.0);
