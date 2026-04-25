@@ -229,7 +229,18 @@ CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& 
 // Rotation order: Z first, then Y, then X (OpenSCAD convention).
 // ---------------------------------------------------------------------------
 glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
-    auto vec = m_interp->evalVec3(*t.vec);
+    Value rotVal = m_interp->evaluate(*t.vec); // evaluate once, share result
+    auto vec = [&]() -> std::array<double, 3> {
+        if (rotVal.isVector()) {
+            std::array<double, 3> r = {0.0, 0.0, 0.0};
+            for (std::size_t i = 0; i < 3 && i < rotVal.asVec().size(); ++i)
+                if (rotVal.asVec()[i].isNumber()) r[i] = rotVal.asVec()[i].asNumber();
+            return r;
+        }
+        if (rotVal.isNumber())
+            return {0.0, 0.0, rotVal.asNumber()}; // scalar → Z axis
+        return {0.0, 0.0, 0.0};
+    }();
     const double vx = vec[0], vy = vec[1], vz = vec[2];
 
     glm::mat4 m{1.0f};
@@ -243,6 +254,7 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
         break;
 
     case TransformNode::Kind::Rotate: {
+        // scalar rotate(angle) → Z-axis; vector → XYZ Euler
         float rx = static_cast<float>(vx * kDeg2Rad);
         float ry = static_cast<float>(vy * kDeg2Rad);
         float rz = static_cast<float>(vz * kDeg2Rad);
@@ -327,9 +339,15 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
             for (double v = start; v >= end - 1e-10 && (int)values.size() < kMaxIter; v += step)
                 values.push_back(Value::fromNumber(v));
     } else {
-        // List form — preserve full Value (supports iterating over vectors)
-        for (const auto& e : node.range.list)
-            values.push_back(m_interp->evaluate(*e));
+        // List form — evaluate each element; if one evaluates to a Vector,
+        // expand it so that `for (pt = pts)` iterates over pts' elements.
+        for (const auto& e : node.range.list) {
+            Value v = m_interp->evaluate(*e);
+            if (v.isVector())
+                for (const auto& elem : v.asVec()) values.push_back(elem);
+            else
+                values.push_back(std::move(v));
+        }
     }
 
     // Save the loop variable's current binding, iterate, then restore

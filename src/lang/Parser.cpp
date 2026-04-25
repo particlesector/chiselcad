@@ -239,7 +239,7 @@ AstNodePtr Parser::parseTransform(TokenKind k) {
     }
 
     expect(TokenKind::LParen, "expected '(' after transform name");
-    node.vec = parseVecExpr();
+    node.vec = parseExpr(); // [x,y,z] literal or any expression that yields a vector
     expect(TokenKind::RParen, "expected ')' after transform vector");
 
     node.children = parseBody();
@@ -279,41 +279,46 @@ AstNodePtr Parser::parseFor() {
     expect(TokenKind::LParen, "expected '(' after 'for'");
     node.var = expect(TokenKind::Ident, "expected loop variable").text;
     expect(TokenKind::Equals, "expected '=' after loop variable");
-    expect(TokenKind::LBracket, "expected '[' for range/list");
 
-    // Parse first expression — determines range vs list form
-    auto first = parseExpr();
+    if (check(TokenKind::LBracket)) {
+        advance(); // consume '['
 
-    if (check(TokenKind::Colon)) {
-        // Range form: [start : end] or [start : step : end]
-        advance(); // consume ':'
-        auto second = parseExpr();
+        // Parse first expression — determines range vs list form
+        auto first = parseExpr();
+
         if (check(TokenKind::Colon)) {
+            // Range form: [start : end] or [start : step : end]
             advance(); // consume ':'
-            auto third = parseExpr();
-            // [first:second:third] = [start:step:end]
-            node.range.isRange = true;
-            node.range.start   = std::move(first);
-            node.range.step    = std::move(second);
-            node.range.end     = std::move(third);
+            auto second = parseExpr();
+            if (check(TokenKind::Colon)) {
+                advance(); // consume ':'
+                auto third = parseExpr();
+                node.range.isRange = true;
+                node.range.start   = std::move(first);
+                node.range.step    = std::move(second);
+                node.range.end     = std::move(third);
+            } else {
+                node.range.isRange = true;
+                node.range.start   = std::move(first);
+                node.range.end     = std::move(second);
+            }
         } else {
-            // [first:second] = [start:end], implicit step of 1
-            node.range.isRange = true;
-            node.range.start   = std::move(first);
-            node.range.end     = std::move(second);
+            // List form: [first, ...]
+            node.range.isRange = false;
+            node.range.list.push_back(std::move(first));
+            while (match(TokenKind::Comma)) {
+                if (check(TokenKind::RBracket)) break;
+                node.range.list.push_back(parseExpr());
+            }
         }
+        expect(TokenKind::RBracket, "expected ']' after range/list");
     } else {
-        // List form: [first, ...]
+        // Expression form: for (var = expr) — expr must evaluate to a vector
         node.range.isRange = false;
-        node.range.list.push_back(std::move(first));
-        while (match(TokenKind::Comma)) {
-            if (check(TokenKind::RBracket)) break;
-            node.range.list.push_back(parseExpr());
-        }
+        node.range.list.push_back(parseExpr());
     }
 
-    expect(TokenKind::RBracket, "expected ']' after range/list");
-    expect(TokenKind::RParen,   "expected ')' after for header");
+    expect(TokenKind::RParen, "expected ')' after for header");
 
     node.children = parseBody();
     return makeFor(std::move(node));
