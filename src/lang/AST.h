@@ -17,13 +17,12 @@ struct IfNode;
 struct ForNode;
 struct ModuleCallNode;
 struct ExtrusionNode;
+struct LetNode;
 
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
-// All nodes are heap-allocated via unique_ptr so the tree is
-// easy to move/own and the variant stays small.
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -185,15 +184,48 @@ inline AstNodePtr makeExtrusion(ExtrusionNode n) {
 }
 
 // ---------------------------------------------------------------------------
+// FunctionParam — one formal parameter in a function definition
+// ---------------------------------------------------------------------------
+struct FunctionParam {
+    std::string name;
+    ExprPtr     defaultVal; // nullptr means no default (required)
+};
+
+// ---------------------------------------------------------------------------
+// FunctionDef — user-defined function: function name(params) = expr;
+// ---------------------------------------------------------------------------
+struct FunctionDef {
+    std::string               name;
+    std::vector<FunctionParam> params;
+    ExprPtr                   body; // expression — not a geometry block
+    SourceLoc                 loc;
+};
+
+// ---------------------------------------------------------------------------
+// LetNode — statement-level let: let(x = expr) { children }
+// Creates a scoped variable binding for child geometry.
+// ---------------------------------------------------------------------------
+struct LetNode {
+    std::vector<std::pair<std::string, ExprPtr>> bindings;
+    std::vector<AstNodePtr> children;
+    SourceLoc loc;
+};
+
+inline AstNodePtr makeLetNode(LetNode n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
+
+// ---------------------------------------------------------------------------
 // ParseResult — the output of a successful parse
 // ---------------------------------------------------------------------------
 struct ParseResult {
-    std::vector<AstNodePtr>  roots;       // geometry-producing top-level nodes
-    std::vector<AssignStmt>  assignments; // variable assignments (x = expr;)
-    std::vector<ModuleDef>   moduleDefs;  // user-defined module definitions
-    double globalFn = 0.0;               // $fn if set at file scope (0 = unset)
-    double globalFs = 2.0;               // $fs default
-    double globalFa = 12.0;             // $fa default
+    std::vector<AstNodePtr>  roots;        // geometry-producing top-level nodes
+    std::vector<AssignStmt>  assignments;  // variable assignments (x = expr;)
+    std::vector<ModuleDef>   moduleDefs;   // user-defined module definitions
+    std::vector<FunctionDef> functionDefs; // user-defined function definitions
+    double globalFn = 0.0;                // $fn if set at file scope (0 = unset)
+    double globalFs = 2.0;                // $fs default
+    double globalFa = 12.0;              // $fa default
 };
 
 } // namespace chisel::lang

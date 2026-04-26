@@ -75,6 +75,12 @@ void Parser::parseStatement(ParseResult& result) {
         return;
     }
 
+    // Function definition: function name(params) = expr;
+    if (check(TokenKind::Function)) {
+        parseFunctionDef(result);
+        return;
+    }
+
     // Variable assignment: ident = expr;  (no '(' follows the ident)
     if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
         parseAssignment(result);
@@ -153,6 +159,9 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::For:
         return parseFor();
 
+    case TokenKind::Let:
+        return parseLetNode();
+
     case TokenKind::Ident:
         // Could be a module call: name(args) { ... }
         if (peek(1).kind == TokenKind::LParen)
@@ -230,7 +239,7 @@ AstNodePtr Parser::parseTransform(TokenKind k) {
     }
 
     expect(TokenKind::LParen, "expected '(' after transform name");
-    node.vec = parseVecExpr();
+    node.vec = parseExpr(); // [x,y,z] literal or any expression that yields a vector
     expect(TokenKind::RParen, "expected ')' after transform vector");
 
     node.children = parseBody();
@@ -270,41 +279,46 @@ AstNodePtr Parser::parseFor() {
     expect(TokenKind::LParen, "expected '(' after 'for'");
     node.var = expect(TokenKind::Ident, "expected loop variable").text;
     expect(TokenKind::Equals, "expected '=' after loop variable");
-    expect(TokenKind::LBracket, "expected '[' for range/list");
 
-    // Parse first expression — determines range vs list form
-    auto first = parseExpr();
+    if (check(TokenKind::LBracket)) {
+        advance(); // consume '['
 
-    if (check(TokenKind::Colon)) {
-        // Range form: [start : end] or [start : step : end]
-        advance(); // consume ':'
-        auto second = parseExpr();
+        // Parse first expression — determines range vs list form
+        auto first = parseExpr();
+
         if (check(TokenKind::Colon)) {
+            // Range form: [start : end] or [start : step : end]
             advance(); // consume ':'
-            auto third = parseExpr();
-            // [first:second:third] = [start:step:end]
-            node.range.isRange = true;
-            node.range.start   = std::move(first);
-            node.range.step    = std::move(second);
-            node.range.end     = std::move(third);
+            auto second = parseExpr();
+            if (check(TokenKind::Colon)) {
+                advance(); // consume ':'
+                auto third = parseExpr();
+                node.range.isRange = true;
+                node.range.start   = std::move(first);
+                node.range.step    = std::move(second);
+                node.range.end     = std::move(third);
+            } else {
+                node.range.isRange = true;
+                node.range.start   = std::move(first);
+                node.range.end     = std::move(second);
+            }
         } else {
-            // [first:second] = [start:end], implicit step of 1
-            node.range.isRange = true;
-            node.range.start   = std::move(first);
-            node.range.end     = std::move(second);
+            // List form: [first, ...]
+            node.range.isRange = false;
+            node.range.list.push_back(std::move(first));
+            while (match(TokenKind::Comma)) {
+                if (check(TokenKind::RBracket)) break;
+                node.range.list.push_back(parseExpr());
+            }
         }
+        expect(TokenKind::RBracket, "expected ']' after range/list");
     } else {
-        // List form: [first, ...]
+        // Expression form: for (var = expr) — expr must evaluate to a vector
         node.range.isRange = false;
-        node.range.list.push_back(std::move(first));
-        while (match(TokenKind::Comma)) {
-            if (check(TokenKind::RBracket)) break;
-            node.range.list.push_back(parseExpr());
-        }
+        node.range.list.push_back(parseExpr());
     }
 
-    expect(TokenKind::RBracket, "expected ']' after range/list");
-    expect(TokenKind::RParen,   "expected ')' after for header");
+    expect(TokenKind::RParen, "expected ')' after for header");
 
     node.children = parseBody();
     return makeFor(std::move(node));
@@ -466,6 +480,21 @@ ExprPtr Parser::parseExpr(int minPrec) {
         bin.loc   = loc;
         lhs = makeExpr(std::move(bin));
     }
+
+    // Ternary operator — lowest precedence, only at top level (minPrec == 0)
+    if (minPrec == 0 && check(TokenKind::Question)) {
+        const Token& q = advance(); // consume '?'
+        auto thenExpr = parseExpr(0);
+        expect(TokenKind::Colon, "expected ':' in ternary expression");
+        auto elseExpr = parseExpr(0);
+        TernaryExpr t;
+        t.condition = std::move(lhs);
+        t.then      = std::move(thenExpr);
+        t.else_     = std::move(elseExpr);
+        t.loc       = q.loc;
+        lhs = makeExpr(std::move(t));
+    }
+
     return lhs;
 }
 
@@ -480,7 +509,23 @@ ExprPtr Parser::parseUnary() {
         auto operand = parseUnary();
         return makeExpr(UnaryExpr{UnaryExpr::Op::Not, std::move(operand), tok.loc});
     }
-    return parsePrimary();
+    return parsePostfix();
+}
+
+// Postfix operators applied to any primary: expr[index]
+ExprPtr Parser::parsePostfix() {
+    auto expr = parsePrimary();
+    while (check(TokenKind::LBracket)) {
+        SourceLoc loc = advance().loc; // consume '['
+        auto idx = parseExpr();
+        expect(TokenKind::RBracket, "expected ']' after index");
+        IndexExpr ie;
+        ie.target = std::move(expr);
+        ie.index  = std::move(idx);
+        ie.loc    = loc;
+        expr = makeExpr(std::move(ie));
+    }
+    return expr;
 }
 
 ExprPtr Parser::parsePrimary() {
@@ -497,6 +542,15 @@ ExprPtr Parser::parsePrimary() {
     if (check(TokenKind::False)) {
         SourceLoc loc = advance().loc;
         return makeExpr(BoolLit{false, loc});
+    }
+    // undef literal
+    if (check(TokenKind::Undef)) {
+        SourceLoc loc = advance().loc;
+        return makeExpr(UndefLit{loc});
+    }
+    // let expression: let(x = expr, ...) body
+    if (check(TokenKind::Let)) {
+        return parseLetExpr();
     }
     // Parenthesised expression
     if (match(TokenKind::LParen)) {
@@ -520,12 +574,19 @@ ExprPtr Parser::parsePrimary() {
     if (check(TokenKind::Ident)) {
         const Token& name_tok = advance();
         if (match(TokenKind::LParen)) {
-            // Function call: name(arg, arg, ...)
+            // Function call: name(arg, name=arg, ...)
             FunctionCall fc;
             fc.name = name_tok.text;
             fc.loc  = name_tok.loc;
             while (!check(TokenKind::RParen) && !atEnd()) {
-                fc.args.push_back(parseExpr());
+                FunctionArg arg;
+                // Named arg: ident = expr
+                if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
+                    arg.name = advance().text; // consume ident
+                    advance();                 // consume '='
+                }
+                arg.value = parseExpr();
+                fc.args.push_back(std::move(arg));
                 if (!match(TokenKind::Comma)) break;
             }
             expect(TokenKind::RParen, "expected ')' after function arguments");
@@ -578,6 +639,76 @@ void Parser::parseModuleDef(ParseResult& result) {
     expect(TokenKind::RBrace, "expected '}' to close module body");
 
     result.moduleDefs.push_back(std::move(def));
+}
+
+// ---------------------------------------------------------------------------
+// function definition — function name(params) = expr;
+// ---------------------------------------------------------------------------
+void Parser::parseFunctionDef(ParseResult& result) {
+    const Token& kw = advance(); // consume 'function'
+    FunctionDef def;
+    def.loc  = kw.loc;
+    def.name = expect(TokenKind::Ident, "expected function name").text;
+
+    expect(TokenKind::LParen, "expected '(' after function name");
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        FunctionParam param;
+        param.name = expect(TokenKind::Ident, "expected parameter name").text;
+        if (match(TokenKind::Equals))
+            param.defaultVal = parseExpr();
+        def.params.push_back(std::move(param));
+        if (!match(TokenKind::Comma)) break;
+    }
+    expect(TokenKind::RParen, "expected ')'");
+    expect(TokenKind::Equals, "expected '=' in function definition");
+    def.body = parseExpr();
+    match(TokenKind::Semicolon);
+
+    result.functionDefs.push_back(std::move(def));
+}
+
+// ---------------------------------------------------------------------------
+// let statement — let(x = expr, ...) { children }
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseLetNode() {
+    const Token& kw = advance(); // consume 'let'
+    LetNode node;
+    node.loc = kw.loc;
+
+    expect(TokenKind::LParen, "expected '(' after 'let'");
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        std::string name = expect(TokenKind::Ident, "expected variable name").text;
+        expect(TokenKind::Equals, "expected '='");
+        auto val = parseExpr();
+        node.bindings.push_back({std::move(name), std::move(val)});
+        if (!match(TokenKind::Comma)) break;
+    }
+    expect(TokenKind::RParen, "expected ')'");
+
+    node.children = parseBody();
+    return makeLetNode(std::move(node));
+}
+
+// ---------------------------------------------------------------------------
+// let expression — let(x = expr, ...) body_expr
+// ---------------------------------------------------------------------------
+ExprPtr Parser::parseLetExpr() {
+    const Token& kw = advance(); // consume 'let'
+    LetExpr expr;
+    expr.loc = kw.loc;
+
+    expect(TokenKind::LParen, "expected '(' after 'let'");
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        std::string name = expect(TokenKind::Ident, "expected variable name").text;
+        expect(TokenKind::Equals, "expected '='");
+        auto val = parseExpr();
+        expr.bindings.push_back({std::move(name), std::move(val)});
+        if (!match(TokenKind::Comma)) break;
+    }
+    expect(TokenKind::RParen, "expected ')'");
+
+    expr.body = parseExpr();
+    return makeExpr(std::move(expr));
 }
 
 // ---------------------------------------------------------------------------

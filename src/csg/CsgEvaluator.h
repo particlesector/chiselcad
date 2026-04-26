@@ -36,6 +36,7 @@ private:
     CsgNodePtr evalFor(const chisel::lang::ForNode& n, const glm::mat4& xform);
     CsgNodePtr evalModuleCall(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform);
     CsgNodePtr evalExtrusion(const chisel::lang::ExtrusionNode& e, const glm::mat4& xform);
+    CsgNodePtr evalLet(const chisel::lang::LetNode& n, const glm::mat4& xform);
 
     glm::mat4 makeMatrix(const chisel::lang::TransformNode& t) const;
 };
