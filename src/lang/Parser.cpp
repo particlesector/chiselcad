@@ -575,6 +575,11 @@ ExprPtr Parser::parsePrimary() {
         expect(TokenKind::RBracket, "expected ']'");
         return makeExpr(std::move(vlit));
     }
+    // Special variable reference: $fn, $fs, $fa, $children, etc.
+    if (check(TokenKind::SpecialVar)) {
+        const Token& tok = advance();
+        return makeExpr(VarRef{tok.text, tok.loc});
+    }
     // Identifier — variable reference or function call
     if (check(TokenKind::Ident)) {
         const Token& name_tok = advance();

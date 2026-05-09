@@ -449,3 +449,187 @@ TEST_CASE("CsgEval:module called multiple times", "[csg]") {
     REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(2.0));
     REQUIRE(asLeaf(s.roots[2]).params.at("r") == Approx(3.0));
 }
+
+// ===========================================================================
+// Tier C — Module System Completeness
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// echo()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:echo captures message", "[csg][tier-c]") {
+    auto s = evaluate("echo(\"hello\");");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("hello") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:echo multiple args", "[csg][tier-c]") {
+    auto s = evaluate("echo(\"x=\", 42);");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("42") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:echo formats number", "[csg][tier-c]") {
+    auto s = evaluate("echo(3.14);");
+    REQUIRE(!s.echoMessages.empty());
+    REQUIRE(s.echoMessages[0].find("3.14") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:echo in for loop", "[csg][tier-c]") {
+    auto s = evaluate("for (i = [1:3]) echo(i);");
+    REQUIRE(s.echoMessages.size() == 3);
+}
+
+TEST_CASE("CsgEval:echo does not produce geometry", "[csg][tier-c]") {
+    auto s = evaluate("echo(\"no geo\"); cube([1,1,1]);");
+    REQUIRE(s.roots.size() == 1); // only the cube
+    REQUIRE(s.echoMessages.size() == 1);
+}
+
+// ---------------------------------------------------------------------------
+// assert()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:assert pass produces no error", "[csg][tier-c]") {
+    auto s = evaluate("assert(1 > 0); cube([1,1,1]);");
+    REQUIRE(s.evalDiags.empty());
+    REQUIRE(s.roots.size() == 1);
+}
+
+TEST_CASE("CsgEval:assert fail records error", "[csg][tier-c]") {
+    auto s = evaluate("assert(1 < 0);");
+    REQUIRE(!s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].level == chisel::lang::DiagLevel::Error);
+}
+
+TEST_CASE("CsgEval:assert fail with message", "[csg][tier-c]") {
+    auto s = evaluate("assert(false, \"bad value\");");
+    REQUIRE(!s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].message.find("bad value") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:assert pass inside module", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module sc(n) { assert(n > 0); cube([n, n, n]); }"
+        "sc(5);"
+    );
+    REQUIRE(s.evalDiags.empty());
+    REQUIRE(s.roots.size() == 1);
+}
+
+TEST_CASE("CsgEval:assert fail inside module", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module sc(n) { assert(n > 0, \"n must be positive\"); }"
+        "sc(-1);"
+    );
+    REQUIRE(!s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].message.find("n must be positive") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// children() / $children
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:children basic passthrough", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module wrap() { children(); }"
+        "wrap() cube([5,5,5]);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(std::holds_alternative<CsgLeaf>(*s.roots[0]));
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Cube);
+}
+
+TEST_CASE("CsgEval:children with transform", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module lifted() { translate([0,0,10]) children(); }"
+        "lifted() cube([1,1,1]);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    // The cube should have a z-translation of 10
+    REQUIRE(asLeaf(s.roots[0]).transform[3][2] == Approx(10.0f));
+}
+
+TEST_CASE("CsgEval:children multiple", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module wrap() { children(); }"
+        "wrap() { sphere(r=1); cube([2,2,2]); }"
+    );
+    // Both children unioned into one boolean, so we get one root (a boolean)
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(std::holds_alternative<CsgBoolean>(*s.roots[0]));
+    REQUIRE(asBool(s.roots[0]).children.size() == 2);
+}
+
+TEST_CASE("CsgEval:children indexed", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module first_only() { children(0); }"
+        "first_only() { sphere(r=3); cube([1,1,1]); }"
+    );
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(std::holds_alternative<CsgLeaf>(*s.roots[0]));
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:children index out of range returns nothing", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module bad() { children(99); }"
+        "bad() cube([1,1,1]);"
+    );
+    REQUIRE(s.roots.empty());
+}
+
+TEST_CASE("CsgEval:children outside module returns nothing", "[csg][tier-c]") {
+    // children() called at top level — not inside a module body
+    auto s = evaluate("children();");
+    REQUIRE(s.roots.empty());
+}
+
+TEST_CASE("CsgEval:children repeated in for loop", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module repeat3() {"
+        "    for (i = [0:2])"
+        "        translate([i * 10, 0, 0]) children();"
+        "}"
+        "repeat3() sphere(r=2);"
+    );
+    // 3 translated copies of sphere, unioned by for → one CsgBoolean with 3 children
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 3);
+}
+
+TEST_CASE("CsgEval:$children count is correct", "[csg][tier-c]") {
+    // Module uses $children to decide geometry
+    auto s = evaluate(
+        "module maybe(n) {"
+        "    if ($children == n) { cube([1,1,1]); }"
+        "}"
+        "maybe(2) { sphere(r=1); sphere(r=2); }"
+    );
+    // $children == 2 is true, so cube is produced
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(std::holds_alternative<CsgLeaf>(*s.roots[0]));
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Cube);
+}
+
+TEST_CASE("CsgEval:$children zero when no children", "[csg][tier-c]") {
+    auto s = evaluate(
+        "module maybe() {"
+        "    if ($children == 0) { cube([1,1,1]); }"
+        "}"
+        "maybe();"
+    );
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Cube);
+}
+
+// ---------------------------------------------------------------------------
+// Recursive functions (Tier C — confirmed already working via Tier A impl)
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:recursive function drives geometry", "[csg][tier-c]") {
+    auto s = evaluate(
+        "function fib(n) = n <= 1 ? n : fib(n-1) + fib(n-2);"
+        "sphere(r = fib(6));"  // fib(6) = 8
+    );
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(8.0));
+}

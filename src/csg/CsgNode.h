@@ -1,4 +1,5 @@
 #pragma once
+#include "lang/Diagnostic.h"
 #include <glm/glm.hpp>
 #include <memory>
 #include <string>
@@ -86,10 +87,12 @@ inline CsgNodePtr makeExtrusion(CsgExtrusion e) {
 // CsgScene — output of CsgEvaluator
 // ---------------------------------------------------------------------------
 struct CsgScene {
-    std::vector<CsgNodePtr> roots;
+    std::vector<CsgNodePtr>     roots;
     double globalFn = 0.0;
     double globalFs = 2.0;
     double globalFa = 12.0;
+    std::vector<std::string>    echoMessages; // echo() output (one entry per call)
+    std::vector<lang::Diagnostic> evalDiags; // assert() failures and other runtime errors
 };
 
 } // namespace chisel::csg

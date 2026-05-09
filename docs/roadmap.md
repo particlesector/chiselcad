@@ -44,11 +44,11 @@
 - [x] String literals + `str()`, `chr()`, `ord()`
 - [x] `len()` on strings
 
-### Tier C — Module System Completeness
-- [ ] `children()` / `$children`
-- [ ] `echo()`
-- [ ] `assert()`
-- [ ] Recursive functions (enabled by user-defined functions)
+### Tier C — Module System Completeness ✓
+- [x] `children()` / `$children`
+- [x] `echo()`
+- [x] `assert()`
+- [x] Recursive functions (enabled by user-defined functions)
 
 ### Tier D — Geometry Operations
 - [ ] `multmatrix()`

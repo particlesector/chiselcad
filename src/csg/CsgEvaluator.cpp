@@ -1,6 +1,7 @@
 #include "CsgEvaluator.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
+#include <cstdio>
 
 namespace chisel::csg {
 
@@ -27,9 +28,15 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
         m_moduleDefs[def.name] = &def;
 
     CsgScene scene;
+    m_scene = &scene;
     scene.globalFn = result.globalFn;
     scene.globalFs = result.globalFs;
     scene.globalFa = result.globalFa;
+
+    // Make special variables readable in expression context
+    interp.setVar("$fn", Value::fromNumber(result.globalFn));
+    interp.setVar("$fs", Value::fromNumber(result.globalFs));
+    interp.setVar("$fa", Value::fromNumber(result.globalFa));
 
     const glm::mat4 identity{1.0f};
     for (const auto& root : result.roots) {
@@ -38,7 +45,9 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
     }
 
     m_interp = nullptr;
+    m_scene  = nullptr;
     m_moduleDefs.clear();
+    m_childrenStack.clear();
     return scene;
 }
 
@@ -372,9 +381,76 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
 }
 
 // ---------------------------------------------------------------------------
+// formatValue — convert a Value to a human-readable string (for echo/assert)
+// ---------------------------------------------------------------------------
+std::string CsgEvaluator::formatValue(const Value& v) {
+    if (v.isNumber()) {
+        char buf[64];
+        double n = v.asNumber();
+        if (n == static_cast<double>(static_cast<long long>(n)) && n > -1e15 && n < 1e15)
+            std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(n));
+        else
+            std::snprintf(buf, sizeof(buf), "%g", n);
+        return buf;
+    }
+    if (v.isBool())   return v.asBool() ? "true" : "false";
+    if (v.isString()) return "\"" + v.asString() + "\"";
+    if (v.isUndef())  return "undef";
+    if (v.isVector()) {
+        std::string s = "[";
+        for (std::size_t i = 0; i < v.asVec().size(); ++i) {
+            if (i > 0) s += ", ";
+            s += formatValue(v.asVec()[i]);
+        }
+        s += "]";
+        return s;
+    }
+    return "undef";
+}
+
+// ---------------------------------------------------------------------------
 // Module call — bind args, evaluate body, restore environment
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::mat4& xform) {
+    // ---- Built-in: children() ----
+    if (call.name == "children") return evalChildren(call, xform);
+
+    // ---- Built-in: echo(...) ----
+    if (call.name == "echo") {
+        if (m_scene) {
+            std::string msg = "ECHO:";
+            bool first = true;
+            for (const auto& arg : call.args) {
+                Value v = m_interp->evaluate(*arg.value);
+                msg += first ? " " : ", ";
+                first = false;
+                msg += formatValue(v);
+            }
+            m_scene->echoMessages.push_back(std::move(msg));
+        }
+        return nullptr;
+    }
+
+    // ---- Built-in: assert(cond [, msg]) ----
+    if (call.name == "assert") {
+        if (!call.args.empty() && m_scene) {
+            Value cond = m_interp->evaluate(*call.args[0].value);
+            if (!bool(cond)) {
+                lang::Diagnostic d;
+                d.level = lang::DiagLevel::Error;
+                d.loc   = call.loc;
+                if (call.args.size() >= 2) {
+                    Value msgVal = m_interp->evaluate(*call.args[1].value);
+                    d.message = "assert failed: " + formatValue(msgVal);
+                } else {
+                    d.message = "assert failed";
+                }
+                m_scene->evalDiags.push_back(std::move(d));
+            }
+        }
+        return nullptr;
+    }
+
     auto it = m_moduleDefs.find(call.name);
     if (it == m_moduleDefs.end()) return nullptr; // undefined module
 
@@ -408,6 +484,10 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
             m_interp->setVar(param.name, m_interp->evaluate(*param.defaultVal));
     }
 
+    // Expose $children count and push the children context for children() access
+    m_interp->setVar("$children", Value::fromNumber(static_cast<double>(call.children.size())));
+    m_childrenStack.push_back(&call.children);
+
     // Evaluate the module body and collect geometry
     std::vector<CsgNodePtr> all;
     for (const auto& child : def.body) {
@@ -415,11 +495,58 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
             all.push_back(std::move(c));
     }
 
+    m_childrenStack.pop_back();
     // Restore the caller's environment
     m_interp->restoreEnv(std::move(savedEnv));
 
     if (all.empty())     return nullptr;
     if (all.size() == 1) return all[0];
+
+    CsgBoolean u;
+    u.op       = CsgBoolean::Op::Union;
+    u.children = std::move(all);
+    return makeBoolean(std::move(u));
+}
+
+// ---------------------------------------------------------------------------
+// children() — evaluate the active module's children with correct nesting.
+// Pops the stack before evaluating so any children() calls *inside* a child
+// node see the grandparent module's children (correct OpenSCAD semantics).
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat4& xform) {
+    if (m_childrenStack.empty()) return nullptr;
+
+    const auto* activeChildren = m_childrenStack.back();
+    if (!activeChildren || activeChildren->empty()) return nullptr;
+
+    // Pop current frame so nested children() calls see the parent context
+    m_childrenStack.pop_back();
+
+    std::vector<CsgNodePtr> all;
+
+    if (call.args.empty()) {
+        // children() — evaluate all children
+        for (const auto& child : *activeChildren) {
+            if (auto c = evalNode(*child, xform))
+                all.push_back(std::move(c));
+        }
+    } else {
+        // children(i) — evaluate the i-th child
+        Value idxVal = m_interp->evaluate(*call.args[0].value);
+        if (idxVal.isNumber()) {
+            int idx = static_cast<int>(idxVal.asNumber());
+            if (idx >= 0 && idx < static_cast<int>(activeChildren->size())) {
+                if (auto c = evalNode(*(*activeChildren)[static_cast<std::size_t>(idx)], xform))
+                    all.push_back(std::move(c));
+            }
+        }
+    }
+
+    // Restore the frame
+    m_childrenStack.push_back(activeChildren);
+
+    if (all.empty())     return nullptr;
+    if (all.size() == 1) return std::move(all[0]);
 
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;

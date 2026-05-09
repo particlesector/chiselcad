@@ -163,6 +163,17 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     csg::CsgEvaluator csgEval;
     auto scene = csgEval.evaluate(ast);
 
+    // Forward echo() output as Info diagnostics
+    for (const auto& msg : scene.echoMessages) {
+        lang::Diagnostic d;
+        d.level   = lang::DiagLevel::Info;
+        d.message = msg;
+        result->diags.push_back(std::move(d));
+    }
+    // Forward assert() failures as Error diagnostics
+    for (auto& d : scene.evalDiags)
+        result->diags.push_back(std::move(d));
+
     if (gen != m_currentGen.load()) return;
 
     // ---- Phase: Meshing (Manifold — the slow part) ----

@@ -28,6 +28,13 @@ private:
     // Module definitions indexed by name — populated at evaluate() entry.
     std::unordered_map<std::string, const chisel::lang::ModuleDef*> m_moduleDefs;
 
+    // Stack of children vectors for children() access inside module bodies.
+    // Each user module call pushes its children; evalChildren pops/re-pushes for nesting.
+    std::vector<const std::vector<chisel::lang::AstNodePtr>*> m_childrenStack;
+
+    // Non-owning pointer to the scene being built — valid during evaluate().
+    CsgScene* m_scene = nullptr;
+
     CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform);
     CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform);
     CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform);
@@ -35,10 +42,13 @@ private:
     CsgNodePtr evalIf(const chisel::lang::IfNode& n, const glm::mat4& xform);
     CsgNodePtr evalFor(const chisel::lang::ForNode& n, const glm::mat4& xform);
     CsgNodePtr evalModuleCall(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform);
+    CsgNodePtr evalChildren(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform);
     CsgNodePtr evalExtrusion(const chisel::lang::ExtrusionNode& e, const glm::mat4& xform);
     CsgNodePtr evalLet(const chisel::lang::LetNode& n, const glm::mat4& xform);
 
     glm::mat4 makeMatrix(const chisel::lang::TransformNode& t) const;
+
+    static std::string formatValue(const chisel::lang::Value& v);
 };
 
 } // namespace chisel::csg
