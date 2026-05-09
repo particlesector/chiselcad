@@ -21,8 +21,10 @@ void DiagnosticsPanel::drawInline() {
     for (int i = 0; i < static_cast<int>(m_diags.size()); ++i) {
         const auto& d = m_diags[i];
         ImVec4 col = (d.level == chisel::lang::DiagLevel::Error)
-            ? ImVec4{1.0f, 0.3f, 0.3f, 1.0f}
-            : ImVec4{1.0f, 0.8f, 0.3f, 1.0f};
+            ? ImVec4{1.0f, 0.3f, 0.3f, 1.0f}   // red
+            : (d.level == chisel::lang::DiagLevel::Info)
+            ? ImVec4{0.3f, 0.9f, 0.9f, 1.0f}   // cyan — echo() output
+            : ImVec4{1.0f, 0.8f, 0.3f, 1.0f};  // yellow — warnings
 
         ImGui::PushStyleColor(ImGuiCol_Text, col);
 
