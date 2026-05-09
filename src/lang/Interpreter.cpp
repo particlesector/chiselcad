@@ -1,6 +1,8 @@
 #include "Interpreter.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <random>
 
 static constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
 static constexpr double kRad2Deg = 180.0 / 3.14159265358979323846;
@@ -36,6 +38,9 @@ Value Interpreter::evaluate(const ExprNode& expr) {
         }
         else if constexpr (std::is_same_v<T, UndefLit>) {
             return Value::undef();
+        }
+        else if constexpr (std::is_same_v<T, StringLit>) {
+            return Value::fromString(node.value);
         }
         else if constexpr (std::is_same_v<T, VectorLit>) {
             std::vector<Value> elems;
@@ -395,6 +400,55 @@ Value Interpreter::callBuiltin(const std::string& name,
             return Value::fromNumber(static_cast<double>(
                 static_cast<unsigned char>(args[0].asString()[0])));
         return Value::undef();
+    }
+
+    // ---- rands(min, max, count [, seed]) ----
+    if (name == "rands") {
+        if (args.size() < 3) return Value::undef();
+        double minVal = num(0);
+        double maxVal = num(1);
+        int    count  = static_cast<int>(num(2));
+        if (count <= 0 || minVal > maxVal) return Value::fromVec({});
+        std::mt19937_64 rng;
+        if (args.size() >= 4 && args[3].isNumber())
+            rng.seed(static_cast<uint64_t>(args[3].asNumber()));
+        else
+            rng.seed(std::random_device{}());
+        std::uniform_real_distribution<double> dist(minVal, maxVal);
+        std::vector<Value> result;
+        result.reserve(static_cast<std::size_t>(count));
+        for (int i = 0; i < count; ++i)
+            result.push_back(Value::fromNumber(dist(rng)));
+        return Value::fromVec(std::move(result));
+    }
+
+    // ---- lookup(key, [[k0,v0],[k1,v1],...]) ----
+    if (name == "lookup") {
+        if (args.size() < 2 || !args[0].isNumber() || !args[1].isVector()) return Value::undef();
+        double key = args[0].asNumber();
+        const auto& table = args[1].asVec();
+        if (table.empty()) return Value::undef();
+
+        // Collect valid [key, val] pairs
+        std::vector<std::pair<double, double>> pairs;
+        for (const auto& entry : table) {
+            if (entry.isVector() && entry.asVec().size() >= 2 &&
+                entry.asVec()[0].isNumber() && entry.asVec()[1].isNumber())
+                pairs.push_back({entry.asVec()[0].asNumber(), entry.asVec()[1].asNumber()});
+        }
+        if (pairs.empty()) return Value::undef();
+        std::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b){ return a.first < b.first; });
+
+        if (key <= pairs.front().first) return Value::fromNumber(pairs.front().second);
+        if (key >= pairs.back().first)  return Value::fromNumber(pairs.back().second);
+
+        for (std::size_t i = 1; i < pairs.size(); ++i) {
+            if (key <= pairs[i].first) {
+                double t = (key - pairs[i-1].first) / (pairs[i].first - pairs[i-1].first);
+                return Value::fromNumber(pairs[i-1].second + t * (pairs[i].second - pairs[i-1].second));
+            }
+        }
+        return Value::fromNumber(pairs.back().second);
     }
 
     return Value::undef(); // unknown function

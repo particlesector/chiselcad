@@ -21,6 +21,7 @@ struct SourceLoc {
 enum class TokenKind : uint8_t {
     // Literals
     Number,   // 3.14  .5  1e3
+    String,   // "hello"
     True,     // true
     False,    // false
 

@@ -16,7 +16,6 @@
     "glm",
     "manifold",
     "spdlog",
-    "nlohmann-json",
-    "catch2"
+    "nlohmann-json"
   ]
 }

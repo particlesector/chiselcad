@@ -305,3 +305,35 @@ TEST_CASE("Lexer:linear_extrude with underscores tokenizes as single keyword", "
     REQUIRE(t[0].kind == TokenKind::LinearExtrude);
     REQUIRE(t[0].text == "linear_extrude");
 }
+
+// ---------------------------------------------------------------------------
+// Tier B: string literals
+// ---------------------------------------------------------------------------
+TEST_CASE("Lexer:string literal basic", "[lexer][tier-b]") {
+    auto t = lex("\"hello\"");
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0].kind == TokenKind::String);
+    REQUIRE(t[0].text == "hello");
+}
+
+TEST_CASE("Lexer:string literal empty", "[lexer][tier-b]") {
+    auto t = lex("\"\"");
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0].kind == TokenKind::String);
+    REQUIRE(t[0].text.empty());
+}
+
+TEST_CASE("Lexer:string escape sequences", "[lexer][tier-b]") {
+    auto t = lex("\"a\\\"b\\\\c\"");
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0].kind == TokenKind::String);
+    REQUIRE(t[0].text == "a\"b\\c");
+}
+
+TEST_CASE("Lexer:string in assignment context", "[lexer][tier-b]") {
+    auto t = kinds("s = \"world\";");
+    REQUIRE(t[0] == TokenKind::Ident);
+    REQUIRE(t[1] == TokenKind::Equals);
+    REQUIRE(t[2] == TokenKind::String);
+    REQUIRE(t[3] == TokenKind::Semicolon);
+}

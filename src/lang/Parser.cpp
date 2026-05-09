@@ -534,6 +534,11 @@ ExprPtr Parser::parsePrimary() {
         const Token& tok = advance();
         return makeExpr(NumberLit{tok.numberValue(), tok.loc});
     }
+    // String literal
+    if (check(TokenKind::String)) {
+        const Token& tok = advance();
+        return makeExpr(StringLit{tok.text, tok.loc});
+    }
     // Bool literals
     if (check(TokenKind::True)) {
         SourceLoc loc = advance().loc;

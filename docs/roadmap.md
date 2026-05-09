@@ -1,48 +1,48 @@
 # ChiselCAD — Roadmap
 
-## v1 — Core CSG (current focus)
+## v1 — Core CSG ✓
 
-- [ ] CMake + vcpkg build scaffold
-- [ ] Vulkan context, swapchain, ImGui integration
-- [ ] Lexer + recursive descent parser (core subset)
-- [ ] CSG tree evaluator (AST → CsgNode tree)
-- [ ] Primitive tessellator (cube, sphere, cylinder)
-- [ ] Manifold boolean evaluation (union, difference, intersection)
-- [ ] Async eval pipeline with std::stop_token cancellation
-- [ ] Preview render mode (color-coded primitives)
-- [ ] Result render mode (evaluated mesh, PBR shading)
-- [ ] GPU mesh double-buffer swap
-- [ ] Arcball orbit camera
-- [ ] File watcher + VS Code external editor integration
-- [ ] Diagnostics panel with clickable jump-to-line
-- [ ] Binary STL export
-- [ ] Embedded ImGuiColorTextEdit editor
-- [ ] Mesh cache (LRU, hash-keyed by CSG subtree)
+- [x] CMake + vcpkg build scaffold
+- [x] Vulkan context, swapchain, ImGui integration
+- [x] Lexer + recursive descent parser (core subset)
+- [x] CSG tree evaluator (AST → CsgNode tree)
+- [x] Primitive tessellator (cube, sphere, cylinder)
+- [x] Manifold boolean evaluation (union, difference, intersection)
+- [x] Async eval pipeline with std::stop_token cancellation
+- [x] Preview render mode (color-coded primitives)
+- [x] Result render mode (evaluated mesh, Blinn-Phong shading)
+- [x] GPU mesh double-buffer swap
+- [x] Arcball orbit camera
+- [x] File watcher + VS Code external editor integration
+- [x] Diagnostics panel with clickable jump-to-line
+- [x] Binary STL export
+- [x] Embedded ImGuiColorTextEdit editor
+- [x] Mesh cache (LRU, hash-keyed by CSG subtree)
 
-## v2 — Language Expansion
+## v2 — Language Expansion ✓
 
-- [ ] Full OpenSCAD language: `for`, `if`, `let`, variables, math functions
-- [ ] User-defined modules and function literals
-- [ ] 2D primitives: `square`, `circle`, `polygon`
-- [ ] Extrusion: `linear_extrude`, `rotate_extrude`
-- [ ] `hull()` and `minkowski()`
+- [x] Full OpenSCAD language: `for`, `if`, `let`, variables, math functions
+- [x] User-defined modules and function literals
+- [x] 2D primitives: `square`, `circle`, `polygon`
+- [x] Extrusion: `linear_extrude`, `rotate_extrude`
+- [x] `hull()` and `minkowski()`
 
 ## v2.5 — OpenSCAD Language Completeness
 
-### Tier A — High Impact (used constantly)
-- [ ] List indexing `v[i]`
-- [ ] Ternary operator `condition ? a : b`
-- [ ] User-defined functions `function f(x) = expr;`
-- [ ] `let` expression `let (x=10) child`
-- [ ] `undef` literal
-- [ ] `concat()` built-in
+### Tier A — High Impact (used constantly) ✓
+- [x] List indexing `v[i]`
+- [x] Ternary operator `condition ? a : b`
+- [x] User-defined functions `function f(x) = expr;`
+- [x] `let` expression `let (x=10) child`
+- [x] `undef` literal
+- [x] `concat()` built-in
 
-### Tier B — Math & String Completeness
-- [ ] Inverse trig: `asin()`, `acos()`, `atan()`, `atan2()`
-- [ ] Vector math: `norm()`, `cross()`, `sign()`
-- [ ] `rands()`, `lookup()`
-- [ ] String literals + `str()`, `chr()`, `ord()`
-- [ ] `len()` on strings
+### Tier B — Math & String Completeness ✓
+- [x] Inverse trig: `asin()`, `acos()`, `atan()`, `atan2()`
+- [x] Vector math: `norm()`, `cross()`, `sign()`
+- [x] `rands()`, `lookup()`
+- [x] String literals + `str()`, `chr()`, `ord()`
+- [x] `len()` on strings
 
 ### Tier C — Module System Completeness
 - [ ] `children()` / `$children`

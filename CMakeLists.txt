@@ -162,10 +162,16 @@ target_compile_definitions(chiselcad PRIVATE
 )
 
 # ============================================================
-# Tests (Catch2)
+# Tests (Catch2 — built from source to match the active toolchain)
 # ============================================================
 enable_testing()
-find_package(Catch2 CONFIG REQUIRED)
+include(FetchContent)
+FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.7.1
+)
+FetchContent_MakeAvailable(Catch2)
 
 set(CHISELCAD_TEST_SOURCES
     tests/test_main.cpp
@@ -197,6 +203,7 @@ else()
     target_compile_options(chiselcad_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 catch_discover_tests(chiselcad_tests)
 

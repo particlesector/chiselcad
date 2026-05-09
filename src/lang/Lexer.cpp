@@ -74,6 +74,12 @@ std::vector<Token> Lexer::tokenize() {
 
         uint32_t startOffset = static_cast<uint32_t>(m_pos);
 
+        // String literals
+        if (c == '"') {
+            tokens.push_back(scanString(startOffset));
+            continue;
+        }
+
         // Numbers: digits or leading dot (e.g. .5)
         if (std::isdigit(static_cast<unsigned char>(c)) ||
             (c == '.' && std::isdigit(static_cast<unsigned char>(peek(1))))) {
@@ -273,6 +279,41 @@ Token Lexer::scanSpecialVar(uint32_t startOffset) {
     t.loc.line   = startLine;
     t.loc.col    = startCol;
     t.text       = std::string(m_source.substr(startOffset, m_pos - startOffset));
+    return t;
+}
+
+Token Lexer::scanString(uint32_t startOffset) {
+    uint32_t startLine = m_line;
+    uint32_t startCol  = m_col;
+
+    advance(); // consume opening '"'
+    std::string value;
+    while (!atEnd() && peek() != '"') {
+        char ch = advance();
+        if (ch == '\\') {
+            if (atEnd()) break;
+            char esc = advance();
+            switch (esc) {
+            case '"':  value += '"';  break;
+            case '\\': value += '\\'; break;
+            case 'n':  value += '\n'; break;
+            case 't':  value += '\t'; break;
+            case 'r':  value += '\r'; break;
+            default:   value += esc;  break;
+            }
+        } else {
+            value += ch;
+        }
+    }
+    if (!atEnd()) advance(); // consume closing '"'
+    else addError("unterminated string literal", {startLine, startCol, startOffset});
+
+    Token t;
+    t.kind       = TokenKind::String;
+    t.loc.offset = startOffset;
+    t.loc.line   = startLine;
+    t.loc.col    = startCol;
+    t.text       = std::move(value);
     return t;
 }
 

@@ -274,18 +274,18 @@ void Application::initImGui() {
     ImGui_ImplGlfw_InitForVulkan(m_window, true);
 
     ImGui_ImplVulkan_InitInfo ii{};
-    ii.Instance        = m_ctx.instance();
-    ii.PhysicalDevice  = m_ctx.physDevice();
-    ii.Device          = m_ctx.device();
-    ii.QueueFamily     = m_ctx.graphicsFamily();
-    ii.Queue           = m_ctx.graphicsQueue();
-    ii.DescriptorPool  = m_imguiPool;
-    ii.RenderPass      = m_swapchain.renderPass();
-    ii.MinImageCount   = 2;
-    ii.ImageCount      = m_swapchain.imageCount();
-    ii.MSAASamples     = VK_SAMPLE_COUNT_1_BIT;
+    ii.Instance       = m_ctx.instance();
+    ii.PhysicalDevice = m_ctx.physDevice();
+    ii.Device         = m_ctx.device();
+    ii.QueueFamily    = m_ctx.graphicsFamily();
+    ii.Queue          = m_ctx.graphicsQueue();
+    ii.DescriptorPool = m_imguiPool;
+    ii.MinImageCount  = 2;
+    ii.ImageCount     = m_swapchain.imageCount();
+    ii.ApiVersion                   = VK_API_VERSION_1_3;
+    ii.PipelineInfoMain.RenderPass  = m_swapchain.renderPass();
+    ii.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     ImGui_ImplVulkan_Init(&ii);
-    ImGui_ImplVulkan_CreateFontsTexture();
 }
 
 void Application::shutdownImGui() {

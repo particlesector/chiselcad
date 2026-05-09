@@ -14,6 +14,7 @@ namespace chisel::lang {
 struct NumberLit;
 struct BoolLit;
 struct UndefLit;
+struct StringLit;
 struct VectorLit;
 struct VarRef;
 struct BinaryExpr;
@@ -23,7 +24,7 @@ struct IndexExpr;
 struct LetExpr;
 struct FunctionCall;
 
-using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, VectorLit, VarRef,
+using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, StringLit, VectorLit, VarRef,
                                BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr,
                                LetExpr, FunctionCall>;
 using ExprPtr  = std::unique_ptr<ExprNode>;
@@ -48,6 +49,11 @@ struct BoolLit {
 
 struct UndefLit {
     SourceLoc loc;
+};
+
+struct StringLit {
+    std::string value;
+    SourceLoc   loc;
 };
 
 struct VectorLit {

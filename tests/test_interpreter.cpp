@@ -346,3 +346,113 @@ TEST_CASE("Interp:str function", "[interp][tier-a]") {
     REQUIRE(evalNum("len(str(42))")    == Approx(2.0));
     REQUIRE(evalNum("len(str(3.14))")  == Approx(4.0));
 }
+
+// ---------------------------------------------------------------------------
+// Tier B: string literals
+// ---------------------------------------------------------------------------
+static Value evalVal(std::string_view src) {
+    std::string full = "_v = ";
+    full += src;
+    full += ";";
+    Lexer  lexer(full);
+    auto   tokens = lexer.tokenize();
+    REQUIRE_FALSE(lexer.hasErrors());
+    Parser parser(std::move(tokens));
+    auto   result = parser.parse();
+    REQUIRE_FALSE(parser.hasErrors());
+    REQUIRE(result.assignments.size() == 1);
+    Interpreter interp;
+    return interp.evaluate(*result.assignments[0].value);
+}
+
+TEST_CASE("Interp:string literal basic", "[interp][tier-b]") {
+    Value v = evalVal("\"hello\"");
+    REQUIRE(v.isString());
+    REQUIRE(v.asString() == "hello");
+}
+
+TEST_CASE("Interp:string literal escape sequences", "[interp][tier-b]") {
+    Value v = evalVal("\"a\\\"b\"");
+    REQUIRE(v.isString());
+    REQUIRE(v.asString() == "a\"b");
+}
+
+TEST_CASE("Interp:string literal empty", "[interp][tier-b]") {
+    Value v = evalVal("\"\"");
+    REQUIRE(v.isString());
+    REQUIRE(v.asString().empty());
+}
+
+TEST_CASE("Interp:len on string literal", "[interp][tier-b]") {
+    REQUIRE(evalNum("len(\"hello\")") == Approx(5.0));
+    REQUIRE(evalNum("len(\"\")") == Approx(0.0));
+}
+
+TEST_CASE("Interp:str concat with string literal", "[interp][tier-b]") {
+    Value v = evalVal("str(\"x=\", 5)");
+    REQUIRE(v.isString());
+    REQUIRE(v.asString() == "x=5");
+}
+
+TEST_CASE("Interp:index into string literal", "[interp][tier-b]") {
+    Value v = evalVal("\"abc\"[1]");
+    REQUIRE(v.isString());
+    REQUIRE(v.asString() == "b");
+}
+
+TEST_CASE("Interp:chr and ord roundtrip", "[interp][tier-b]") {
+    REQUIRE(evalNum("ord(\"A\")") == Approx(65.0));
+    Value v = evalVal("chr(65)");
+    REQUIRE(v.isString());
+    REQUIRE(v.asString() == "A");
+}
+
+// ---------------------------------------------------------------------------
+// Tier B: rands
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:rands count", "[interp][tier-b]") {
+    REQUIRE(evalNum("len(rands(0, 1, 5))") == Approx(5.0));
+    REQUIRE(evalNum("len(rands(0, 1, 10))") == Approx(10.0));
+}
+
+TEST_CASE("Interp:rands range", "[interp][tier-b]") {
+    // With a fixed seed, values should stay in [min,max]
+    REQUIRE(evalNum("rands(2, 5, 1, 42)[0]") >= 2.0);
+    REQUIRE(evalNum("rands(2, 5, 1, 42)[0]") <= 5.0);
+}
+
+TEST_CASE("Interp:rands seeded deterministic", "[interp][tier-b]") {
+    double r1 = evalNum("rands(0, 100, 3, 99)[0]");
+    double r2 = evalNum("rands(0, 100, 3, 99)[0]");
+    REQUIRE(r1 == Approx(r2));
+}
+
+TEST_CASE("Interp:rands empty count", "[interp][tier-b]") {
+    REQUIRE(evalNum("len(rands(0, 1, 0))") == Approx(0.0));
+}
+
+// ---------------------------------------------------------------------------
+// Tier B: lookup
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:lookup exact match", "[interp][tier-b]") {
+    REQUIRE(evalNum("lookup(0, [[0,10],[1,20]])") == Approx(10.0));
+    REQUIRE(evalNum("lookup(1, [[0,10],[1,20]])") == Approx(20.0));
+}
+
+TEST_CASE("Interp:lookup interpolation", "[interp][tier-b]") {
+    REQUIRE(evalNum("lookup(0.5, [[0,0],[1,10]])") == Approx(5.0));
+    REQUIRE(evalNum("lookup(0.25, [[0,0],[1,100]])") == Approx(25.0));
+}
+
+TEST_CASE("Interp:lookup clamp below", "[interp][tier-b]") {
+    REQUIRE(evalNum("lookup(-1, [[0,5],[1,10]])") == Approx(5.0));
+}
+
+TEST_CASE("Interp:lookup clamp above", "[interp][tier-b]") {
+    REQUIRE(evalNum("lookup(99, [[0,5],[1,10]])") == Approx(10.0));
+}
+
+TEST_CASE("Interp:lookup unsorted table", "[interp][tier-b]") {
+    // lookup must sort by key
+    REQUIRE(evalNum("lookup(0.5, [[1,10],[0,0]])") == Approx(5.0));
+}
