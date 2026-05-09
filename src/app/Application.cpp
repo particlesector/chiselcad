@@ -282,7 +282,7 @@ void Application::initImGui() {
     ii.DescriptorPool = m_imguiPool;
     ii.MinImageCount  = 2;
     ii.ImageCount     = m_swapchain.imageCount();
-#if IMGUI_VERSION_NUM >= 19109  // 1.91.9: RenderPass/MSAASamples moved to PipelineInfoMain
+#ifdef IMGUI_HAS_TEXTURES  // defined alongside PipelineInfoMain in the 1.91.9+ API overhaul
     ii.ApiVersion                   = VK_API_VERSION_1_3;
     ii.PipelineInfoMain.RenderPass  = m_swapchain.renderPass();
     ii.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -291,7 +291,7 @@ void Application::initImGui() {
     ii.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 #endif
     ImGui_ImplVulkan_Init(&ii);
-#if IMGUI_VERSION_NUM < 19109
+#ifndef IMGUI_HAS_TEXTURES
     ImGui_ImplVulkan_CreateFontsTexture();
 #endif
 }
