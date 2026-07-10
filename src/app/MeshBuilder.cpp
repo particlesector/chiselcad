@@ -14,8 +14,14 @@ namespace chisel::app {
 
 // ---------------------------------------------------------------------------
 // Helper: Manifold mesh → flat-shaded vertex/index buffers
+//
+// `tint` is baked into every vertex so a single draw call can render roots
+// with different color() tints (color() is a whole-root attribute — see
+// nodeColor() in CsgNode.h — since Manifold's boolean ops merge geometry
+// from a subtree's children into one mesh with no per-part identity left).
 // ---------------------------------------------------------------------------
 static void manifoldToMesh(const manifold::Manifold& m,
+                            const glm::vec3& tint,
                             std::vector<render::Vertex>& verts,
                             std::vector<uint32_t>& indices)
 {
@@ -43,9 +49,9 @@ static void manifoldToMesh(const manifold::Manifold& m,
         glm::vec3 n  = glm::normalize(glm::cross(p1 - p0, p2 - p0));
 
         uint32_t base = static_cast<uint32_t>(verts.size());
-        verts.push_back({p0, n});
-        verts.push_back({p1, n});
-        verts.push_back({p2, n});
+        verts.push_back({p0, n, tint});
+        verts.push_back({p1, n, tint});
+        verts.push_back({p2, n, tint});
         indices.push_back(base);
         indices.push_back(base + 1);
         indices.push_back(base + 2);
@@ -200,7 +206,8 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     std::vector<uint32_t> rootVertStart; // per-root start index into result->verts
     rootVertStart.reserve(rootMeshes.size());
 
-    for (const auto& m : rootMeshes) {
+    for (std::size_t ri = 0; ri < rootMeshes.size(); ++ri) {
+        const auto& m = rootMeshes[ri];
         rootVertStart.push_back(static_cast<uint32_t>(result->verts.size()));
 
         result->volume      += m.Volume();
@@ -211,9 +218,12 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
         result->vertCount += static_cast<uint32_t>(
             rawMesh.numProp > 0 ? rawMesh.vertProperties.size() / rawMesh.numProp : 0);
 
+        const csg::ColorAttr& rootColor = csg::nodeColor(*scene.roots[ri]);
+        const glm::vec3 tint = rootColor.has ? glm::vec3(rootColor.value) : render::kDefaultVertexColor;
+
         std::vector<render::Vertex>  verts;
         std::vector<uint32_t>        indices;
-        manifoldToMesh(m, verts, indices);
+        manifoldToMesh(m, tint, verts, indices);
 
         // Offset indices by the current vertex count before appending
         const auto base = static_cast<uint32_t>(result->verts.size());

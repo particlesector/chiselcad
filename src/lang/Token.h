@@ -48,6 +48,7 @@ enum class TokenKind : uint8_t {
     Mirror,
     Multmatrix,
     Render,
+    Color,
 
     // Control flow / definitions
     If,       // if
@@ -64,6 +65,8 @@ enum class TokenKind : uint8_t {
     Square, Circle, Polygon,
     // Extrusion operations
     LinearExtrude, RotateExtrude,
+    // 2-D → 2-D operations
+    Offset,
 
     // Range separator
     Colon, // :

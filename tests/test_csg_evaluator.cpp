@@ -32,6 +32,9 @@ static const CsgLeaf& asLeaf(const CsgNodePtr& n) {
 static const CsgBoolean& asBool(const CsgNodePtr& n) {
     return std::get<CsgBoolean>(*n);
 }
+static const CsgOffset& asOffset(const CsgNodePtr& n) {
+    return std::get<CsgOffset>(*n);
+}
 
 // ---------------------------------------------------------------------------
 // Global params forwarding
@@ -207,6 +210,126 @@ TEST_CASE("CsgEval:render(convexity=...) ignores the hint", "[csg]") {
     auto s = evaluate("render(convexity = 6) sphere(r=3);");
     const auto& leaf = asLeaf(s.roots[0]);
     REQUIRE(leaf.kind == CsgLeaf::Kind::Sphere);
+}
+
+// ---------------------------------------------------------------------------
+// color() sets an inherited tint, overridable by a nested color()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:color by name tints a leaf", "[csg]") {
+    auto s = evaluate("color(\"red\") cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.r == Approx(1.0f));
+    REQUIRE(leaf.color.value.g == Approx(0.0f));
+    REQUIRE(leaf.color.value.b == Approx(0.0f));
+    REQUIRE(leaf.color.value.a == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:color by hex string", "[csg]") {
+    auto s = evaluate("color(\"#00ff00\") sphere(r=1);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.r == Approx(0.0f));
+    REQUIRE(leaf.color.value.g == Approx(1.0f));
+    REQUIRE(leaf.color.value.b == Approx(0.0f));
+}
+
+TEST_CASE("CsgEval:color by vector with alpha component", "[csg]") {
+    auto s = evaluate("color([0,0,1,0.25]) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.b == Approx(1.0f));
+    REQUIRE(leaf.color.value.a == Approx(0.25f));
+}
+
+TEST_CASE("CsgEval:color positional alpha overrides vector alpha", "[csg]") {
+    auto s = evaluate("color([1,1,1,1], 0.5) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.value.a == Approx(0.5f));
+}
+
+TEST_CASE("CsgEval:color propagates through nested transforms", "[csg]") {
+    auto s = evaluate("color(\"blue\") translate([1,0,0]) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.b == Approx(1.0f));
+    REQUIRE(leaf.transform[3][0] == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:color propagates to every child of a group", "[csg]") {
+    auto s = evaluate("color(\"green\") { cube([1,1,1]); sphere(r=1); }");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Union);
+    REQUIRE(b.color.has);
+    for (const auto& child : b.children) {
+        const auto& leaf = asLeaf(child);
+        REQUIRE(leaf.color.has);
+        REQUIRE(leaf.color.value.g == Approx(0.5f));
+    }
+}
+
+TEST_CASE("CsgEval:nested color overrides its own subtree only", "[csg]") {
+    auto s = evaluate("color(\"red\") { cube([1,1,1]); color(\"blue\") sphere(r=1); }");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 2);
+    const auto& cubeLeaf = asLeaf(b.children[0]);
+    REQUIRE(cubeLeaf.color.value.r == Approx(1.0f));
+    const auto& sphereLeaf = asLeaf(b.children[1]);
+    REQUIRE(sphereLeaf.color.value.b == Approx(1.0f));
+    REQUIRE(sphereLeaf.color.value.r == Approx(0.0f));
+}
+
+TEST_CASE("CsgEval:no color() leaves color unset", "[csg]") {
+    auto s = evaluate("cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE_FALSE(leaf.color.has);
+}
+
+// ---------------------------------------------------------------------------
+// offset() resolves r/delta/chamfer to doubles and evaluates children
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:offset with rounded radius", "[csg]") {
+    auto s = evaluate("offset(r=2) circle(r=5);");
+    const auto& o = asOffset(s.roots[0]);
+    REQUIRE(o.params.at("r") == Approx(2.0));
+    REQUIRE(o.params.count("delta") == 0);
+    REQUIRE(o.children.size() == 1);
+    const auto& child = asLeaf(o.children[0]);
+    REQUIRE(child.kind == CsgLeaf::Kind::Circle2D);
+}
+
+TEST_CASE("CsgEval:offset with delta and chamfer resolves chamfer to 0/1", "[csg]") {
+    auto s = evaluate("offset(delta=1, chamfer=true) square([10,10]);");
+    const auto& o = asOffset(s.roots[0]);
+    REQUIRE(o.params.at("delta")   == Approx(1.0));
+    REQUIRE(o.params.at("chamfer") == Approx(1.0));
+}
+
+TEST_CASE("CsgEval:offset children evaluated in local space, transform stored outer", "[csg]") {
+    auto s = evaluate("translate([10,0,0]) offset(r=1) circle(r=5);");
+    const auto& o = asOffset(s.roots[0]);
+    // Outer translate is stored on the offset node itself...
+    REQUIRE(o.transform[3][0] == Approx(10.0f));
+    // ...not baked into the child leaf's transform.
+    const auto& child = asLeaf(o.children[0]);
+    REQUIRE(child.transform[3][0] == Approx(0.0f));
+}
+
+TEST_CASE("CsgEval:offset wraps multiple children into a union", "[csg]") {
+    auto s = evaluate("offset(r=-1) { square([5,5]); circle(r=3); }");
+    const auto& o = asOffset(s.roots[0]);
+    REQUIRE(o.params.at("r") == Approx(-1.0));
+    REQUIRE(o.children.size() == 2);
+}
+
+TEST_CASE("CsgEval:offset propagates inherited color to children", "[csg]") {
+    auto s = evaluate("color(\"red\") offset(r=1) circle(r=5);");
+    const auto& o = asOffset(s.roots[0]);
+    REQUIRE(o.color.has);
+    REQUIRE(o.color.value.r == Approx(1.0f));
+    const auto& child = asLeaf(o.children[0]);
+    REQUIRE(child.color.has);
+    REQUIRE(child.color.value.r == Approx(1.0f));
 }
 
 // ---------------------------------------------------------------------------

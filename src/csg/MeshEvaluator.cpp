@@ -65,6 +65,19 @@ static manifold::mat3x4 toAffine(const glm::mat4& m) {
     return r;
 }
 
+// Apply the 2-D portion (rotation/scale/shear in XY, plus XY translation)
+// of a 4x4 world transform to a CrossSection. A no-op when transform is
+// identity, so callers can apply this unconditionally.
+static manifold::CrossSection apply2DTransform(manifold::CrossSection cs,
+                                                const glm::mat4& transform) {
+    if (transform == glm::mat4{1.0f}) return cs;
+    manifold::mat2x3 m2;
+    m2[0][0] = transform[0][0]; m2[0][1] = transform[0][1];
+    m2[1][0] = transform[1][0]; m2[1][1] = transform[1][1];
+    m2[2][0] = transform[3][0]; m2[2][1] = transform[3][1];
+    return cs.Transform(m2);
+}
+
 // ---------------------------------------------------------------------------
 // MeshEvaluator
 // ---------------------------------------------------------------------------
@@ -92,8 +105,10 @@ manifold::Manifold MeshEvaluator::evalNode(const CsgNode& node, const PrimitiveG
             return evalLeaf(n, gen);
         else if constexpr (std::is_same_v<T, CsgBoolean>)
             return evalBoolean(n, gen);
-        else
+        else if constexpr (std::is_same_v<T, CsgExtrusion>)
             return evalExtrusion(n, gen);
+        else
+            return {}; // CsgOffset: 2-D only, no 3-D representation unless extruded
     }, node);
 }
 
@@ -144,8 +159,9 @@ manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const Primiti
 
 // ---------------------------------------------------------------------------
 // getChildCrossSection — recursively build a CrossSection from a 2-D subtree.
-// Handles CsgLeaf (2-D kinds) and CsgBoolean (union/difference/intersection
-// of 2-D children).  3-D leaves produce an empty CrossSection.
+// Handles CsgLeaf (2-D kinds), CsgBoolean (union/difference/intersection of
+// 2-D children), and CsgOffset (grow/shrink). 3-D leaves produce an empty
+// CrossSection.
 // ---------------------------------------------------------------------------
 manifold::CrossSection MeshEvaluator::getChildCrossSection(const CsgNode& node,
                                                             const PrimitiveGen& gen) {
@@ -153,17 +169,9 @@ manifold::CrossSection MeshEvaluator::getChildCrossSection(const CsgNode& node,
         using T = std::decay_t<decltype(n)>;
 
         if constexpr (std::is_same_v<T, CsgLeaf>) {
-            auto cs = gen.generateCrossSection(n);
             // Apply the 2-D portion of the accumulated transform so that
             // translate/rotate applied to 2-D children is respected.
-            if (n.transform != glm::mat4{1.0f}) {
-                manifold::mat2x3 m2;
-                m2[0][0] = n.transform[0][0]; m2[0][1] = n.transform[0][1];
-                m2[1][0] = n.transform[1][0]; m2[1][1] = n.transform[1][1];
-                m2[2][0] = n.transform[3][0]; m2[2][1] = n.transform[3][1];
-                cs = cs.Transform(m2);
-            }
-            return cs;
+            return apply2DTransform(gen.generateCrossSection(n), n.transform);
         } else if constexpr (std::is_same_v<T, CsgBoolean>) {
             if (n.children.empty()) return {};
             auto result = getChildCrossSection(*n.children[0], gen);
@@ -177,6 +185,29 @@ manifold::CrossSection MeshEvaluator::getChildCrossSection(const CsgNode& node,
                 }
             }
             return result;
+        } else if constexpr (std::is_same_v<T, CsgOffset>) {
+            manifold::CrossSection cs;
+            for (const auto& child : n.children)
+                cs = cs + getChildCrossSection(*child, gen);
+
+            auto getP = [&](const std::string& k, double def) -> double {
+                auto it = n.params.find(k);
+                return (it != n.params.end()) ? it->second : def;
+            };
+
+            if (n.params.count("r")) {
+                double r     = getP("r", 0.0);
+                double fnOvr = getP("$fn", 0.0);
+                int    segs  = gen.resolveSegments(std::abs(r), fnOvr);
+                cs = cs.Offset(r, manifold::CrossSection::JoinType::Round, 2.0, segs);
+            } else if (n.params.count("delta")) {
+                double delta   = getP("delta", 0.0);
+                bool   chamfer = getP("chamfer", 0.0) != 0.0;
+                cs = cs.Offset(delta, chamfer ? manifold::CrossSection::JoinType::Bevel
+                                              : manifold::CrossSection::JoinType::Miter);
+            }
+
+            return apply2DTransform(cs, n.transform);
         } else {
             return {}; // nested extrusion — not supported
         }

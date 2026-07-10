@@ -14,6 +14,18 @@ namespace chisel::csg {
 // ---------------------------------------------------------------------------
 struct CsgBoolean;
 struct CsgExtrusion;
+struct CsgOffset;
+
+// ---------------------------------------------------------------------------
+// ColorAttr — the color() attribute in effect at a given point in the tree,
+// accumulated top-down exactly like the transform matrix (nested color()
+// overrides its ancestor's for its own subtree). `has` is false when no
+// color() has been applied — the renderer falls back to its default tint.
+// ---------------------------------------------------------------------------
+struct ColorAttr {
+    bool has = false;
+    glm::vec4 value{1.0f, 1.0f, 1.0f, 1.0f};
+};
 
 // ---------------------------------------------------------------------------
 // CsgLeaf — a primitive with its fully-accumulated world transform.
@@ -30,6 +42,7 @@ struct CsgLeaf {
     std::unordered_map<std::string, double> params;
     bool center = false;
     glm::mat4 transform{1.0f}; // accumulated model-to-world matrix
+    ColorAttr color;           // accumulated color() tint, if any
 
     // Polygon2D only — resolved contour points and optional path indices
     std::vector<glm::vec2>           polyPoints;
@@ -39,7 +52,7 @@ struct CsgLeaf {
 // ---------------------------------------------------------------------------
 // CsgNode — the CSG IR variant
 // ---------------------------------------------------------------------------
-using CsgNode    = std::variant<CsgLeaf, CsgBoolean, CsgExtrusion>;
+using CsgNode    = std::variant<CsgLeaf, CsgBoolean, CsgExtrusion, CsgOffset>;
 using CsgNodePtr = std::shared_ptr<CsgNode>;
 
 struct CsgBoolean {
@@ -52,6 +65,7 @@ struct CsgBoolean {
     // So their children are evaluated in local space and this matrix is
     // applied once to the final result. Identity for Union/Difference/Intersection.
     glm::mat4 transform{1.0f};
+    ColorAttr color; // accumulated color() tint in effect at this node
 };
 
 // ---------------------------------------------------------------------------
@@ -68,6 +82,26 @@ struct CsgExtrusion {
     std::unordered_map<std::string, double> params;
     std::vector<CsgNodePtr> children;
     glm::mat4 transform{1.0f}; // outer 3-D transform applied to the final solid
+    ColorAttr color;           // accumulated color() tint in effect at this node
+};
+
+// ---------------------------------------------------------------------------
+// CsgOffset — offset(r=...) / offset(delta=..., chamfer=...) in the CSG IR.
+// Children are 2-D CsgLeaf/CsgBoolean/CsgOffset nodes; MeshEvaluator builds
+// their CrossSection, offsets it, then applies `transform`. Offsetting is
+// not equivariant under arbitrary per-child transforms (like Hull/
+// Minkowski), so children are evaluated in local space and the accumulated
+// transform is applied once to the offset result.
+// ---------------------------------------------------------------------------
+struct CsgOffset {
+    // Resolved numeric params: "r" (rounded offset radius, mutually
+    // exclusive with delta) or "delta" (straight-edge offset distance),
+    // "chamfer" (0/1, only meaningful with delta), "$fn" (segment override
+    // for the rounded case).
+    std::unordered_map<std::string, double> params;
+    std::vector<CsgNodePtr> children;
+    glm::mat4 transform{1.0f};
+    ColorAttr color;
 };
 
 // ---------------------------------------------------------------------------
@@ -81,6 +115,15 @@ inline CsgNodePtr makeBoolean(CsgBoolean b) {
 }
 inline CsgNodePtr makeExtrusion(CsgExtrusion e) {
     return std::make_shared<CsgNode>(std::move(e));
+}
+inline CsgNodePtr makeOffset(CsgOffset o) {
+    return std::make_shared<CsgNode>(std::move(o));
+}
+
+// The ColorAttr in effect at the top of this node's subtree (whichever
+// color() most closely wraps it), regardless of concrete node kind.
+inline const ColorAttr& nodeColor(const CsgNode& node) {
+    return std::visit([](const auto& n) -> const ColorAttr& { return n.color; }, node);
 }
 
 // ---------------------------------------------------------------------------

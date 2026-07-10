@@ -24,7 +24,7 @@ static StlMesh loadBinary(std::ifstream& f, uint32_t triCount) {
             glm::vec3 pos{};
             f.read(reinterpret_cast<char*>(&pos), 12);
             out.indices.push_back(static_cast<uint32_t>(out.verts.size()));
-            out.verts.push_back({pos, normal});
+            out.verts.push_back({pos, normal, render::kDefaultVertexColor});
         }
         uint16_t attr = 0;
         f.read(reinterpret_cast<char*>(&attr), 2);
@@ -58,7 +58,7 @@ static StlMesh loadAscii(std::ifstream& f) {
             if (vertInFacet < 3) {
                 glm::vec3 pos{};
                 ss >> pos.x >> pos.y >> pos.z;
-                tri[vertInFacet] = {pos, normal};
+                tri[vertInFacet] = {pos, normal, render::kDefaultVertexColor};
                 ++vertInFacet;
             }
         } else if (kw == "endfacet") {

@@ -57,7 +57,7 @@ VkPipeline Pipeline::buildPipeline(VkDevice device, VkRenderPass renderPass,
     binding.stride    = sizeof(Vertex);
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    std::array<VkVertexInputAttributeDescription, 2> attribs{};
+    std::array<VkVertexInputAttributeDescription, 3> attribs{};
     attribs[0].location = 0;
     attribs[0].binding  = 0;
     attribs[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
@@ -66,6 +66,10 @@ VkPipeline Pipeline::buildPipeline(VkDevice device, VkRenderPass renderPass,
     attribs[1].binding  = 0;
     attribs[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
     attribs[1].offset   = offsetof(Vertex, normal);
+    attribs[2].location = 2;
+    attribs[2].binding  = 0;
+    attribs[2].format   = VK_FORMAT_R32G32B32_SFLOAT;
+    attribs[2].offset   = offsetof(Vertex, color);
 
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
