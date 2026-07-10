@@ -37,6 +37,7 @@ private:
     AstNodePtr parseBoolean(TokenKind k);
     AstNodePtr parseTransform(TokenKind k);
     AstNodePtr parseRender();
+    AstNodePtr parseColor();
     AstNodePtr parseIf();
     AstNodePtr parseFor();
     AstNodePtr parseModuleCall();

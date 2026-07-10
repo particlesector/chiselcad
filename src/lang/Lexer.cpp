@@ -25,6 +25,7 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"mirror",       TokenKind::Mirror},
     {"multmatrix",   TokenKind::Multmatrix},
     {"render",       TokenKind::Render},
+    {"color",        TokenKind::Color},
     {"if",             TokenKind::If},
     {"else",           TokenKind::Else},
     {"for",            TokenKind::For},

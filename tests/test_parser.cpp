@@ -42,6 +42,9 @@ static const BooleanNode& asBool(const AstNodePtr& n) {
 static const TransformNode& asTrans(const AstNodePtr& n) {
     return std::get<TransformNode>(*n);
 }
+static const ColorNode& asColor(const AstNodePtr& n) {
+    return std::get<ColorNode>(*n);
+}
 
 // ---------------------------------------------------------------------------
 // Global special variables
@@ -254,6 +257,43 @@ TEST_CASE("Parser:render with convexity arg", "[parser]") {
     auto& t = asTrans(r.roots[0]);
     REQUIRE(t.kind == TransformNode::Kind::Identity);
     REQUIRE(t.children.size() == 1);
+}
+
+TEST_CASE("Parser:color with string name", "[parser]") {
+    auto r = parse("color(\"red\") cube([1,1,1]);");
+    auto& c = asColor(r.roots[0]);
+    REQUIRE(c.colorExpr != nullptr);
+    REQUIRE(c.alphaExpr == nullptr);
+    REQUIRE(c.children.size() == 1);
+
+    Interpreter interp;
+    Value v = interp.evaluate(*c.colorExpr);
+    REQUIRE(v.isString());
+    REQUIRE(v.asString() == "red");
+}
+
+TEST_CASE("Parser:color with vector and positional alpha", "[parser]") {
+    auto r = parse("color([1,0,0], 0.5) sphere(r=2);");
+    auto& c = asColor(r.roots[0]);
+    REQUIRE(c.colorExpr != nullptr);
+    REQUIRE(c.alphaExpr != nullptr);
+
+    Interpreter interp;
+    Value v = interp.evaluate(*c.colorExpr);
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 3);
+    REQUIRE(interp.evalNumber(*c.alphaExpr) == Approx(0.5));
+}
+
+TEST_CASE("Parser:color with named c and alpha args", "[parser]") {
+    auto r = parse("color(alpha = 0.25, c = [0,1,0,1]) { cube([1,1,1]); sphere(r=1); }");
+    auto& c = asColor(r.roots[0]);
+    REQUIRE(c.colorExpr != nullptr);
+    REQUIRE(c.alphaExpr != nullptr);
+    REQUIRE(c.children.size() == 2);
+
+    Interpreter interp;
+    REQUIRE(interp.evalNumber(*c.alphaExpr) == Approx(0.25));
 }
 
 // ---------------------------------------------------------------------------

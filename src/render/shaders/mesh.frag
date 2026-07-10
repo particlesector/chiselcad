@@ -2,14 +2,12 @@
 
 layout(location = 0) in  vec3 inWorldNormal;
 layout(location = 1) in  vec3 inWorldPos;
+layout(location = 2) in  vec3 inColor;
 layout(location = 0) out vec4 outColor;
 
 layout(push_constant) uniform PushFrag {
     layout(offset = 128) vec4 eyePos;
 } pc;
-
-// Base color — slightly cool neutral for CAD geometry
-const vec3  kBase      = vec3(0.74, 0.74, 0.78);
 
 // Key light: upper-right-front, warm white
 const vec3  kLight1Dir = normalize(vec3( 1.0,  1.5,  1.0));
@@ -57,7 +55,9 @@ void main() {
     // Rim: pow(1-NdotV) peaks at silhouette edges, follows camera automatically
     float rim  = pow(1.0 - max(dot(N, V), 0.0), 4.0) * kRimStr;
 
-    vec3 color = kBase * (kAmbient
+    // Per-vertex base color — the default neutral CAD gray unless overridden
+    // by color() (baked into inColor on the CPU side; see MeshBuilder.cpp).
+    vec3 color = inColor * (kAmbient
                  + d1 * kDiff1 * kLight1Col
                  + d2 * kDiff2 * kLight2Col
                  + d3 * kDiff3 * kLight3Col)

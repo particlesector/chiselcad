@@ -51,9 +51,11 @@
 - [x] Recursive functions (enabled by user-defined functions)
 
 ### Tier D — Geometry Operations (in progress)
-- [ ] `multmatrix()` — extends transform accumulation (mat4) already used by translate/rotate/scale/mirror
-- [ ] `render()` — pass-through node; ChiselCAD already fully evaluates, no preview/full-render split
-- [ ] `color()` — new inherited attribute alongside `transform`, plus result-mode shading support
+- [x] `multmatrix()` — extends transform accumulation (mat4) already used by translate/rotate/scale/mirror
+- [x] `render()` — pass-through node; ChiselCAD already fully evaluates, no preview/full-render split
+- [x] `color()` — new inherited `ColorAttr` alongside `transform`; tints whole roots (Manifold booleans merge
+      a subtree's children into one mesh with no surviving per-part identity, so color() is a per-root
+      attribute, not per-leaf) — result-mode shading now reads a per-vertex base color instead of a shader constant
 - [ ] `offset()` — builds on existing `manifold::CrossSection` usage in `MeshEvaluator`
 - [ ] `projection()` — 3-D → 2-D via `CrossSection`/`Manifold` slicing; most involved of the five
 

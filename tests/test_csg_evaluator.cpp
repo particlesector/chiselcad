@@ -210,6 +210,79 @@ TEST_CASE("CsgEval:render(convexity=...) ignores the hint", "[csg]") {
 }
 
 // ---------------------------------------------------------------------------
+// color() sets an inherited tint, overridable by a nested color()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:color by name tints a leaf", "[csg]") {
+    auto s = evaluate("color(\"red\") cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.r == Approx(1.0f));
+    REQUIRE(leaf.color.value.g == Approx(0.0f));
+    REQUIRE(leaf.color.value.b == Approx(0.0f));
+    REQUIRE(leaf.color.value.a == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:color by hex string", "[csg]") {
+    auto s = evaluate("color(\"#00ff00\") sphere(r=1);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.r == Approx(0.0f));
+    REQUIRE(leaf.color.value.g == Approx(1.0f));
+    REQUIRE(leaf.color.value.b == Approx(0.0f));
+}
+
+TEST_CASE("CsgEval:color by vector with alpha component", "[csg]") {
+    auto s = evaluate("color([0,0,1,0.25]) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.b == Approx(1.0f));
+    REQUIRE(leaf.color.value.a == Approx(0.25f));
+}
+
+TEST_CASE("CsgEval:color positional alpha overrides vector alpha", "[csg]") {
+    auto s = evaluate("color([1,1,1,1], 0.5) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.value.a == Approx(0.5f));
+}
+
+TEST_CASE("CsgEval:color propagates through nested transforms", "[csg]") {
+    auto s = evaluate("color(\"blue\") translate([1,0,0]) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value.b == Approx(1.0f));
+    REQUIRE(leaf.transform[3][0] == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:color propagates to every child of a group", "[csg]") {
+    auto s = evaluate("color(\"green\") { cube([1,1,1]); sphere(r=1); }");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Union);
+    REQUIRE(b.color.has);
+    for (const auto& child : b.children) {
+        const auto& leaf = asLeaf(child);
+        REQUIRE(leaf.color.has);
+        REQUIRE(leaf.color.value.g == Approx(0.5f));
+    }
+}
+
+TEST_CASE("CsgEval:nested color overrides its own subtree only", "[csg]") {
+    auto s = evaluate("color(\"red\") { cube([1,1,1]); color(\"blue\") sphere(r=1); }");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 2);
+    const auto& cubeLeaf = asLeaf(b.children[0]);
+    REQUIRE(cubeLeaf.color.value.r == Approx(1.0f));
+    const auto& sphereLeaf = asLeaf(b.children[1]);
+    REQUIRE(sphereLeaf.color.value.b == Approx(1.0f));
+    REQUIRE(sphereLeaf.color.value.r == Approx(0.0f));
+}
+
+TEST_CASE("CsgEval:no color() leaves color unset", "[csg]") {
+    auto s = evaluate("cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE_FALSE(leaf.color.has);
+}
+
+// ---------------------------------------------------------------------------
 // Booleans preserve tree structure
 // ---------------------------------------------------------------------------
 TEST_CASE("CsgEval:union produces CsgBoolean", "[csg]") {

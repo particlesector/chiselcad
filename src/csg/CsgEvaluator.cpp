@@ -1,5 +1,6 @@
 #include "CsgEvaluator.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 
@@ -39,8 +40,9 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
     interp.setVar("$fa", Value::fromNumber(result.globalFa));
 
     const glm::mat4 identity{1.0f};
+    const ColorAttr  noColor{};
     for (const auto& root : result.roots) {
-        if (auto node = evalNode(*root, identity))
+        if (auto node = evalNode(*root, identity, noColor))
             scene.roots.push_back(std::move(node));
     }
 
@@ -54,25 +56,27 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
 // ---------------------------------------------------------------------------
 // Node dispatch
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, const ColorAttr& color) {
     return std::visit([&](const auto& n) -> CsgNodePtr {
         using T = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<T, PrimitiveNode>)
-            return evalPrimitive(n, xform);
+            return evalPrimitive(n, xform, color);
         else if constexpr (std::is_same_v<T, BooleanNode>)
-            return evalBoolean(n, xform);
+            return evalBoolean(n, xform, color);
         else if constexpr (std::is_same_v<T, TransformNode>)
-            return evalTransform(n, xform);
+            return evalTransform(n, xform, color);
         else if constexpr (std::is_same_v<T, IfNode>)
-            return evalIf(n, xform);
+            return evalIf(n, xform, color);
         else if constexpr (std::is_same_v<T, ForNode>)
-            return evalFor(n, xform);
+            return evalFor(n, xform, color);
         else if constexpr (std::is_same_v<T, ModuleCallNode>)
-            return evalModuleCall(n, xform);
+            return evalModuleCall(n, xform, color);
         else if constexpr (std::is_same_v<T, ExtrusionNode>)
-            return evalExtrusion(n, xform);
+            return evalExtrusion(n, xform, color);
         else if constexpr (std::is_same_v<T, LetNode>)
-            return evalLet(n, xform);
+            return evalLet(n, xform, color);
+        else if constexpr (std::is_same_v<T, ColorNode>)
+            return evalColor(n, xform, color);
         return nullptr;
     }, node);
 }
@@ -80,10 +84,11 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform) {
 // ---------------------------------------------------------------------------
 // Primitive — resolve ExprPtr params, bake the transform into the leaf
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& xform, const ColorAttr& color) {
     CsgLeaf leaf;
     leaf.center    = p.center;
     leaf.transform = xform;
+    leaf.color     = color;
 
     switch (p.kind) {
     // ---- 3-D primitives: resolve all params as scalars --------------------
@@ -189,8 +194,9 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
 // ---------------------------------------------------------------------------
 // Boolean — preserve the tree structure, pass xform down to children
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xform, const ColorAttr& color) {
     CsgBoolean bnode;
+    bnode.color = color;
     switch (b.op) {
     case BooleanNode::Op::Union:        bnode.op = CsgBoolean::Op::Union;        break;
     case BooleanNode::Op::Difference:   bnode.op = CsgBoolean::Op::Difference;   break;
@@ -205,7 +211,7 @@ CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xfor
     if (isLocalSpaceOp) bnode.transform = xform;
 
     for (const auto& child : b.children) {
-        if (auto c = evalNode(*child, childXform))
+        if (auto c = evalNode(*child, childXform, color))
             bnode.children.push_back(std::move(c));
     }
     return makeBoolean(std::move(bnode));
@@ -214,13 +220,13 @@ CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xfor
 // ---------------------------------------------------------------------------
 // Transform — resolve the vec expression, multiply into the accumulated matrix
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& xform, const ColorAttr& color) {
     const glm::mat4 combined = xform * makeMatrix(t);
 
     std::vector<CsgNodePtr> children;
     children.reserve(t.children.size());
     for (const auto& child : t.children) {
-        if (auto c = evalNode(*child, combined))
+        if (auto c = evalNode(*child, combined, color))
             children.push_back(std::move(c));
     }
 
@@ -229,6 +235,7 @@ CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& 
 
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;
+    u.color    = color;
     u.children = std::move(children);
     return makeBoolean(std::move(u));
 }
@@ -335,14 +342,14 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
 // ---------------------------------------------------------------------------
 // if/else — evaluate condition, walk the live branch
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform, const ColorAttr& color) {
     const bool cond = bool(m_interp->evaluate(*node.condition));
     const auto& branch = cond ? node.thenChildren : node.elseChildren;
 
     std::vector<CsgNodePtr> children;
     children.reserve(branch.size());
     for (const auto& child : branch) {
-        if (auto c = evalNode(*child, xform))
+        if (auto c = evalNode(*child, xform, color))
             children.push_back(std::move(c));
     }
 
@@ -351,6 +358,7 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform) {
 
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;
+    u.color    = color;
     u.children = std::move(children);
     return makeBoolean(std::move(u));
 }
@@ -358,7 +366,7 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform) {
 // ---------------------------------------------------------------------------
 // for — iterate range or list, union all child geometry
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, const ColorAttr& color) {
     // Build the sequence of iteration values
     std::vector<Value> values;
     static constexpr int kMaxIter = 10000;
@@ -394,7 +402,7 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
     for (const Value& v : values) {
         m_interp->setVar(node.var, v);
         for (const auto& child : node.children) {
-            if (auto c = evalNode(*child, xform))
+            if (auto c = evalNode(*child, xform, color))
                 all.push_back(std::move(c));
         }
     }
@@ -405,6 +413,7 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform) {
 
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;
+    u.color    = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
@@ -440,9 +449,9 @@ std::string CsgEvaluator::formatValue(const Value& v) {
 // ---------------------------------------------------------------------------
 // Module call — bind args, evaluate body, restore environment
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
     // ---- Built-in: children() ----
-    if (call.name == "children") return evalChildren(call, xform);
+    if (call.name == "children") return evalChildren(call, xform, color);
 
     // ---- Built-in: echo(...) ----
     if (call.name == "echo") {
@@ -520,7 +529,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     // Evaluate the module body and collect geometry
     std::vector<CsgNodePtr> all;
     for (const auto& child : def.body) {
-        if (auto c = evalNode(*child, xform))
+        if (auto c = evalNode(*child, xform, color))
             all.push_back(std::move(c));
     }
 
@@ -533,6 +542,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
 
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;
+    u.color    = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
@@ -542,7 +552,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
 // Pops the stack before evaluating so any children() calls *inside* a child
 // node see the grandparent module's children (correct OpenSCAD semantics).
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
     if (m_childrenStack.empty()) return nullptr;
 
     const auto* activeChildren = m_childrenStack.back();
@@ -556,7 +566,7 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
     if (call.args.empty()) {
         // children() — evaluate all children
         for (const auto& child : *activeChildren) {
-            if (auto c = evalNode(*child, xform))
+            if (auto c = evalNode(*child, xform, color))
                 all.push_back(std::move(c));
         }
     } else {
@@ -565,7 +575,7 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
         if (idxVal.isNumber()) {
             int idx = static_cast<int>(idxVal.asNumber());
             if (idx >= 0 && idx < static_cast<int>(activeChildren->size())) {
-                if (auto c = evalNode(*(*activeChildren)[static_cast<std::size_t>(idx)], xform))
+                if (auto c = evalNode(*(*activeChildren)[static_cast<std::size_t>(idx)], xform, color))
                     all.push_back(std::move(c));
             }
         }
@@ -579,6 +589,7 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
 
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;
+    u.color    = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
@@ -586,11 +597,12 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
 // ---------------------------------------------------------------------------
 // Extrusion — build a CsgExtrusion from an ExtrusionNode
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& xform, const ColorAttr& color) {
     CsgExtrusion ext;
     ext.kind      = (e.kind == ExtrusionNode::Kind::Linear) ? CsgExtrusion::Kind::Linear
                                                              : CsgExtrusion::Kind::Rotate;
     ext.transform = xform;
+    ext.color     = color;
 
     // Resolve numeric params; treat "scale" and "center" specially
     for (const auto& [name, exprPtr] : e.params) {
@@ -615,7 +627,7 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
     // The outer xform is stored in ext.transform and applied to the final solid.
     const glm::mat4 identity{1.0f};
     for (const auto& child : e.children) {
-        if (auto c = evalNode(*child, identity))
+        if (auto c = evalNode(*child, identity, color))
             ext.children.push_back(std::move(c));
     }
 
@@ -625,14 +637,14 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
 // ---------------------------------------------------------------------------
 // let — bind variables in scope, evaluate children, restore
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform) {
+CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform, const ColorAttr& color) {
     auto savedEnv = m_interp->snapshotEnv();
     for (const auto& [name, valExpr] : node.bindings)
         m_interp->setVar(name, m_interp->evaluate(*valExpr));
 
     std::vector<CsgNodePtr> all;
     for (const auto& child : node.children) {
-        if (auto c = evalNode(*child, xform))
+        if (auto c = evalNode(*child, xform, color))
             all.push_back(std::move(c));
     }
     m_interp->restoreEnv(std::move(savedEnv));
@@ -642,8 +654,121 @@ CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform) {
 
     CsgBoolean u;
     u.op       = CsgBoolean::Op::Union;
+    u.color    = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
+}
+
+// ---------------------------------------------------------------------------
+// color() — resolves its (optional) color/alpha expressions into a tint
+// that overrides the inherited ColorAttr for this subtree only. A nested
+// color() further inside always wins over this one for its own children.
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalColor(const ColorNode& node, const glm::mat4& xform, const ColorAttr& color) {
+    ColorAttr cur = color;
+
+    if (node.colorExpr) {
+        Value cv = m_interp->evaluate(*node.colorExpr);
+        glm::vec4 rgba;
+        if (resolveColor(cv, rgba)) {
+            cur.has   = true;
+            cur.value = rgba;
+        }
+    }
+    if (node.alphaExpr) {
+        cur.has     = true;
+        cur.value.a = static_cast<float>(m_interp->evalNumber(*node.alphaExpr));
+    }
+
+    std::vector<CsgNodePtr> children;
+    children.reserve(node.children.size());
+    for (const auto& child : node.children) {
+        if (auto c = evalNode(*child, xform, cur))
+            children.push_back(std::move(c));
+    }
+
+    if (children.empty())     return nullptr;
+    if (children.size() == 1) return children[0];
+
+    CsgBoolean u;
+    u.op       = CsgBoolean::Op::Union;
+    u.color    = cur;
+    u.children = std::move(children);
+    return makeBoolean(std::move(u));
+}
+
+// ---------------------------------------------------------------------------
+// resolveColor — turn a color() argument Value into an RGBA color.
+// Accepts [r,g,b] / [r,g,b,a] vectors (components 0..1), "#rrggbb" /
+// "#rrggbbaa" hex strings, and a set of common CSS/X11 color names.
+// Returns false (leaving `out` untouched) for anything else.
+// ---------------------------------------------------------------------------
+bool CsgEvaluator::resolveColor(const Value& c, glm::vec4& out) const {
+    if (c.isVector()) {
+        const auto& v = c.asVec();
+        if (v.size() < 3) return false;
+        out = glm::vec4(
+            static_cast<float>(v[0].asNumber()),
+            static_cast<float>(v[1].asNumber()),
+            static_cast<float>(v[2].asNumber()),
+            v.size() >= 4 ? static_cast<float>(v[3].asNumber()) : 1.0f);
+        return true;
+    }
+    if (!c.isString()) return false;
+    const std::string& s = c.asString();
+
+    if (!s.empty() && s[0] == '#') {
+        auto hexDigit = [](char ch) -> int {
+            if (ch >= '0' && ch <= '9') return ch - '0';
+            if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+            if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+            return -1;
+        };
+        auto byteAt = [&](std::size_t i) -> int {
+            int hi = hexDigit(s[i]), lo = hexDigit(s[i + 1]);
+            return (hi < 0 || lo < 0) ? -1 : (hi << 4) | lo;
+        };
+        if (s.size() != 7 && s.size() != 9) return false;
+        int r = byteAt(1), g = byteAt(3), b = byteAt(5);
+        int a = (s.size() == 9) ? byteAt(7) : 255;
+        if (r < 0 || g < 0 || b < 0 || a < 0) return false;
+        out = glm::vec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+        return true;
+    }
+
+    static const std::unordered_map<std::string, glm::vec3> kNamedColors = {
+        {"black",      {0.00f, 0.00f, 0.00f}}, {"white",      {1.00f, 1.00f, 1.00f}},
+        {"red",        {1.00f, 0.00f, 0.00f}}, {"lime",       {0.00f, 1.00f, 0.00f}},
+        {"green",      {0.00f, 0.50f, 0.00f}}, {"blue",       {0.00f, 0.00f, 1.00f}},
+        {"yellow",     {1.00f, 1.00f, 0.00f}}, {"cyan",       {0.00f, 1.00f, 1.00f}},
+        {"magenta",    {1.00f, 0.00f, 1.00f}}, {"orange",     {1.00f, 0.65f, 0.00f}},
+        {"purple",     {0.50f, 0.00f, 0.50f}}, {"pink",       {1.00f, 0.75f, 0.80f}},
+        {"gray",       {0.50f, 0.50f, 0.50f}}, {"grey",       {0.50f, 0.50f, 0.50f}},
+        {"silver",     {0.75f, 0.75f, 0.75f}}, {"gold",       {1.00f, 0.84f, 0.00f}},
+        {"brown",      {0.65f, 0.16f, 0.16f}}, {"navy",       {0.00f, 0.00f, 0.50f}},
+        {"teal",       {0.00f, 0.50f, 0.50f}}, {"maroon",     {0.50f, 0.00f, 0.00f}},
+        {"olive",      {0.50f, 0.50f, 0.00f}}, {"indigo",     {0.29f, 0.00f, 0.51f}},
+        {"violet",     {0.93f, 0.51f, 0.93f}}, {"coral",      {1.00f, 0.50f, 0.31f}},
+        {"salmon",     {0.98f, 0.50f, 0.45f}}, {"khaki",      {0.94f, 0.90f, 0.55f}},
+        {"plum",       {0.87f, 0.63f, 0.87f}}, {"orchid",     {0.85f, 0.44f, 0.84f}},
+        {"turquoise",  {0.25f, 0.88f, 0.82f}}, {"tan",        {0.82f, 0.71f, 0.55f}},
+        {"beige",      {0.96f, 0.96f, 0.86f}}, {"ivory",      {1.00f, 1.00f, 0.94f}},
+        {"crimson",    {0.86f, 0.08f, 0.24f}}, {"chocolate",  {0.82f, 0.41f, 0.12f}},
+        {"lavender",   {0.90f, 0.90f, 0.98f}}, {"skyblue",    {0.53f, 0.81f, 0.92f}},
+        {"lightblue",  {0.68f, 0.85f, 0.90f}}, {"darkgray",   {0.66f, 0.66f, 0.66f}},
+        {"darkgrey",   {0.66f, 0.66f, 0.66f}}, {"lightgray",  {0.83f, 0.83f, 0.83f}},
+        {"lightgrey",  {0.83f, 0.83f, 0.83f}},
+    };
+
+    std::string lower;
+    lower.reserve(s.size());
+    for (char ch : s)
+        lower += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+    auto it = kNamedColors.find(lower);
+    if (it == kNamedColors.end()) return false;
+    out = glm::vec4(it->second, 1.0f);
+    return true;
 }
 
 } // namespace chisel::csg

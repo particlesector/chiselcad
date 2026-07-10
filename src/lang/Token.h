@@ -48,6 +48,7 @@ enum class TokenKind : uint8_t {
     Mirror,
     Multmatrix,
     Render,
+    Color,
 
     // Control flow / definitions
     If,       // if

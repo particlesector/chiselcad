@@ -157,6 +157,9 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::Render:
         return parseRender();
 
+    case TokenKind::Color:
+        return parseColor();
+
     case TokenKind::If:
         return parseIf();
 
@@ -270,6 +273,44 @@ AstNodePtr Parser::parseRender() {
 
     node.children = parseBody();
     return makeTransform(std::move(node));
+}
+
+// ---------------------------------------------------------------------------
+// color(c) / color(c, alpha) / color(c=..., alpha=...) — sets an inherited
+// tint for its children. The first positional (or "c=") argument is the
+// color value; a second positional (or "alpha=") argument overrides alpha.
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseColor() {
+    const Token& kw = advance();
+    ColorNode node;
+    node.loc = kw.loc;
+
+    expect(TokenKind::LParen, "expected '(' after 'color'");
+
+    bool sawPositional = false;
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        const size_t prevPos = m_pos; // guard against zero-progress infinite loops
+
+        if (peek(1).kind == TokenKind::Equals && !peek().text.empty()) {
+            std::string name = peek().text;
+            advance(); // name
+            advance(); // =
+            if (name == "alpha") node.alphaExpr = parseExpr();
+            else                 node.colorExpr = parseExpr(); // c=...
+        } else if (!sawPositional) {
+            node.colorExpr = parseExpr();
+            sawPositional  = true;
+        } else {
+            node.alphaExpr = parseExpr();
+        }
+
+        match(TokenKind::Comma);
+        if (m_pos == prevPos) break; // no token consumed — stop to avoid infinite loop
+    }
+    expect(TokenKind::RParen, "expected ')' after 'color' arguments");
+
+    node.children = parseBody();
+    return makeColorNode(std::move(node));
 }
 
 // ---------------------------------------------------------------------------

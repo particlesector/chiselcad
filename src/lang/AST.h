@@ -18,11 +18,12 @@ struct ForNode;
 struct ModuleCallNode;
 struct ExtrusionNode;
 struct LetNode;
+struct ColorNode;
 
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode, ColorNode>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -218,6 +219,24 @@ struct LetNode {
 };
 
 inline AstNodePtr makeLetNode(LetNode n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
+
+// ---------------------------------------------------------------------------
+// ColorNode — color(c [, alpha]) { children }
+// Sets an inherited tint for its subtree, like an attribute alongside the
+// transform accumulator. c may be a color name / "#rrggbb"(aa) hex string,
+// or an [r,g,b]/[r,g,b,a] vector (components in 0..1); alpha, if given
+// (positionally or as alpha=...), overrides the alpha component of c.
+// ---------------------------------------------------------------------------
+struct ColorNode {
+    ExprPtr colorExpr; // nullptr if omitted
+    ExprPtr alphaExpr; // nullptr if no explicit alpha override
+    std::vector<AstNodePtr> children;
+    SourceLoc loc;
+};
+
+inline AstNodePtr makeColorNode(ColorNode n) {
     return std::make_unique<AstNode>(std::move(n));
 }
 
