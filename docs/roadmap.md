@@ -65,7 +65,12 @@
       already is — same local-space-children + outer-transform treatment as offset()/extrusion
 
 ### Tier E — File I/O (complex)
-- [ ] `include <>` / `use <>`
+- [x] `include <>` / `use <>` — new `SourceLoader` (`src/lang/SourceLoader.h/.cpp`) recursively
+      lexes/parses referenced files and splices them into the root `ParseResult`; `include`
+      merges roots/assignments/moduleDefs/functionDefs (textual-paste semantics), `use` merges
+      only moduleDefs/functionDefs. Paths resolve relative to the referencing file's directory;
+      circular includes are diagnosed instead of hanging; `MeshBuilder` now goes through
+      `loadSource()` instead of driving `Lexer`/`Parser` directly.
 - [ ] `import()`
 - [ ] `surface()`
 - [ ] `text()` (requires font rendering — significant work)

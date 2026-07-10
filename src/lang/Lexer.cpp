@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cctype>
 #include <unordered_map>
+#include <utility>
 
 namespace chisel::lang {
 
@@ -40,6 +41,8 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"undef",          TokenKind::Undef},
     {"function",       TokenKind::Function},
     {"let",            TokenKind::Let},
+    {"include",        TokenKind::Include},
+    {"use",            TokenKind::Use},
 };
 
 // ---------------------------------------------------------------------------
@@ -100,7 +103,32 @@ std::vector<Token> Lexer::tokenize() {
 
         // Identifiers and keywords
         if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
-            tokens.push_back(scanIdentOrKeyword(startOffset));
+            Token tok = scanIdentOrKeyword(startOffset);
+            TokenKind kind = tok.kind;
+            tokens.push_back(std::move(tok));
+
+            // include <path> / use <path>: the path is scanned as a single
+            // raw-text token, not the general expression grammar, since it
+            // may contain characters ('.', '/') that aren't valid tokens.
+            if (kind == TokenKind::Include || kind == TokenKind::Use) {
+                // Skip whitespace and comments (both are legal here, same as
+                // everywhere else in the grammar) before looking for '<'.
+                for (;;) {
+                    if (peek() == ' ' || peek() == '\t' || peek() == '\r' || peek() == '\n') {
+                        advance();
+                    } else if (peek() == '/' && peek(1) == '/') {
+                        skipLineComment();
+                    } else if (peek() == '/' && peek(1) == '*') {
+                        skipBlockComment();
+                    } else {
+                        break;
+                    }
+                }
+                if (peek() == '<')
+                    tokens.push_back(scanAngledPath(static_cast<uint32_t>(m_pos)));
+                // else: no '<' follows — leave it for the parser to report
+                // "expected '<path>'" so the diagnostic points at the right place.
+            }
             continue;
         }
 
@@ -319,6 +347,33 @@ Token Lexer::scanString(uint32_t startOffset) {
     t.loc.line   = startLine;
     t.loc.col    = startCol;
     t.text       = std::move(value);
+    return t;
+}
+
+Token Lexer::scanAngledPath(uint32_t startOffset) {
+    uint32_t startLine = m_line;
+    uint32_t startCol  = m_col;
+
+    advance(); // consume '<'
+    std::string path;
+    while (!atEnd() && peek() != '>' && peek() != '\n')
+        path += advance();
+
+    if (peek() == '>') {
+        advance();
+        if (path.empty())
+            addError("empty include/use path — expected a filename between '<' and '>'",
+                     {startLine, startCol, startOffset});
+    } else {
+        addError("unterminated include/use path — expected '>'", {startLine, startCol, startOffset});
+    }
+
+    Token t;
+    t.kind       = TokenKind::AngledPath;
+    t.loc.offset = startOffset;
+    t.loc.line   = startLine;
+    t.loc.col    = startCol;
+    t.text       = std::move(path);
     return t;
 }
 

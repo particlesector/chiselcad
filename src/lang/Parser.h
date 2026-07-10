@@ -30,6 +30,7 @@ private:
     void parseStatement(ParseResult& result);
     void parseSpecialVarAssignment(ParseResult& result);
     void parseAssignment(ParseResult& result);
+    void parseInclude(ParseResult& result);
 
     // ---- geometry nodes ---------------------------------------------------
     AstNodePtr parseNode();

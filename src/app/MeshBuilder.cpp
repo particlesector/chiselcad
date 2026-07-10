@@ -2,13 +2,11 @@
 #include "csg/CsgEvaluator.h"
 #include "csg/MeshCache.h"
 #include "csg/MeshEvaluator.h"
-#include "lang/Lexer.h"
-#include "lang/Parser.h"
+#include "lang/SourceLoader.h"
 #include <manifold/manifold.h>
 #include <spdlog/spdlog.h>
 #include <glm/glm.hpp>
 #include <chrono>
-#include <fstream>
 
 namespace chisel::app {
 
@@ -134,28 +132,20 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
 
     auto result = std::make_unique<BuildResult>();
 
-    std::ifstream f(path);
-    if (!f.is_open()) {
-        result->errorMsg = "Cannot open " + path.string();
-        storeError(std::move(result));
-        return;
-    }
-    std::string src((std::istreambuf_iterator<char>(f)),
-                     std::istreambuf_iterator<char>());
+    // Reads the root file, lexes/parses it, and recursively resolves any
+    // include<>/use<> directives (in it or its includes) into one merged
+    // ParseResult — see SourceLoader.h. Diagnostics from every file visited
+    // already carry their own filePath, so DiagnosticsPanel's jump-to-file
+    // works across files without further changes here.
+    lang::LoadedSource loaded = lang::loadSource(path);
+    auto& ast = loaded.result;
 
-    lang::Lexer lexer(src);
-    auto tokens = lexer.tokenize();
-    if (lexer.hasErrors()) {
-        result->diags    = lexer.diagnostics();
-        result->errorMsg = "Lex errors";
-        storeError(std::move(result));
-        return;
-    }
+    bool hasError = false;
+    for (const auto& d : loaded.diagnostics)
+        if (d.level == lang::DiagLevel::Error) { hasError = true; break; }
 
-    lang::Parser parser(std::move(tokens));
-    auto ast = parser.parse();
-    if (parser.hasErrors()) {
-        result->diags    = parser.diagnostics();
+    if (hasError) {
+        result->diags    = loaded.diagnostics;
         result->errorMsg = "Parse errors";
         storeError(std::move(result));
         return;

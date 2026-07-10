@@ -100,6 +100,7 @@ set(CHISELCAD_SOURCES
     src/lang/Lexer.cpp
     src/lang/Parser.cpp
     src/lang/Interpreter.cpp
+    src/lang/SourceLoader.cpp
 
     # CSG
     src/csg/CsgEvaluator.cpp
@@ -174,17 +175,23 @@ set(CHISELCAD_TEST_SOURCES
     tests/test_parser.cpp
     tests/test_csg_evaluator.cpp
     tests/test_interpreter.cpp
+    tests/test_source_loader.cpp
 
     # Sources under test (no GPU/Manifold deps)
     src/lang/Lexer.cpp
     src/lang/Parser.cpp
     src/lang/Interpreter.cpp
+    src/lang/SourceLoader.cpp
     src/csg/CsgEvaluator.cpp
 )
 
 add_executable(chiselcad_tests ${CHISELCAD_TEST_SOURCES})
 
 target_include_directories(chiselcad_tests PRIVATE src/)
+
+target_compile_definitions(chiselcad_tests PRIVATE
+    CHISELCAD_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/"
+)
 
 target_link_libraries(chiselcad_tests PRIVATE
     Catch2::Catch2WithMain

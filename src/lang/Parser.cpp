@@ -81,6 +81,12 @@ void Parser::parseStatement(ParseResult& result) {
         return;
     }
 
+    // File inclusion: include <path>; / use <path>;
+    if (check(TokenKind::Include) || check(TokenKind::Use)) {
+        parseInclude(result);
+        return;
+    }
+
     // Variable assignment: ident = expr;  (no '(' follows the ident)
     if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
         parseAssignment(result);
@@ -106,9 +112,9 @@ void Parser::parseSpecialVarAssignment(ParseResult& result) {
 
     // Evaluate immediately — special vars must be compile-time constants
     if (auto* lit = std::get_if<NumberLit>(expr.get())) {
-        if      (var.text == "$fn") result.globalFn = lit->value;
-        else if (var.text == "$fs") result.globalFs = lit->value;
-        else if (var.text == "$fa") result.globalFa = lit->value;
+        if      (var.text == "$fn") { result.globalFn = lit->value; result.globalFnSet = true; }
+        else if (var.text == "$fs") { result.globalFs = lit->value; result.globalFsSet = true; }
+        else if (var.text == "$fa") { result.globalFa = lit->value; result.globalFaSet = true; }
     }
     // Non-literal $fn/$fs/$fa silently ignored for now (V2b will handle)
 }
@@ -119,6 +125,35 @@ void Parser::parseAssignment(ParseResult& result) {
     auto value = parseExpr();
     match(TokenKind::Semicolon);
     result.assignments.push_back({name_tok.text, std::move(value), name_tok.loc});
+}
+
+// ---------------------------------------------------------------------------
+// include <path>; / use <path>; — no file I/O here (Parser is file-agnostic);
+// this just records the directive for SourceLoader to resolve recursively.
+// ---------------------------------------------------------------------------
+void Parser::parseInclude(ParseResult& result) {
+    const Token& kw = advance(); // 'include' or 'use'
+    IncludeStmt inc;
+    inc.kind = (kw.kind == TokenKind::Include) ? IncludeStmt::Kind::Include
+                                                : IncludeStmt::Kind::Use;
+    inc.loc  = kw.loc;
+
+    if (check(TokenKind::AngledPath)) {
+        inc.path = advance().text;
+    } else {
+        addError("expected '<path>' after 'include'/'use'", peek().loc);
+    }
+    match(TokenKind::Semicolon); // OpenSCAD doesn't require one; tolerate it if present
+
+    // SourceLoader needs to know where in *this file's own* statement stream
+    // the directive sat so it can splice the target's content in at the
+    // right position instead of always appending it at the end.
+    inc.rootsIndex    = result.roots.size();
+    inc.assignIndex   = result.assignments.size();
+    inc.moduleIndex   = result.moduleDefs.size();
+    inc.functionIndex = result.functionDefs.size();
+
+    result.includes.push_back(std::move(inc));
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +214,24 @@ AstNodePtr Parser::parseNode() {
         // Could be a module call: name(args) { ... }
         if (peek(1).kind == TokenKind::LParen)
             return parseModuleCall();
+        return nullptr;
+
+    case TokenKind::Include:
+    case TokenKind::Use:
+        // include/use are only resolved at file scope (Parser::parseStatement's
+        // top-level loop, not here) since SourceLoader splices whole files in
+        // relative to top-level statement position. Without this case, a
+        // directive written inside a block would fall to `default` below and
+        // synchronize() would eat it with no diagnostic at all — report it
+        // explicitly instead of silently discarding the whole line.
+        addError("include/use is only supported at file scope, not inside a block", peek().loc);
+        advance(); // 'include' or 'use'
+        if (check(TokenKind::AngledPath)) advance();
+        // Deliberately leave a trailing ';' unconsumed: parseBody's caller
+        // already treats a bare ';' after a null node as "end of statement"
+        // and advances past it cleanly. Consuming it here instead would
+        // remove the one delimiter synchronize() looks for, causing it to
+        // eat the *next* statement too when there's no ';' immediately after.
         return nullptr;
 
     default:

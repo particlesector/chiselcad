@@ -58,6 +58,11 @@ enum class TokenKind : uint8_t {
     Function, // function
     Let,      // let
 
+    // File inclusion
+    Include,    // include
+    Use,        // use
+    AngledPath, // <path/to/file.scad> — raw text scanned right after Include/Use
+
     // Literals
     Undef,    // undef
 
