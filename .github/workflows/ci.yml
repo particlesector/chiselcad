@@ -2,8 +2,11 @@ name: CI
 
 on:
   push:
-    branches-ignore:
-      - main
+    # Include main (not just excluded here) so merges actually run CI on
+    # main. Without this, main never builds: a merged PR fires a "closed"
+    # pull_request event, which isn't in the default trigger types below,
+    # so nothing would ever populate the default-branch vcpkg cache that
+    # every other branch falls back to on a directory-cache miss.
   pull_request:
     branches:
       - main
