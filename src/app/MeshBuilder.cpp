@@ -157,6 +157,7 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     // ---- Phase: Evaluating CSG ----
     m_phase = BuildPhase::Evaluating;
     csg::CsgEvaluator csgEval;
+    csgEval.baseDir = path.parent_path(); // for import()'s relative paths
     auto scene = csgEval.evaluate(ast);
 
     // Forward echo() output as Info diagnostics

@@ -71,7 +71,21 @@
       only moduleDefs/functionDefs. Paths resolve relative to the referencing file's directory;
       circular includes are diagnosed instead of hanging; `MeshBuilder` now goes through
       `loadSource()` instead of driving `Lexer`/`Parser` directly.
-- [ ] `import()`
+- [x] `import()` — STL only for now (OFF/3MF/AMF/DXF/SVG deferred as follow-ups). New
+      `CsgLeaf::Kind::Mesh` carries raw triangle-soup data (`meshPositions`/`meshIndices`),
+      resolved eagerly by `CsgEvaluator` (not deferred to `PrimitiveGen`) so a missing file or
+      unreadable STL surfaces as a `Diagnostic` instead of silently producing empty geometry;
+      `PrimitiveGen` just hands the data to `Manifold`'s `MeshGL` constructor. STL parsing was
+      split out of `src/import/StlImporter` into a new render-independent `StlLoader` (no
+      Vulkan/VMA deps) so `CsgEvaluator.cpp` — shared with the lightweight `chiselcad_tests`
+      target — doesn't pull in GPU headers; `StlImporter` is now a thin `render::Vertex` wrapper
+      around it, unchanged for its existing standalone-STL-viewer caller. Relative `import()`
+      paths resolve against the root `.scad` file's directory (`CsgEvaluator::baseDir`, set by
+      `MeshBuilder`) — same known caveat as `assert()`/`echo()` diagnostics not carrying a
+      file path for code reached via `use`/`include` (AST has no per-node file identity yet).
+      Also fixed a latent `MeshCache` key collision: `polygon()`/imported-mesh geometry data
+      wasn't hashed into the cache key at all, so two different shapes at the same transform
+      could silently swap cached meshes.
 - [ ] `surface()`
 - [ ] `text()` (requires font rendering — significant work)
 

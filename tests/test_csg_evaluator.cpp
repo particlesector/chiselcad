@@ -3,10 +3,19 @@
 #include "lang/Lexer.h"
 #include "lang/Parser.h"
 #include "csg/CsgEvaluator.h"
+#include <filesystem>
 
 using namespace chisel::lang;
 using namespace chisel::csg;
 using Catch::Approx;
+
+#ifndef CHISELCAD_TEST_FIXTURE_DIR
+#  error "CHISELCAD_TEST_FIXTURE_DIR must be defined by the build (see CMakeLists.txt)"
+#endif
+
+static std::filesystem::path fixture(const std::string& relPath) {
+    return std::filesystem::path(CHISELCAD_TEST_FIXTURE_DIR) / relPath;
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -23,6 +32,12 @@ static ParseResult parse(std::string_view src) {
 
 static CsgScene evaluate(std::string_view src) {
     CsgEvaluator ev;
+    return ev.evaluate(parse(src));
+}
+
+static CsgScene evaluateWithBaseDir(std::string_view src, const std::filesystem::path& baseDir) {
+    CsgEvaluator ev;
+    ev.baseDir = baseDir;
     return ev.evaluate(parse(src));
 }
 
@@ -860,4 +875,93 @@ TEST_CASE("CsgEval:recursive function drives geometry", "[csg][tier-c]") {
     );
     REQUIRE(s.roots.size() == 1);
     REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(8.0));
+}
+
+// ---------------------------------------------------------------------------
+// Tier E: import()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:import() produces a Mesh leaf from an absolute path", "[csg][tier-e]") {
+    std::string src = "import(\"" + fixture("import/triangle.stl").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Mesh);
+    REQUIRE(leaf.meshPositions.size() == 3);
+    REQUIRE(leaf.meshIndices.size() == 3);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:import() resolves a relative path against baseDir", "[csg][tier-e]") {
+    auto s = evaluateWithBaseDir("import(\"triangle.stl\");", fixture("import"));
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Mesh);
+    REQUIRE(leaf.meshPositions.size() == 3);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:import() honors an outer transform and color", "[csg][tier-e]") {
+    std::string src = "color(\"red\") translate([1,2,3]) import(\"" +
+                       fixture("import/triangle.stl").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Mesh);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.transform[3][0] == Approx(1.0)); // translation column
+    REQUIRE(leaf.transform[3][1] == Approx(2.0));
+    REQUIRE(leaf.transform[3][2] == Approx(3.0));
+}
+
+TEST_CASE("CsgEval:import() with file= named argument", "[csg][tier-e]") {
+    std::string src = "import(file=\"" + fixture("import/triangle.stl").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Mesh);
+}
+
+TEST_CASE("CsgEval:import() missing file reports a diagnostic, not a crash", "[csg][tier-e]") {
+    auto s = evaluate("import(\"does_not_exist.stl\");");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].level == chisel::lang::DiagLevel::Error);
+}
+
+TEST_CASE("CsgEval:import() unsupported format reports a diagnostic", "[csg][tier-e]") {
+    auto s = evaluate("import(\"model.obj\");");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].message.find("unsupported") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:import() with no arguments reports a diagnostic", "[csg][tier-e]") {
+    auto s = evaluate("import();");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:import() recognizes a file literally named '.stl'", "[csg][tier-e]") {
+    // std::filesystem::path::extension() treats ".stl" (leading dot, no
+    // other dot) as having *no* extension (the "dotfile" rule) — the
+    // matching in evalImport() must not rely on extension() alone.
+    std::string src = "import(\"" + fixture("import/.stl").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Mesh);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:import() positional argument wins over file= regardless of order", "[csg][tier-e]") {
+    const std::string realPath = fixture("import/triangle.stl").string();
+
+    // Named argument appears first in the source, positional second — the
+    // positional must still win (order-independent precedence).
+    auto s1 = evaluate("import(file=\"does_not_exist.stl\", \"" + realPath + "\");");
+    REQUIRE(s1.roots.size() == 1);
+    REQUIRE(s1.evalDiags.empty());
+
+    // Positional first, named second — positional wins here too.
+    auto s2 = evaluate("import(\"" + realPath + "\", file=\"does_not_exist.stl\");");
+    REQUIRE(s2.roots.size() == 1);
+    REQUIRE(s2.evalDiags.empty());
 }

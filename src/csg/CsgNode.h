@@ -34,7 +34,7 @@ struct ColorAttr {
 // this node in the AST; the MeshEvaluator applies it after tessellation.
 // ---------------------------------------------------------------------------
 struct CsgLeaf {
-    enum class Kind { Cube, Sphere, Cylinder, Square2D, Circle2D, Polygon2D };
+    enum class Kind { Cube, Sphere, Cylinder, Square2D, Circle2D, Polygon2D, Mesh };
 
     Kind kind = Kind::Cube;
     // Named params carried forward from the parser ("r", "h", "r1", "r2",
@@ -48,6 +48,17 @@ struct CsgLeaf {
     // Polygon2D only — resolved contour points and optional path indices
     std::vector<glm::vec2>           polyPoints;
     std::vector<std::vector<int>>    polyPaths;
+
+    // Mesh only (import()) — raw imported triangle-soup geometry in local
+    // (file) space, one position/index per vertex exactly as read from the
+    // file (positions are duplicated per triangle, no shared-vertex welding
+    // — PrimitiveGen hands this straight to Manifold's MeshGL constructor,
+    // which does its own manifold-ness/merge validation). Resolved eagerly
+    // by CsgEvaluator (not deferred to PrimitiveGen) so that a missing file
+    // or a parse failure can surface as a Diagnostic instead of silently
+    // producing empty geometry.
+    std::vector<glm::vec3> meshPositions;
+    std::vector<uint32_t>  meshIndices;
 };
 
 // ---------------------------------------------------------------------------

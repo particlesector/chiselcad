@@ -120,6 +120,7 @@ set(CHISELCAD_SOURCES
 
     # Export / Import
     src/export/StlExporter.cpp
+    src/import/StlLoader.cpp
     src/import/StlImporter.cpp
 )
 
@@ -176,6 +177,7 @@ set(CHISELCAD_TEST_SOURCES
     tests/test_csg_evaluator.cpp
     tests/test_interpreter.cpp
     tests/test_source_loader.cpp
+    tests/test_stl_loader.cpp
 
     # Sources under test (no GPU/Manifold deps)
     src/lang/Lexer.cpp
@@ -183,6 +185,7 @@ set(CHISELCAD_TEST_SOURCES
     src/lang/Interpreter.cpp
     src/lang/SourceLoader.cpp
     src/csg/CsgEvaluator.cpp
+    src/import/StlLoader.cpp
 )
 
 add_executable(chiselcad_tests ${CHISELCAD_TEST_SOURCES})

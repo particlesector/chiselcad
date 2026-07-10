@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +15,21 @@ namespace chisel::csg {
 static std::string fmtFloat(double v) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.6g", v);
+    return buf;
+}
+
+// Order-sensitive hash combine (boost-style), used below to fold arbitrarily
+// large geometry data (polygon points, imported mesh vertices) into a fixed-
+// size digest for the cache key — spelling every coordinate out as text
+// would make the key computation itself slow to recompute on every rebuild
+// for large imported meshes.
+static void hashCombine(std::size_t& seed, std::size_t v) {
+    seed ^= v + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+}
+
+static std::string fmtHash(std::size_t h) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%zx", h);
     return buf;
 }
 
@@ -30,7 +46,41 @@ static std::string leafKey(const CsgLeaf& leaf) {
     case CsgLeaf::Kind::Cylinder:  k += "cylinder:";  break;
     case CsgLeaf::Kind::Square2D:  k += "square2d:";  break;
     case CsgLeaf::Kind::Circle2D:  k += "circle2d:";  break;
-    case CsgLeaf::Kind::Polygon2D: k += "polygon2d:"; break;
+
+    // Polygon2D/Mesh carry their actual geometry outside `params` (in
+    // polyPoints/polyPaths or meshPositions/meshIndices), so — unlike the
+    // parametric primitives above — the key must fold that data in too, or
+    // e.g. two different polygon()s / two different imported files with the
+    // same transform would collide in MeshCache and silently swap geometry.
+    case CsgLeaf::Kind::Polygon2D: {
+        k += "polygon2d:";
+        std::size_t h = 0;
+        for (const auto& pt : leaf.polyPoints) {
+            hashCombine(h, std::hash<float>{}(pt.x));
+            hashCombine(h, std::hash<float>{}(pt.y));
+        }
+        for (const auto& path : leaf.polyPaths)
+            for (int idx : path)
+                hashCombine(h, std::hash<int>{}(idx));
+        k += fmtHash(h);
+        k += ':';
+        break;
+    }
+
+    case CsgLeaf::Kind::Mesh: {
+        k += "mesh:";
+        std::size_t h = 0;
+        for (const auto& pos : leaf.meshPositions) {
+            hashCombine(h, std::hash<float>{}(pos.x));
+            hashCombine(h, std::hash<float>{}(pos.y));
+            hashCombine(h, std::hash<float>{}(pos.z));
+        }
+        for (uint32_t idx : leaf.meshIndices)
+            hashCombine(h, std::hash<uint32_t>{}(idx));
+        k += fmtHash(h);
+        k += ':';
+        break;
+    }
     }
 
     // Sort params for a stable key
