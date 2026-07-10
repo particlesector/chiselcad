@@ -50,12 +50,12 @@
 - [x] `assert()`
 - [x] Recursive functions (enabled by user-defined functions)
 
-### Tier D — Geometry Operations
-- [ ] `multmatrix()`
-- [ ] `color()`
-- [ ] `offset()`
-- [ ] `projection()`
-- [ ] `render()`
+### Tier D — Geometry Operations (in progress)
+- [ ] `multmatrix()` — extends transform accumulation (mat4) already used by translate/rotate/scale/mirror
+- [ ] `render()` — pass-through node; ChiselCAD already fully evaluates, no preview/full-render split
+- [ ] `color()` — new inherited attribute alongside `transform`, plus result-mode shading support
+- [ ] `offset()` — builds on existing `manifold::CrossSection` usage in `MeshEvaluator`
+- [ ] `projection()` — 3-D → 2-D via `CrossSection`/`Manifold` slicing; most involved of the five
 
 ### Tier E — File I/O (complex)
 - [ ] `include <>` / `use <>`

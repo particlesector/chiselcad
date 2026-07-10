@@ -152,6 +152,64 @@ TEST_CASE("CsgEval:mirror [0,0,0] is identity", "[csg]") {
 }
 
 // ---------------------------------------------------------------------------
+// multmatrix() folds the given 4x4 rows straight into the leaf transform
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:multmatrix translation column", "[csg]") {
+    auto s = evaluate(
+        "multmatrix([[1,0,0,5],[0,1,0,7],[0,0,1,-2],[0,0,0,1]]) cube([1,1,1]);"
+    );
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.transform[3][0] == Approx(5.0f));
+    REQUIRE(leaf.transform[3][1] == Approx(7.0f));
+    REQUIRE(leaf.transform[3][2] == Approx(-2.0f));
+    REQUIRE(leaf.transform[0][0] == Approx(1.0f));
+    REQUIRE(leaf.transform[1][1] == Approx(1.0f));
+    REQUIRE(leaf.transform[2][2] == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:multmatrix arbitrary linear map", "[csg]") {
+    // Row 0 = [2,0,0,0] doubles x; row 1 = [0,0,1,0] swaps y<-z's basis vector.
+    auto s = evaluate(
+        "multmatrix([[2,0,0,0],[0,0,1,0],[0,1,0,0],[0,0,0,1]]) sphere(r=1);"
+    );
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.transform[0][0] == Approx(2.0f)); // column 0, row 0
+    REQUIRE(leaf.transform[1][2] == Approx(1.0f)); // column 1, row 2
+    REQUIRE(leaf.transform[2][1] == Approx(1.0f)); // column 2, row 1
+}
+
+TEST_CASE("CsgEval:multmatrix composes with outer translate", "[csg]") {
+    auto s = evaluate(
+        "translate([10,0,0]) multmatrix([[1,0,0,1],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) cube([1,1,1]);"
+    );
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.transform[3][0] == Approx(11.0f));
+}
+
+// ---------------------------------------------------------------------------
+// render() groups children under an implicit union, no transform of its own
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:render single child passes through untouched", "[csg]") {
+    auto s = evaluate("render() cube([2,2,2]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Cube);
+    REQUIRE(leaf.transform[0][0] == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:render multiple children implicitly unions", "[csg]") {
+    auto s = evaluate("render() { cube([2,2,2]); sphere(r=1); }");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Union);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("CsgEval:render(convexity=...) ignores the hint", "[csg]") {
+    auto s = evaluate("render(convexity = 6) sphere(r=3);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Sphere);
+}
+
+// ---------------------------------------------------------------------------
 // Booleans preserve tree structure
 // ---------------------------------------------------------------------------
 TEST_CASE("CsgEval:union produces CsgBoolean", "[csg]") {

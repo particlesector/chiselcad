@@ -226,6 +226,36 @@ TEST_CASE("Parser:mirror identity [0,0,0]", "[parser]") {
     REQUIRE(vecComp(t, 2) == Approx(0.0));
 }
 
+TEST_CASE("Parser:multmatrix", "[parser]") {
+    auto r = parse(
+        "multmatrix([[1,0,0,5],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) cube([2,2,2]);"
+    );
+    auto& t = asTrans(r.roots[0]);
+    REQUIRE(t.kind == TransformNode::Kind::Matrix);
+    REQUIRE(t.children.size() == 1);
+
+    Interpreter interp;
+    Value m = interp.evaluate(*t.vec);
+    REQUIRE(m.isVector());
+    REQUIRE(m.asVec().size() == 4);
+    REQUIRE(m.asVec()[0].asVec()[3].asNumber() == Approx(5.0));
+}
+
+TEST_CASE("Parser:render", "[parser]") {
+    auto r = parse("render() { cube([3,3,3]); sphere(r=2); }");
+    auto& t = asTrans(r.roots[0]);
+    REQUIRE(t.kind == TransformNode::Kind::Identity);
+    REQUIRE(t.children.size() == 2);
+}
+
+TEST_CASE("Parser:render with convexity arg", "[parser]") {
+    // convexity is a preview-only hint in OpenSCAD; parsed and discarded.
+    auto r = parse("render(convexity = 4) sphere(r=2);");
+    auto& t = asTrans(r.roots[0]);
+    REQUIRE(t.kind == TransformNode::Kind::Identity);
+    REQUIRE(t.children.size() == 1);
+}
+
 // ---------------------------------------------------------------------------
 // Nested operations
 // ---------------------------------------------------------------------------

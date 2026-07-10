@@ -55,11 +55,17 @@ struct BooleanNode {
 // TransformNode — translate / rotate / scale / mirror
 // ---------------------------------------------------------------------------
 struct TransformNode {
-    enum class Kind { Translate, Rotate, Scale, Mirror };
+    // Matrix — multmatrix(m): m is a 4x4 (or 3x4/3x3, auto-padded) nested
+    // vector expression, evaluated and applied directly as the local matrix.
+    // Identity — render(): no transform of its own, just groups children
+    // (render()'s convexity hint is a preview-only concept OpenSCAD uses;
+    // ChiselCAD always fully evaluates, so it has nothing to do here).
+    enum class Kind { Translate, Rotate, Scale, Mirror, Matrix, Identity };
 
     Kind kind;
     // [x, y, z] vector argument — stored as a VectorLit expression so
     // that variable references like translate([dx, 0, 0]) work.
+    // Unused (nullptr) for Kind::Identity.
     ExprPtr vec;
     std::vector<AstNodePtr> children;
     SourceLoc loc;

@@ -238,6 +238,31 @@ CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& 
 // Rotation order: Z first, then Y, then X (OpenSCAD convention).
 // ---------------------------------------------------------------------------
 glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
+    // render() has no argument of its own — just an identity matrix.
+    if (t.kind == TransformNode::Kind::Identity)
+        return glm::mat4{1.0f};
+
+    // multmatrix(m) — m is a list of up to 4 rows of up to 4 numbers each
+    // (OpenSCAD convention: missing trailing row defaults to [0,0,0,1],
+    // missing trailing column in the top 3 rows defaults to 0).
+    // Rows are read directly into the matrix; glm is column-major, so
+    // element [row][col] of the OpenSCAD matrix goes to m[col][row].
+    if (t.kind == TransformNode::Kind::Matrix) {
+        Value matVal = m_interp->evaluate(*t.vec);
+        glm::mat4 m{1.0f};
+        if (matVal.isVector()) {
+            const auto& rows = matVal.asVec();
+            for (std::size_t row = 0; row < 4 && row < rows.size(); ++row) {
+                if (!rows[row].isVector()) continue;
+                const auto& cols = rows[row].asVec();
+                for (std::size_t col = 0; col < 4 && col < cols.size(); ++col)
+                    if (cols[col].isNumber())
+                        m[static_cast<int>(col)][static_cast<int>(row)] = static_cast<float>(cols[col].asNumber());
+            }
+        }
+        return m;
+    }
+
     Value rotVal = m_interp->evaluate(*t.vec); // evaluate once, share result
     auto vec = [&]() -> std::array<double, 3> {
         if (rotVal.isVector()) {
@@ -299,6 +324,10 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
         }
         break;
     }
+
+    case TransformNode::Kind::Matrix:
+    case TransformNode::Kind::Identity:
+        break; // handled by early return above; unreachable
     }
     return m;
 }

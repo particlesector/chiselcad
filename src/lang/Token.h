@@ -46,6 +46,8 @@ enum class TokenKind : uint8_t {
     Rotate,
     Scale,
     Mirror,
+    Multmatrix,
+    Render,
 
     // Control flow / definitions
     If,       // if

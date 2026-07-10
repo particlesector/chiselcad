@@ -151,7 +151,11 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::Rotate:
     case TokenKind::Scale:
     case TokenKind::Mirror:
+    case TokenKind::Multmatrix:
         return parseTransform(k);
+
+    case TokenKind::Render:
+        return parseRender();
 
     case TokenKind::If:
         return parseIf();
@@ -231,16 +235,38 @@ AstNodePtr Parser::parseTransform(TokenKind k) {
     node.loc = kw.loc;
 
     switch (k) {
-    case TokenKind::Translate: node.kind = TransformNode::Kind::Translate; break;
-    case TokenKind::Rotate:    node.kind = TransformNode::Kind::Rotate;    break;
-    case TokenKind::Scale:     node.kind = TransformNode::Kind::Scale;     break;
-    case TokenKind::Mirror:    node.kind = TransformNode::Kind::Mirror;    break;
+    case TokenKind::Translate:   node.kind = TransformNode::Kind::Translate; break;
+    case TokenKind::Rotate:      node.kind = TransformNode::Kind::Rotate;    break;
+    case TokenKind::Scale:       node.kind = TransformNode::Kind::Scale;     break;
+    case TokenKind::Mirror:      node.kind = TransformNode::Kind::Mirror;    break;
+    case TokenKind::Multmatrix:  node.kind = TransformNode::Kind::Matrix;    break;
     default: break;
     }
 
     expect(TokenKind::LParen, "expected '(' after transform name");
-    node.vec = parseExpr(); // [x,y,z] literal or any expression that yields a vector
-    expect(TokenKind::RParen, "expected ')' after transform vector");
+    node.vec = parseExpr(); // [x,y,z] literal, 4x4 matrix literal, or any expression yielding one
+    expect(TokenKind::RParen, "expected ')' after transform argument");
+
+    node.children = parseBody();
+    return makeTransform(std::move(node));
+}
+
+// ---------------------------------------------------------------------------
+// render() — groups children with no transform of its own. convexity (and
+// any other named args) are preview-only hints in OpenSCAD; ChiselCAD always
+// fully evaluates, so they're parsed and discarded.
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseRender() {
+    const Token& kw = advance();
+    TransformNode node;
+    node.loc  = kw.loc;
+    node.kind = TransformNode::Kind::Identity;
+
+    expect(TokenKind::LParen, "expected '(' after 'render'");
+    std::unordered_map<std::string, ExprPtr> discardedParams;
+    bool unusedCenter = false;
+    parseParamList(discardedParams, unusedCenter);
+    expect(TokenKind::RParen, "expected ')' after 'render' arguments");
 
     node.children = parseBody();
     return makeTransform(std::move(node));
