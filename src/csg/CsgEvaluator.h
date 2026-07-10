@@ -2,6 +2,7 @@
 #include "CsgNode.h"
 #include "lang/AST.h"
 #include "lang/Interpreter.h"
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <unordered_map>
 
@@ -16,6 +17,17 @@ namespace chisel::csg {
 // ---------------------------------------------------------------------------
 class CsgEvaluator {
 public:
+    // Base directory for resolving relative import()/surface() paths. Set by
+    // the caller (MeshBuilder) to the root .scad file's directory before
+    // calling evaluate(); defaults to the process's current directory.
+    // Caveat: since include<>/use<> flatten a multi-file ParseResult into
+    // one before CsgEvaluator ever sees it (SourceLoader.h), an import()
+    // written inside a used/included file also resolves against the ROOT
+    // file's directory, not its own — the AST carries no per-node file
+    // identity to do otherwise (same root cause as assert()/echo()
+    // diagnostics not carrying a filePath from such files).
+    std::filesystem::path baseDir;
+
     // Convenience overload: creates a default Interpreter internally.
     CsgScene evaluate(const chisel::lang::ParseResult& result);
 
@@ -49,6 +61,7 @@ private:
     CsgNodePtr evalColor(const chisel::lang::ColorNode& n, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalOffset(const chisel::lang::OffsetNode& n, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalProjection(const chisel::lang::ProjectionNode& n, const glm::mat4& xform, const ColorAttr& color);
+    CsgNodePtr evalImport(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
 
     glm::mat4 makeMatrix(const chisel::lang::TransformNode& t) const;
     bool resolveColor(const chisel::lang::Value& c, glm::vec4& out) const;

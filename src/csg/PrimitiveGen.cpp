@@ -171,6 +171,23 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
     case CsgLeaf::Kind::Circle2D:
     case CsgLeaf::Kind::Polygon2D:
         return {}; // 2-D only — use generateCrossSection() instead
+
+    // ------------------------------------------------------------------
+    // Mesh (import()) — already-resolved triangle soup from CsgEvaluator;
+    // hand it straight to Manifold's MeshGL constructor.
+    // ------------------------------------------------------------------
+    case CsgLeaf::Kind::Mesh: {
+        manifold::MeshGL mesh;
+        mesh.numProp = 3;
+        mesh.vertProperties.reserve(leaf.meshPositions.size() * 3);
+        for (const auto& pos : leaf.meshPositions) {
+            mesh.vertProperties.push_back(pos.x);
+            mesh.vertProperties.push_back(pos.y);
+            mesh.vertProperties.push_back(pos.z);
+        }
+        mesh.triVerts = leaf.meshIndices;
+        return manifold::Manifold(mesh);
+    }
     }
 
     return {};

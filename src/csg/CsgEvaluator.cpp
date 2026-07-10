@@ -1,8 +1,10 @@
 #include "CsgEvaluator.h"
+#include "import/StlLoader.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 namespace chisel::csg {
 
@@ -493,6 +495,9 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
         return nullptr;
     }
 
+    // ---- Built-in: import(file) ----
+    if (call.name == "import") return evalImport(call, xform, color);
+
     auto it = m_moduleDefs.find(call.name);
     if (it == m_moduleDefs.end()) return nullptr; // undefined module
 
@@ -688,6 +693,68 @@ CsgNodePtr CsgEvaluator::evalProjection(const ProjectionNode& p, const glm::mat4
     }
 
     return makeProjection(std::move(proj));
+}
+
+// ---------------------------------------------------------------------------
+// import(file) / import(file="...") — loads external geometry into a Mesh
+// leaf. File IO happens here (not deferred to PrimitiveGen) specifically so
+// a missing file or an unreadable STL can surface as a Diagnostic instead of
+// silently producing empty geometry; see CsgLeaf::meshPositions in CsgNode.h.
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalImport(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+    auto reportError = [&](std::string msg) {
+        if (m_scene) {
+            lang::Diagnostic d;
+            d.level   = lang::DiagLevel::Error;
+            d.loc     = call.loc;
+            d.message = std::move(msg);
+            m_scene->evalDiags.push_back(std::move(d));
+        }
+    };
+
+    // File path: first positional argument, or file=/filename=.
+    const lang::ExprNode* pathNode = nullptr;
+    for (const auto& arg : call.args) {
+        if (arg.name.empty()) { pathNode = arg.value.get(); break; }
+        if (arg.name == "file" || arg.name == "filename") pathNode = arg.value.get();
+    }
+    if (!pathNode) {
+        reportError("import() requires a file path");
+        return nullptr;
+    }
+
+    Value pathVal = m_interp->evaluate(*pathNode);
+    if (!pathVal.isString()) {
+        reportError("import(): file path must be a string");
+        return nullptr;
+    }
+
+    std::filesystem::path filePath(pathVal.asString());
+    if (filePath.is_relative())
+        filePath = baseDir / filePath;
+
+    std::string ext = filePath.extension().string();
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    if (ext != ".stl") {
+        reportError("import(): unsupported file format '" + ext +
+                     "' — only .stl is currently supported");
+        return nullptr;
+    }
+
+    chisel::io::RawStlMesh mesh = chisel::io::loadStlRaw(filePath);
+    if (!mesh.error.empty()) {
+        reportError("import(): " + mesh.error);
+        return nullptr;
+    }
+
+    CsgLeaf leaf;
+    leaf.kind          = CsgLeaf::Kind::Mesh;
+    leaf.transform     = xform;
+    leaf.color         = color;
+    leaf.meshPositions = std::move(mesh.positions);
+    leaf.meshIndices   = std::move(mesh.indices);
+    return makeLeaf(std::move(leaf));
 }
 
 // ---------------------------------------------------------------------------
