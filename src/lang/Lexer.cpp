@@ -36,6 +36,7 @@ static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"linear_extrude", TokenKind::LinearExtrude},
     {"rotate_extrude", TokenKind::RotateExtrude},
     {"offset",         TokenKind::Offset},
+    {"projection",     TokenKind::Projection},
     {"undef",          TokenKind::Undef},
     {"function",       TokenKind::Function},
     {"let",            TokenKind::Let},

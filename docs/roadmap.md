@@ -50,7 +50,7 @@
 - [x] `assert()`
 - [x] Recursive functions (enabled by user-defined functions)
 
-### Tier D — Geometry Operations (in progress)
+### Tier D — Geometry Operations ✓
 - [x] `multmatrix()` — extends transform accumulation (mat4) already used by translate/rotate/scale/mirror
 - [x] `render()` — pass-through node; ChiselCAD already fully evaluates, no preview/full-render split
 - [x] `color()` — new inherited `ColorAttr` alongside `transform`; tints whole roots (Manifold booleans merge
@@ -59,7 +59,10 @@
 - [x] `offset()` — new `CsgOffset` IR node, evaluated via `CrossSection::Offset()`; `r=` rounds corners,
       `delta=` gives straight corners (mitered, or beveled with `chamfer=true`); local-space children +
       outer transform, same non-equivariance treatment as hull()/minkowski()
-- [ ] `projection()` — 3-D → 2-D via `CrossSection`/`Manifold` slicing; most involved of the five
+- [x] `projection()` — new `CsgProjection` IR node; 3-D children are unioned into one Manifold in local
+      space, then flattened via `Manifold::Project()` (full silhouette, the default) or `Manifold::Slice(0)`
+      (`cut=true`, a true z=0 cross-section), converted back to a `CrossSection` the same way `Polygon2D`
+      already is — same local-space-children + outer-transform treatment as offset()/extrusion
 
 ### Tier E — File I/O (complex)
 - [ ] `include <>` / `use <>`

@@ -15,6 +15,7 @@ namespace chisel::csg {
 struct CsgBoolean;
 struct CsgExtrusion;
 struct CsgOffset;
+struct CsgProjection;
 
 // ---------------------------------------------------------------------------
 // ColorAttr — the color() attribute in effect at a given point in the tree,
@@ -52,7 +53,7 @@ struct CsgLeaf {
 // ---------------------------------------------------------------------------
 // CsgNode — the CSG IR variant
 // ---------------------------------------------------------------------------
-using CsgNode    = std::variant<CsgLeaf, CsgBoolean, CsgExtrusion, CsgOffset>;
+using CsgNode    = std::variant<CsgLeaf, CsgBoolean, CsgExtrusion, CsgOffset, CsgProjection>;
 using CsgNodePtr = std::shared_ptr<CsgNode>;
 
 struct CsgBoolean {
@@ -105,6 +106,23 @@ struct CsgOffset {
 };
 
 // ---------------------------------------------------------------------------
+// CsgProjection — projection(cut=...) in the CSG IR. Children are 3-D
+// geometry, evaluated in local space exactly as authored (each child's own
+// translate/rotate/scale, if any, already baked in via CsgEvaluator) so
+// that a z=0 cut sees them at the position/height they'd actually occupy
+// inside the projection() block. `transform` is the accumulated transform
+// from *outside* projection() (e.g. a translate() wrapping the whole call)
+// and is applied once to the projected 2-D result, same treatment as
+// CsgOffset/CsgExtrusion.
+// ---------------------------------------------------------------------------
+struct CsgProjection {
+    bool cut = false; // true: slice at z=0; false (default): full silhouette
+    std::vector<CsgNodePtr> children;
+    glm::mat4 transform{1.0f};
+    ColorAttr color;
+};
+
+// ---------------------------------------------------------------------------
 // Factory helpers
 // ---------------------------------------------------------------------------
 inline CsgNodePtr makeLeaf(CsgLeaf leaf) {
@@ -118,6 +136,9 @@ inline CsgNodePtr makeExtrusion(CsgExtrusion e) {
 }
 inline CsgNodePtr makeOffset(CsgOffset o) {
     return std::make_shared<CsgNode>(std::move(o));
+}
+inline CsgNodePtr makeProjection(CsgProjection p) {
+    return std::make_shared<CsgNode>(std::move(p));
 }
 
 // The ColorAttr in effect at the top of this node's subtree (whichever

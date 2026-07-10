@@ -108,7 +108,7 @@ manifold::Manifold MeshEvaluator::evalNode(const CsgNode& node, const PrimitiveG
         else if constexpr (std::is_same_v<T, CsgExtrusion>)
             return evalExtrusion(n, gen);
         else
-            return {}; // CsgOffset: 2-D only, no 3-D representation unless extruded
+            return {}; // CsgOffset/CsgProjection: 2-D only, no 3-D representation unless extruded
     }, node);
 }
 
@@ -160,8 +160,8 @@ manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const Primiti
 // ---------------------------------------------------------------------------
 // getChildCrossSection — recursively build a CrossSection from a 2-D subtree.
 // Handles CsgLeaf (2-D kinds), CsgBoolean (union/difference/intersection of
-// 2-D children), and CsgOffset (grow/shrink). 3-D leaves produce an empty
-// CrossSection.
+// 2-D children), CsgOffset (grow/shrink), and CsgProjection (3-D → 2-D).
+// 3-D leaves produce an empty CrossSection.
 // ---------------------------------------------------------------------------
 manifold::CrossSection MeshEvaluator::getChildCrossSection(const CsgNode& node,
                                                             const PrimitiveGen& gen) {
@@ -207,6 +207,19 @@ manifold::CrossSection MeshEvaluator::getChildCrossSection(const CsgNode& node,
                                               : manifold::CrossSection::JoinType::Miter);
             }
 
+            return apply2DTransform(cs, n.transform);
+        } else if constexpr (std::is_same_v<T, CsgProjection>) {
+            if (n.children.empty()) return {};
+
+            // Union all 3-D children (each already carries its own local
+            // transform from CsgEvaluator) into one solid, then flatten it.
+            manifold::Manifold solid = evalNode(*n.children[0], gen);
+            for (std::size_t i = 1; i < n.children.size(); ++i)
+                solid = solid + evalNode(*n.children[i], gen);
+
+            manifold::Polygons polys = n.cut ? solid.Slice(0.0) : solid.Project();
+            auto cs = polys.empty() ? manifold::CrossSection{}
+                                    : manifold::CrossSection(polys, manifold::CrossSection::FillRule::EvenOdd);
             return apply2DTransform(cs, n.transform);
         } else {
             return {}; // nested extrusion — not supported

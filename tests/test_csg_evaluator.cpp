@@ -35,6 +35,9 @@ static const CsgBoolean& asBool(const CsgNodePtr& n) {
 static const CsgOffset& asOffset(const CsgNodePtr& n) {
     return std::get<CsgOffset>(*n);
 }
+static const CsgProjection& asProjection(const CsgNodePtr& n) {
+    return std::get<CsgProjection>(*n);
+}
 
 // ---------------------------------------------------------------------------
 // Global params forwarding
@@ -330,6 +333,50 @@ TEST_CASE("CsgEval:offset propagates inherited color to children", "[csg]") {
     const auto& child = asLeaf(o.children[0]);
     REQUIRE(child.color.has);
     REQUIRE(child.color.value.r == Approx(1.0f));
+}
+
+// ---------------------------------------------------------------------------
+// projection() resolves "cut" and evaluates 3-D children in local space
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:projection defaults cut to false", "[csg]") {
+    auto s = evaluate("projection() cube([2,2,2]);");
+    const auto& p = asProjection(s.roots[0]);
+    REQUIRE_FALSE(p.cut);
+    REQUIRE(p.children.size() == 1);
+    const auto& child = asLeaf(p.children[0]);
+    REQUIRE(child.kind == CsgLeaf::Kind::Cube);
+}
+
+TEST_CASE("CsgEval:projection with cut=true resolves cut to true", "[csg]") {
+    auto s = evaluate("projection(cut = true) sphere(r=5);");
+    const auto& p = asProjection(s.roots[0]);
+    REQUIRE(p.cut);
+}
+
+TEST_CASE("CsgEval:projection children evaluated in local space, transform stored outer", "[csg]") {
+    auto s = evaluate("translate([10,0,0]) projection() sphere(r=5);");
+    const auto& p = asProjection(s.roots[0]);
+    // Outer translate is stored on the projection node itself...
+    REQUIRE(p.transform[3][0] == Approx(10.0f));
+    // ...not baked into the 3-D child leaf's transform.
+    const auto& child = asLeaf(p.children[0]);
+    REQUIRE(child.transform[3][0] == Approx(0.0f));
+}
+
+TEST_CASE("CsgEval:projection wraps multiple children", "[csg]") {
+    auto s = evaluate("projection() { cube([2,2,2]); sphere(r=1); }");
+    const auto& p = asProjection(s.roots[0]);
+    REQUIRE(p.children.size() == 2);
+}
+
+TEST_CASE("CsgEval:projection propagates inherited color to children", "[csg]") {
+    auto s = evaluate("color(\"blue\") projection() cube([2,2,2]);");
+    const auto& p = asProjection(s.roots[0]);
+    REQUIRE(p.color.has);
+    REQUIRE(p.color.value.b == Approx(1.0f));
+    const auto& child = asLeaf(p.children[0]);
+    REQUIRE(child.color.has);
+    REQUIRE(child.color.value.b == Approx(1.0f));
 }
 
 // ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ private:
     AstNodePtr parseModuleCall();
     AstNodePtr parseExtrusion(TokenKind k);
     AstNodePtr parseOffset();
+    AstNodePtr parseProjection();
 
     // ---- module / function definitions ------------------------------------
     void parseModuleDef(ParseResult& result);

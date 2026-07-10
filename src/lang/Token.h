@@ -67,6 +67,8 @@ enum class TokenKind : uint8_t {
     LinearExtrude, RotateExtrude,
     // 2-D → 2-D operations
     Offset,
+    // 3-D → 2-D operations
+    Projection,
 
     // Range separator
     Colon, // :

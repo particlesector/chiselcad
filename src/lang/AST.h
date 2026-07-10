@@ -20,11 +20,12 @@ struct ExtrusionNode;
 struct LetNode;
 struct ColorNode;
 struct OffsetNode;
+struct ProjectionNode;
 
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode, ColorNode, OffsetNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode, ColorNode, OffsetNode, ProjectionNode>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -255,6 +256,23 @@ struct OffsetNode {
 };
 
 inline AstNodePtr makeOffset(OffsetNode n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
+
+// ---------------------------------------------------------------------------
+// ProjectionNode — projection(cut = false) { ... }
+// Projects 3-D children onto the XY plane: cut=true slices at z=0 (a true
+// cross-section through the solid); cut=false (default) computes the full
+// silhouette/shadow. Params kept as raw ExprPtr like OffsetNode's chamfer;
+// CsgEvaluator resolves "cut" to a bool.
+// ---------------------------------------------------------------------------
+struct ProjectionNode {
+    std::unordered_map<std::string, ExprPtr> params;
+    std::vector<AstNodePtr> children; // 3-D geometry
+    SourceLoc loc;
+};
+
+inline AstNodePtr makeProjection(ProjectionNode n) {
     return std::make_unique<AstNode>(std::move(n));
 }
 

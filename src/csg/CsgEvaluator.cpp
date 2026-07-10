@@ -79,6 +79,8 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, c
             return evalColor(n, xform, color);
         else if constexpr (std::is_same_v<T, OffsetNode>)
             return evalOffset(n, xform, color);
+        else if constexpr (std::is_same_v<T, ProjectionNode>)
+            return evalProjection(n, xform, color);
         return nullptr;
     }, node);
 }
@@ -662,6 +664,30 @@ CsgNodePtr CsgEvaluator::evalOffset(const OffsetNode& o, const glm::mat4& xform,
     }
 
     return makeOffset(std::move(off));
+}
+
+// ---------------------------------------------------------------------------
+// projection() — resolve "cut" to a bool; children are 3-D geometry
+// evaluated in local space (their own translate/rotate/scale still apply,
+// but not whatever's wrapping the projection() call itself — that outer
+// transform is stored on the node and applied to the 2-D result instead,
+// same treatment as offset()/extrusion).
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalProjection(const ProjectionNode& p, const glm::mat4& xform, const ColorAttr& color) {
+    CsgProjection proj;
+    proj.transform = xform;
+    proj.color     = color;
+
+    if (auto it = p.params.find("cut"); it != p.params.end())
+        proj.cut = bool(m_interp->evaluate(*it->second));
+
+    const glm::mat4 identity{1.0f};
+    for (const auto& child : p.children) {
+        if (auto c = evalNode(*child, identity, color))
+            proj.children.push_back(std::move(c));
+    }
+
+    return makeProjection(std::move(proj));
 }
 
 // ---------------------------------------------------------------------------

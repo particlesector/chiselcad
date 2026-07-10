@@ -143,6 +143,9 @@ AstNodePtr Parser::parseNode() {
     case TokenKind::Offset:
         return parseOffset();
 
+    case TokenKind::Projection:
+        return parseProjection();
+
     case TokenKind::Union:
     case TokenKind::Difference:
     case TokenKind::Intersection:
@@ -889,6 +892,23 @@ AstNodePtr Parser::parseOffset() {
 
     node.children = parseBody();
     return makeOffset(std::move(node));
+}
+
+// ---------------------------------------------------------------------------
+// projection(cut = false) — projects 3-D children onto the XY plane.
+// Params share parseExtrusionParams' generic key=value parsing.
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseProjection() {
+    const Token& kw = advance();
+    ProjectionNode node;
+    node.loc = kw.loc;
+
+    expect(TokenKind::LParen, "expected '(' after 'projection'");
+    parseExtrusionParams(node.params);
+    expect(TokenKind::RParen, "expected ')' after 'projection' arguments");
+
+    node.children = parseBody();
+    return makeProjection(std::move(node));
 }
 
 // ---------------------------------------------------------------------------

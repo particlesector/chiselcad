@@ -618,3 +618,34 @@ TEST_CASE("Parser:offset wraps multiple children", "[parser]") {
     const auto& o = asOffset(r.roots[0]);
     REQUIRE(o.children.size() == 2);
 }
+
+// ---------------------------------------------------------------------------
+// projection()
+// ---------------------------------------------------------------------------
+static const ProjectionNode& asProjection(const AstNodePtr& n) {
+    return std::get<ProjectionNode>(*n);
+}
+
+TEST_CASE("Parser:projection defaults with no args", "[parser]") {
+    auto r = parse("projection() cube([2,2,2]);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& p = asProjection(r.roots[0]);
+    REQUIRE(p.params.count("cut") == 0);
+    REQUIRE(p.children.size() == 1);
+}
+
+TEST_CASE("Parser:projection with cut=true", "[parser]") {
+    auto r = parse("projection(cut = true) sphere(r=5);");
+    const auto& p = asProjection(r.roots[0]);
+    REQUIRE(p.params.count("cut") == 1);
+
+    Interpreter interp;
+    Value cv = interp.evaluate(*p.params.at("cut"));
+    REQUIRE(bool(cv) == true);
+}
+
+TEST_CASE("Parser:projection wraps multiple children", "[parser]") {
+    auto r = parse("projection() { cube([2,2,2]); sphere(r=1); }");
+    const auto& p = asProjection(r.roots[0]);
+    REQUIRE(p.children.size() == 2);
+}
