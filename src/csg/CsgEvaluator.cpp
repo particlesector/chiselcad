@@ -1,5 +1,6 @@
 #include "CsgEvaluator.h"
 #include "import/StlLoader.h"
+#include "import/SurfaceLoader.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cctype>
 #include <cmath>
@@ -498,6 +499,9 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     // ---- Built-in: import(file) ----
     if (call.name == "import") return evalImport(call, xform, color);
 
+    // ---- Built-in: surface(file, center=, invert=, convexity=) ----
+    if (call.name == "surface") return evalSurface(call, xform, color);
+
     auto it = m_moduleDefs.find(call.name);
     if (it == m_moduleDefs.end()) return nullptr; // undefined module
 
@@ -696,28 +700,33 @@ CsgNodePtr CsgEvaluator::evalProjection(const ProjectionNode& p, const glm::mat4
 }
 
 // ---------------------------------------------------------------------------
-// import(file) / import(file="...") — loads external geometry into a Mesh
-// leaf. File IO happens here (not deferred to PrimitiveGen) specifically so
-// a missing file or an unreadable STL can surface as a Diagnostic instead of
-// silently producing empty geometry; see CsgLeaf::meshPositions in CsgNode.h.
+// Shared helpers for the file-loading builtins (import()/surface()). File IO
+// happens eagerly in evalImport()/evalSurface() below (not deferred to
+// PrimitiveGen) specifically so a missing file or unreadable/malformed data
+// can surface as a Diagnostic instead of silently producing empty geometry;
+// see CsgLeaf::meshPositions in CsgNode.h.
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalImport(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
-    auto reportError = [&](std::string msg) {
-        if (m_scene) {
-            lang::Diagnostic d;
-            d.level   = lang::DiagLevel::Error;
-            d.loc     = call.loc;
-            d.message = std::move(msg);
-            m_scene->evalDiags.push_back(std::move(d));
-        }
-    };
+void CsgEvaluator::reportEvalError(const lang::SourceLoc& loc, std::string msg) {
+    if (m_scene) {
+        lang::Diagnostic d;
+        d.level   = lang::DiagLevel::Error;
+        d.loc     = loc;
+        d.message = std::move(msg);
+        m_scene->evalDiags.push_back(std::move(d));
+    }
+}
 
-    // File path: first positional argument wins if given at all (regardless
-    // of where among call.args it appears); file=/filename= is only a
-    // fallback for when no positional argument was given. This is a
-    // deliberate, order-independent precedence — the alternative (whichever
-    // of a positional/named pair happens to come first in the source) would
-    // silently pick a different file depending on argument order alone.
+// Shared by import()/surface(): resolves the file-path argument (first
+// positional argument wins if given at all, regardless of where among
+// call.args it appears; file=/filename= is only a fallback for when no
+// positional argument was given — a deliberate, order-independent
+// precedence, since "whichever of a positional/named pair happens to come
+// first in the source" would silently pick a different file depending on
+// argument order alone), evaluates it, checks it's a string, and resolves
+// it against baseDir if relative. Reports a Diagnostic and returns
+// std::nullopt on any failure.
+std::optional<std::filesystem::path> CsgEvaluator::resolveFilePathArg(
+        const ModuleCallNode& call, std::string_view builtinName) {
     const lang::ExprNode* positional = nullptr;
     const lang::ExprNode* named      = nullptr;
     for (const auto& arg : call.args) {
@@ -726,38 +735,86 @@ CsgNodePtr CsgEvaluator::evalImport(const ModuleCallNode& call, const glm::mat4&
     }
     const lang::ExprNode* pathNode = positional ? positional : named;
     if (!pathNode) {
-        reportError("import() requires a file path");
-        return nullptr;
+        reportEvalError(call.loc, std::string(builtinName) + "() requires a file path");
+        return std::nullopt;
     }
 
     Value pathVal = m_interp->evaluate(*pathNode);
     if (!pathVal.isString()) {
-        reportError("import(): file path must be a string");
-        return nullptr;
+        reportEvalError(call.loc, std::string(builtinName) + "(): file path must be a string");
+        return std::nullopt;
     }
 
     std::filesystem::path filePath(pathVal.asString());
     if (filePath.is_relative())
         filePath = baseDir / filePath;
+    return filePath;
+}
+
+// import(file) / import(file="...") — loads external geometry into a Mesh leaf.
+CsgNodePtr CsgEvaluator::evalImport(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+    auto filePath = resolveFilePathArg(call, "import");
+    if (!filePath) return nullptr;
 
     // Match by filename suffix rather than std::filesystem::path::extension()
     // — the latter treats a file literally named ".stl" (leading dot, no
     // other dot) as having *no* extension, per the standard's "dotfile" rule.
-    std::string filename = filePath.filename().string();
+    std::string filename = filePath->filename().string();
     for (char& c : filename) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     const std::string kStlSuffix = ".stl";
     bool isStl = filename.size() >= kStlSuffix.size() &&
                  filename.compare(filename.size() - kStlSuffix.size(), kStlSuffix.size(), kStlSuffix) == 0;
 
     if (!isStl) {
-        reportError("import(): unsupported file format '" + filePath.extension().string() +
-                     "' — only .stl is currently supported");
+        reportEvalError(call.loc, "import(): unsupported file format '" + filePath->extension().string() +
+                                   "' — only .stl is currently supported");
         return nullptr;
     }
 
-    chisel::io::RawStlMesh mesh = chisel::io::loadStlRaw(filePath);
+    chisel::io::RawStlMesh mesh = chisel::io::loadStlRaw(*filePath);
     if (!mesh.error.empty()) {
-        reportError("import(): " + mesh.error);
+        reportEvalError(call.loc, "import(): " + mesh.error);
+        return nullptr;
+    }
+
+    CsgLeaf leaf;
+    leaf.kind          = CsgLeaf::Kind::Mesh;
+    leaf.transform     = xform;
+    leaf.color         = color;
+    leaf.meshPositions = std::move(mesh.positions);
+    leaf.meshIndices   = std::move(mesh.indices);
+    return makeLeaf(std::move(leaf));
+}
+
+// ---------------------------------------------------------------------------
+// surface(file [, center=false] [, invert=false] [, convexity=]) — loads a
+// text heightmap (.dat) into a Mesh leaf, exactly like import(); the actual
+// grid parsing and solid triangulation lives in SurfaceLoader.h so this stays
+// a thin orchestration layer (argument resolution + diagnostics), matching
+// evalImport() above. `convexity` is a preview-only hint (like render()'s),
+// parsed for compatibility and discarded.
+//
+// Unlike a user-defined module's arguments, center/invert are only matched
+// by name here (not positionally) — real-world surface() calls essentially
+// always name them, and adding full positional-parameter-list binding for
+// one builtin isn't worth the complexity.
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalSurface(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+    auto filePath = resolveFilePathArg(call, "surface");
+    if (!filePath) return nullptr;
+
+    bool center = false;
+    bool invert = false;
+    for (const auto& arg : call.args) {
+        if (arg.name == "center")      center = bool(m_interp->evaluate(*arg.value));
+        else if (arg.name == "invert") invert = bool(m_interp->evaluate(*arg.value));
+        // "file"/"filename" already consumed by resolveFilePathArg() above;
+        // "convexity" and any other named arg: ignored.
+    }
+
+    chisel::io::RawSurfaceMesh mesh = chisel::io::loadSurfaceMesh(*filePath, center, invert);
+    if (!mesh.error.empty()) {
+        reportEvalError(call.loc, "surface(): " + mesh.error);
         return nullptr;
     }
 

@@ -965,3 +965,67 @@ TEST_CASE("CsgEval:import() positional argument wins over file= regardless of or
     REQUIRE(s2.roots.size() == 1);
     REQUIRE(s2.evalDiags.empty());
 }
+
+// ---------------------------------------------------------------------------
+// Tier E: surface()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:surface() produces a Mesh leaf from an absolute path", "[csg][tier-e]") {
+    std::string src = "surface(\"" + fixture("surface/simple.dat").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Mesh);
+    REQUIRE(leaf.meshPositions.size() == 18);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:surface() resolves a relative path against baseDir", "[csg][tier-e]") {
+    auto s = evaluateWithBaseDir("surface(\"simple.dat\");", fixture("surface"));
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Mesh);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:surface() with file=, center=, and invert= named arguments", "[csg][tier-e]") {
+    std::string src = "surface(file=\"" + fixture("surface/simple.dat").string() +
+                       "\", center=true, invert=true);";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Mesh);
+    // Center cell (grid index 4): was the peak (z=5), inverted -> 0, then
+    // centered around the [0,5] span -> shifted by -2.5.
+    REQUIRE(leaf.meshPositions[4].z == Approx(-2.5));
+}
+
+TEST_CASE("CsgEval:surface() honors an outer transform and color", "[csg][tier-e]") {
+    std::string src = "color(\"red\") translate([1,2,3]) surface(\"" +
+                       fixture("surface/simple.dat").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.transform[3][0] == Approx(1.0));
+    REQUIRE(leaf.transform[3][1] == Approx(2.0));
+    REQUIRE(leaf.transform[3][2] == Approx(3.0));
+}
+
+TEST_CASE("CsgEval:surface() missing file reports a diagnostic, not a crash", "[csg][tier-e]") {
+    auto s = evaluate("surface(\"does_not_exist.dat\");");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].level == chisel::lang::DiagLevel::Error);
+}
+
+TEST_CASE("CsgEval:surface() with no arguments reports a diagnostic", "[csg][tier-e]") {
+    auto s = evaluate("surface();");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:surface() inconsistent row length reports a diagnostic", "[csg][tier-e]") {
+    std::string src = "surface(\"" + fixture("surface/inconsistent.dat").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+}

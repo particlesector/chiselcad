@@ -1,0 +1,7 @@
+# a heightmap with comments and blank lines mixed in
+0 0 0
+
+# the middle row has a peak
+0 5 0
+0 0 0
+# trailing comment

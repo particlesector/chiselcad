@@ -86,7 +86,17 @@
       Also fixed a latent `MeshCache` key collision: `polygon()`/imported-mesh geometry data
       wasn't hashed into the cache key at all, so two different shapes at the same transform
       could silently swap cached meshes.
-- [ ] `surface()`
+- [x] `surface()` — text `.dat` heightmap format only (PNG heightmaps deferred as a follow-up).
+      New `src/import/SurfaceLoader.h/.cpp` parses the grid (`#` comments, blank lines skipped,
+      every row must have the same column count) and triangulates it directly into a closed,
+      watertight solid — top surface follows the height values, vertical walls, flat base —
+      reusing the same `CsgLeaf::Kind::Mesh` `import()` introduced, so no `CsgNode`/
+      `PrimitiveGen`/`MeshEvaluator` changes were needed. Grid row 0 maps to the *far* (max Y)
+      edge, matching OpenSCAD's row convention; `center` centers the X/Y footprint *and* Z
+      extent; `invert` flips heights about the grid's own max (`h' = max - h`). The solid's base
+      sits at `min(0, minHeight)` rather than a hardcoded `z=0`, so heightmaps with negative
+      values don't fold the base back through the top surface. Same `baseDir`-relative-path and
+      `assert()`/`echo()`-filePath caveats as `import()` apply (see above).
 - [ ] `text()` (requires font rendering — significant work)
 
 ## v3 — Tooling & Visual Quality

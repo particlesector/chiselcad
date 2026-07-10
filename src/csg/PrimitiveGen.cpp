@@ -174,8 +174,9 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
         return {}; // 2-D only — use generateCrossSection() instead
 
     // ------------------------------------------------------------------
-    // Mesh (import()) — already-resolved triangle soup from CsgEvaluator;
-    // hand it straight to Manifold's MeshGL constructor.
+    // Mesh (import()/surface()) — already-resolved triangle mesh from
+    // CsgEvaluator (may or may not be vertex-welded — see CsgNode.h); hand
+    // it straight to Manifold's MeshGL constructor either way.
     // ------------------------------------------------------------------
     case CsgLeaf::Kind::Mesh: {
         static_assert(sizeof(glm::vec3) == 3 * sizeof(float),

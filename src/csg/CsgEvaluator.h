@@ -4,6 +4,8 @@
 #include "lang/Interpreter.h"
 #include <filesystem>
 #include <glm/glm.hpp>
+#include <optional>
+#include <string_view>
 #include <unordered_map>
 
 namespace chisel::csg {
@@ -62,6 +64,17 @@ private:
     CsgNodePtr evalOffset(const chisel::lang::OffsetNode& n, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalProjection(const chisel::lang::ProjectionNode& n, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalImport(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
+    CsgNodePtr evalSurface(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
+
+    // Shared by evalImport()/evalSurface(): pushes an error Diagnostic (if a
+    // scene is being built) at the given source location.
+    void reportEvalError(const chisel::lang::SourceLoc& loc, std::string msg);
+
+    // Shared by evalImport()/evalSurface(): resolves and validates the
+    // file-path argument common to both builtins. See definition for the
+    // positional-vs-named precedence rule.
+    std::optional<std::filesystem::path> resolveFilePathArg(
+        const chisel::lang::ModuleCallNode& call, std::string_view builtinName);
 
     glm::mat4 makeMatrix(const chisel::lang::TransformNode& t) const;
     bool resolveColor(const chisel::lang::Value& c, glm::vec4& out) const;

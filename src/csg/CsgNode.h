@@ -49,13 +49,17 @@ struct CsgLeaf {
     std::vector<glm::vec2>           polyPoints;
     std::vector<std::vector<int>>    polyPaths;
 
-    // Mesh only (import()) — raw imported triangle-soup geometry in local
-    // (file) space, one position/index per vertex exactly as read from the
-    // file (positions are duplicated per triangle, no shared-vertex welding
-    // — PrimitiveGen hands this straight to Manifold's MeshGL constructor,
-    // which does its own manifold-ness/merge validation). Resolved eagerly
-    // by CsgEvaluator (not deferred to PrimitiveGen) so that a missing file
-    // or a parse failure can surface as a Diagnostic instead of silently
+    // Mesh only (import()/surface()) — raw triangle-mesh geometry in local
+    // (file) space; PrimitiveGen hands this straight to Manifold's MeshGL
+    // constructor, which does its own manifold-ness/merge validation.
+    // Vertex-sharing is producer-specific, not a fixed contract of this
+    // field: import() (StlLoader) duplicates a position per triangle vertex,
+    // since STL itself has no shared-vertex indexing, while surface()
+    // (SurfaceLoader) emits a genuinely shared/welded indexed mesh (each
+    // grid point is one position referenced by every triangle that touches
+    // it). Both are valid triangle soups either way. Resolved eagerly by
+    // CsgEvaluator (not deferred to PrimitiveGen) so that a missing file or
+    // a parse failure can surface as a Diagnostic instead of silently
     // producing empty geometry.
     std::vector<glm::vec3> meshPositions;
     std::vector<uint32_t>  meshIndices;
