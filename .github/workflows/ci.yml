@@ -8,6 +8,14 @@ on:
     branches:
       - main
 
+# Cancel a still-running CI run for the same branch/PR when a new commit
+# lands, instead of letting both runs race to populate the same vcpkg
+# cache key (the loser's run wastes ~15 minutes and never benefits from
+# the winner's cache since it already started cold).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ──────────────────────────────────────────────
   # Windows (primary platform)
@@ -68,8 +76,13 @@ jobs:
           key: vcpkg-windows-2025-vs2026-x64-${{ hashFiles('vcpkg.json') }}-57987637
 
       - name: Configure CMake
-        env:
-          VCPKG_BINARY_SOURCES: "clear"
+        # No VCPKG_BINARY_SOURCES override here: keep run-vcpkg's default
+        # (clear;x-gha,readwrite) so that if the "Cache vcpkg installed
+        # packages" directory cache above misses, vcpkg falls back to its
+        # own per-package GitHub Actions binary cache instead of rebuilding
+        # every dependency (manifold, clipper2, tbb, imgui, ...) from
+        # source — which is what made cold-cache Windows runs take 12+
+        # minutes just to configure.
         run: >
           cmake -B build
           -G "Visual Studio 18 2026" -A x64
@@ -119,8 +132,8 @@ jobs:
           key: vcpkg-linux-x64-${{ hashFiles('vcpkg.json') }}-57987637
 
       - name: Configure CMake
-        env:
-          VCPKG_BINARY_SOURCES: "clear"
+        # See the Windows job's Configure CMake step for why there's no
+        # VCPKG_BINARY_SOURCES override here.
         run: >
           cmake -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
