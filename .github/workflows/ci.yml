@@ -14,7 +14,12 @@ jobs:
   # ──────────────────────────────────────────────
   build-windows:
     name: Windows / MSVC 2022
-    runs-on: windows-latest
+    # Pinned rather than "windows-latest": GitHub moved that floating label to
+    # a Windows Server 2025 + Visual Studio 2026 image starting June 2026,
+    # which doesn't expose the "Visual Studio 17 2022" CMake generator this
+    # job configures with below. windows-2022 is GitHub's supported label for
+    # anyone who still needs the VS2022 toolchain.
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v4
