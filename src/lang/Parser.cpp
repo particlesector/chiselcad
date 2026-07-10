@@ -81,6 +81,12 @@ void Parser::parseStatement(ParseResult& result) {
         return;
     }
 
+    // File inclusion: include <path>; / use <path>;
+    if (check(TokenKind::Include) || check(TokenKind::Use)) {
+        parseInclude(result);
+        return;
+    }
+
     // Variable assignment: ident = expr;  (no '(' follows the ident)
     if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
         parseAssignment(result);
@@ -119,6 +125,27 @@ void Parser::parseAssignment(ParseResult& result) {
     auto value = parseExpr();
     match(TokenKind::Semicolon);
     result.assignments.push_back({name_tok.text, std::move(value), name_tok.loc});
+}
+
+// ---------------------------------------------------------------------------
+// include <path>; / use <path>; — no file I/O here (Parser is file-agnostic);
+// this just records the directive for SourceLoader to resolve recursively.
+// ---------------------------------------------------------------------------
+void Parser::parseInclude(ParseResult& result) {
+    const Token& kw = advance(); // 'include' or 'use'
+    IncludeStmt inc;
+    inc.kind = (kw.kind == TokenKind::Include) ? IncludeStmt::Kind::Include
+                                                : IncludeStmt::Kind::Use;
+    inc.loc  = kw.loc;
+
+    if (check(TokenKind::AngledPath)) {
+        inc.path = advance().text;
+    } else {
+        addError("expected '<path>' after 'include'/'use'", peek().loc);
+    }
+    match(TokenKind::Semicolon); // OpenSCAD doesn't require one; tolerate it if present
+
+    result.includes.push_back(std::move(inc));
 }
 
 // ---------------------------------------------------------------------------

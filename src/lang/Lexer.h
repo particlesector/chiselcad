@@ -36,6 +36,7 @@ private:
     Token scanIdentOrKeyword(uint32_t startOffset);
     Token scanSpecialVar(uint32_t startOffset);
     Token scanString(uint32_t startOffset);
+    Token scanAngledPath(uint32_t startOffset);
     void  skipLineComment();
     void  skipBlockComment();
 

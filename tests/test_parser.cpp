@@ -649,3 +649,42 @@ TEST_CASE("Parser:projection wraps multiple children", "[parser]") {
     const auto& p = asProjection(r.roots[0]);
     REQUIRE(p.children.size() == 2);
 }
+
+// ---------------------------------------------------------------------------
+// include<>/use<> — the Parser only records these; SourceLoader (tested
+// separately in test_source_loader.cpp) resolves them against the filesystem.
+// ---------------------------------------------------------------------------
+TEST_CASE("Parser:include records path and kind", "[parser][tier-e]") {
+    auto r = parse("include <shapes.scad>\ncube(1);");
+    REQUIRE(r.includes.size() == 1);
+    REQUIRE(r.includes[0].kind == IncludeStmt::Kind::Include);
+    REQUIRE(r.includes[0].path == "shapes.scad");
+    // The geometry statement after it still parses normally.
+    REQUIRE(r.roots.size() == 1);
+}
+
+TEST_CASE("Parser:use records path and kind", "[parser][tier-e]") {
+    auto r = parse("use <lib.scad>");
+    REQUIRE(r.includes.size() == 1);
+    REQUIRE(r.includes[0].kind == IncludeStmt::Kind::Use);
+    REQUIRE(r.includes[0].path == "lib.scad");
+}
+
+TEST_CASE("Parser:multiple include/use directives keep source order", "[parser][tier-e]") {
+    auto r = parse("include <a.scad>\nuse <b.scad>\ninclude <c.scad>");
+    REQUIRE(r.includes.size() == 3);
+    REQUIRE(r.includes[0].path == "a.scad");
+    REQUIRE(r.includes[1].path == "b.scad");
+    REQUIRE(r.includes[2].path == "c.scad");
+    REQUIRE(r.includes[0].kind == IncludeStmt::Kind::Include);
+    REQUIRE(r.includes[1].kind == IncludeStmt::Kind::Use);
+    REQUIRE(r.includes[2].kind == IncludeStmt::Kind::Include);
+}
+
+TEST_CASE("Parser:include missing path is a parse error", "[parser][tier-e]") {
+    Lexer lexer("include ;");
+    auto tokens = lexer.tokenize();
+    Parser parser(std::move(tokens));
+    parser.parse();
+    REQUIRE(parser.hasErrors());
+}

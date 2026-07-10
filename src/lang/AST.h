@@ -277,6 +277,22 @@ inline AstNodePtr makeProjection(ProjectionNode n) {
 }
 
 // ---------------------------------------------------------------------------
+// IncludeStmt — a file-scope `include <path>;` or `use <path>;` directive.
+// The Parser only records these (it does no file I/O); SourceLoader resolves
+// them recursively, relative to the directory of the file that contains the
+// directive, and splices the target file's ParseResult into this one —
+// `Include` merges everything (roots/assignments/moduleDefs/functionDefs),
+// `Use` merges only moduleDefs/functionDefs, matching OpenSCAD semantics.
+// ---------------------------------------------------------------------------
+struct IncludeStmt {
+    enum class Kind { Include, Use };
+
+    Kind        kind;
+    std::string path; // raw text between '<' and '>', unresolved
+    SourceLoc   loc;
+};
+
+// ---------------------------------------------------------------------------
 // ParseResult — the output of a successful parse
 // ---------------------------------------------------------------------------
 struct ParseResult {
@@ -284,6 +300,7 @@ struct ParseResult {
     std::vector<AssignStmt>  assignments;  // variable assignments (x = expr;)
     std::vector<ModuleDef>   moduleDefs;   // user-defined module definitions
     std::vector<FunctionDef> functionDefs; // user-defined function definitions
+    std::vector<IncludeStmt> includes;     // include<>/use<> directives, in source order
     double globalFn = 0.0;                // $fn if set at file scope (0 = unset)
     double globalFs = 2.0;                // $fs default
     double globalFa = 12.0;              // $fa default

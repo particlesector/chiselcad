@@ -337,3 +337,36 @@ TEST_CASE("Lexer:string in assignment context", "[lexer][tier-b]") {
     REQUIRE(t[2] == TokenKind::String);
     REQUIRE(t[3] == TokenKind::Semicolon);
 }
+
+// ---------------------------------------------------------------------------
+// Tier E: include<>/use<>
+// ---------------------------------------------------------------------------
+TEST_CASE("Lexer:include with angled path", "[lexer][tier-e]") {
+    auto t = lex("include <shapes.scad>");
+    REQUIRE(t.size() == 2);
+    REQUIRE(t[0].kind == TokenKind::Include);
+    REQUIRE(t[1].kind == TokenKind::AngledPath);
+    REQUIRE(t[1].text == "shapes.scad");
+}
+
+TEST_CASE("Lexer:use with angled path", "[lexer][tier-e]") {
+    auto t = lex("use <lib/helpers.scad>");
+    REQUIRE(t.size() == 2);
+    REQUIRE(t[0].kind == TokenKind::Use);
+    REQUIRE(t[1].kind == TokenKind::AngledPath);
+    REQUIRE(t[1].text == "lib/helpers.scad");
+}
+
+TEST_CASE("Lexer:include path is not tokenized as expression operators", "[lexer][tier-e]") {
+    // A naive lexer would see '<', 'shapes', '.', 'scad', '>' as separate
+    // tokens (Less, Ident, ..., Greater). The angled-path scanner must
+    // intercept it right after the Include/Use keyword instead.
+    auto t = kinds("include <a.scad>");
+    REQUIRE(t == std::vector{TokenKind::Include, TokenKind::AngledPath});
+}
+
+TEST_CASE("Lexer:unterminated angled path is a lex error", "[lexer][tier-e]") {
+    Lexer lexer("include <a.scad");
+    lexer.tokenize();
+    REQUIRE(lexer.hasErrors());
+}
