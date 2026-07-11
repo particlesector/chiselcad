@@ -1029,3 +1029,79 @@ TEST_CASE("CsgEval:surface() inconsistent row length reports a diagnostic", "[cs
     REQUIRE(s.roots.empty());
     REQUIRE_FALSE(s.evalDiags.empty());
 }
+
+// ---------------------------------------------------------------------------
+// Tier E: text()
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:text() produces a Polygon2D leaf using the bundled default font", "[csg][tier-e]") {
+    auto s = evaluate("text(\"A\");");
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Polygon2D);
+    REQUIRE_FALSE(leaf.polyPoints.empty());
+    REQUIRE_FALSE(leaf.polyPaths.empty());
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:text() with named text= argument", "[csg][tier-e]") {
+    auto s = evaluate("text(text=\"A\");");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Polygon2D);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:text() honors an outer transform and color", "[csg][tier-e]") {
+    auto s = evaluate("color(\"red\") translate([1,2,3]) text(\"A\");");
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.transform[3][0] == Approx(1.0));
+    REQUIRE(leaf.transform[3][1] == Approx(2.0));
+    REQUIRE(leaf.transform[3][2] == Approx(3.0));
+}
+
+TEST_CASE("CsgEval:text() with a custom font resolves relative to baseDir", "[csg][tier-e]") {
+    auto s = evaluateWithBaseDir("text(\"A\", font=\"custom.ttf\");", fixture("text"));
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Polygon2D);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:text() with a custom font at an absolute path", "[csg][tier-e]") {
+    std::string src = "text(\"A\", font=\"" + fixture("text/custom.ttf").string() + "\");";
+    auto s = evaluate(src);
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Polygon2D);
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:text() empty string produces no root and no diagnostic", "[csg][tier-e]") {
+    auto s = evaluate("text(\"\");");
+    REQUIRE(s.roots.empty());
+    REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:text() with no arguments reports a diagnostic", "[csg][tier-e]") {
+    auto s = evaluate("text();");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:text() non-string argument reports a diagnostic", "[csg][tier-e]") {
+    auto s = evaluate("text(5);");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:text() missing font file reports a diagnostic, not a crash", "[csg][tier-e]") {
+    auto s = evaluate("text(\"A\", font=\"does_not_exist.ttf\");");
+    REQUIRE(s.roots.empty());
+    REQUIRE_FALSE(s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].level == chisel::lang::DiagLevel::Error);
+}
+
+TEST_CASE("CsgEval:text() ignores direction/language/script for forward compatibility", "[csg][tier-e]") {
+    auto s = evaluate("text(\"A\", direction=\"ltr\", language=\"en\", script=\"latin\");");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(s.evalDiags.empty());
+}

@@ -97,7 +97,48 @@
       sits at `min(0, minHeight)` rather than a hardcoded `z=0`, so heightmaps with negative
       values don't fold the base back through the top surface. Same `baseDir`-relative-path and
       `assert()`/`echo()`-filePath caveats as `import()` apply (see above).
-- [ ] `text()` (requires font rendering — significant work)
+- [x] `text()` — glyph outlines only via vendored `stb_truetype` (`third_party/stb/stb_truetype.h`,
+      public domain); no FreeType/HarfBuzz. New `src/import/StbFontBackend.h/.cpp` wraps every
+      `stbtt_*` call used (font load, cmap lookup, glyph outline extraction with quadratic/cubic
+      curve flattening, advance width, legacy `kern`-table kerning) and `src/import/
+      NaiveLtrShaper.h/.cpp` does simple left-to-right layout (UTF-8 decode, cmap lookup per
+      codepoint, kerning, advance accumulation) — deliberately split into two small files along
+      the exact seam a future FreeType+HarfBuzz backend would replace (glyph outline/metric
+      extraction vs. text shaping), so a contributor adding that later swaps these two files for
+      `FreeTypeFontBackend`/`HarfBuzzShaper` with the same function shapes, without touching
+      `TextLoader.h`'s signature or `CsgEvaluator` at all. Deliberately *not* a virtual-interface
+      hierarchy — this codebase prefers concrete types/`std::visit` over virtual dispatch
+      (CONTRIBUTING.md), so the seam is the header boundary, not an abstract base class.
+      `src/import/TextLoader.h/.cpp` orchestrates the two into a flat list of 2-D contours
+      (`RawTextOutline`), which `CsgEvaluator::evalText` turns directly into a `Polygon2D` leaf —
+      no new `CsgNode.h`/`PrimitiveGen.cpp` needed, since `Polygon2D`'s existing multi-path +
+      `EvenOdd` fill (`PrimitiveGen.cpp`) already turns a glyph's nested contours (e.g. the counter
+      of an "O") into holes for free, the same way `polygon()` handles holes.
+      Known scope cuts, matching this project's convention of shipping the common case first
+      (see `import()`/`surface()` above):
+        - No ligatures, contextual substitution, bidi, or complex-script reordering — codepoints
+          map 1:1 to glyphs in source order. Fine for static Latin/Western text (labels, part
+          numbers, engraved text), not for Arabic/Hebrew/Indic scripts.
+        - Kerning only via the legacy `kern` table (stb_truetype doesn't read `GPOS`, which is
+          how most modern fonts actually ship kerning) — kerning silently no-ops on many fonts.
+        - `direction`/`language`/`script` (OpenSCAD's bidi/shaping controls) are accepted and
+          discarded, same treatment as `surface()`'s `convexity`.
+        - Single line only, matching OpenSCAD — embedded newlines aren't treated specially;
+          multi-line text is multiple `text()` calls composed with `translate()`.
+        - No system font-name lookup (no fontconfig) — `font=` is always a file path, resolved
+          exactly like `import()`/`surface()` (relative to `baseDir`, or absolute). Omitting
+          `font=` falls back to a bundled default (Roboto Regular, Apache 2.0,
+          `resources/fonts/Roboto-Regular.ttf` + `resources/fonts/Roboto-LICENSE.txt`), resolved
+          via a new `CHISELCAD_RESOURCE_DIR` compile definition (mirrors `CHISELCAD_SHADER_DIR`;
+          same known limitation of embedding a source-tree-absolute path rather than being
+          properly relocatable post-install — `install(DIRECTORY resources/ ...)` was added but
+          the compiled-in path isn't install-location-aware, matching the shaders' existing
+          behavior).
+        - Curve tessellation: adaptive recursive subdivision (tolerance proportional to the
+          font's own em size) by default, so smoothness doesn't depend on glyph size; an optional
+          `$fn` fixes the segment count per curve instead — not a literal port of
+          `PrimitiveGen::resolveSegments()`'s circle-segment formula, since a glyph curve is
+          typically a much shorter arc than a full circle.
 
 ## v3 — Tooling & Visual Quality
 

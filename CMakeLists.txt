@@ -123,6 +123,10 @@ set(CHISELCAD_SOURCES
     src/import/StlLoader.cpp
     src/import/StlImporter.cpp
     src/import/SurfaceLoader.cpp
+    src/import/stb_truetype_impl.cpp
+    src/import/StbFontBackend.cpp
+    src/import/NaiveLtrShaper.cpp
+    src/import/TextLoader.cpp
 )
 
 # ============================================================
@@ -133,6 +137,7 @@ add_dependencies(chiselcad chiselcad_shaders)
 
 target_include_directories(chiselcad PRIVATE
     src/
+    third_party/
 )
 
 target_link_libraries(chiselcad PRIVATE
@@ -160,9 +165,19 @@ endif()
 # ============================================================
 target_compile_definitions(chiselcad PRIVATE
     CHISELCAD_SHADER_DIR="${SHADER_BINARY_DIR}/"
+    CHISELCAD_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/"
     CHISELCAD_VERSION="${PROJECT_VERSION}"
     GLM_FORCE_DEPTH_ZERO_TO_ONE   # Vulkan depth range [0,1] not [-1,1]
 )
+
+# stb_truetype's implementation TU triggers warnings under -Wall -Wextra
+# -Wpedantic (vendored code, not ours to fix) — silenced for this one file
+# only rather than loosened project-wide.
+if(MSVC)
+    set_source_files_properties(src/import/stb_truetype_impl.cpp PROPERTIES COMPILE_OPTIONS "/W0")
+else()
+    set_source_files_properties(src/import/stb_truetype_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 
 # ============================================================
 # Tests (Catch2 — via vcpkg, same binary cache as every other dependency,
@@ -180,6 +195,7 @@ set(CHISELCAD_TEST_SOURCES
     tests/test_source_loader.cpp
     tests/test_stl_loader.cpp
     tests/test_surface_loader.cpp
+    tests/test_text_loader.cpp
 
     # Sources under test (no GPU/Manifold deps)
     src/lang/Lexer.cpp
@@ -189,14 +205,19 @@ set(CHISELCAD_TEST_SOURCES
     src/csg/CsgEvaluator.cpp
     src/import/StlLoader.cpp
     src/import/SurfaceLoader.cpp
+    src/import/stb_truetype_impl.cpp
+    src/import/StbFontBackend.cpp
+    src/import/NaiveLtrShaper.cpp
+    src/import/TextLoader.cpp
 )
 
 add_executable(chiselcad_tests ${CHISELCAD_TEST_SOURCES})
 
-target_include_directories(chiselcad_tests PRIVATE src/)
+target_include_directories(chiselcad_tests PRIVATE src/ third_party/)
 
 target_compile_definitions(chiselcad_tests PRIVATE
     CHISELCAD_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/"
+    CHISELCAD_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/"
 )
 
 target_link_libraries(chiselcad_tests PRIVATE
@@ -219,3 +240,4 @@ catch_discover_tests(chiselcad_tests)
 # ============================================================
 install(TARGETS chiselcad RUNTIME DESTINATION bin)
 install(DIRECTORY ${SHADER_BINARY_DIR} DESTINATION share/chiselcad)
+install(DIRECTORY resources/ DESTINATION share/chiselcad/resources)

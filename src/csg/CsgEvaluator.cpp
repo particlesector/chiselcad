@@ -1,17 +1,29 @@
 #include "CsgEvaluator.h"
 #include "import/StlLoader.h"
 #include "import/SurfaceLoader.h"
+#include "import/TextLoader.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 
+#ifndef CHISELCAD_RESOURCE_DIR
+#  error "CHISELCAD_RESOURCE_DIR must be defined by the build (see CMakeLists.txt)"
+#endif
+
 namespace chisel::csg {
 
 using namespace chisel::lang;
 
 static constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
+
+// Bundled fallback used by text() when its `font` argument is omitted/empty.
+// Not baseDir-relative — this is a build-time resource path, not a
+// .scad-file-relative user path (see resolveFilePathArg()).
+static std::filesystem::path defaultFontPath() {
+    return std::filesystem::path(CHISELCAD_RESOURCE_DIR) / "fonts" / "Roboto-Regular.ttf";
+}
 
 // ---------------------------------------------------------------------------
 // Public entry points
@@ -502,6 +514,9 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     // ---- Built-in: surface(file, center=, invert=, convexity=) ----
     if (call.name == "surface") return evalSurface(call, xform, color);
 
+    // ---- Built-in: text(t, size=, font=, halign=, valign=, spacing=, $fn=) ----
+    if (call.name == "text") return evalText(call, xform, color);
+
     auto it = m_moduleDefs.find(call.name);
     if (it == m_moduleDefs.end()) return nullptr; // undefined module
 
@@ -824,6 +839,89 @@ CsgNodePtr CsgEvaluator::evalSurface(const ModuleCallNode& call, const glm::mat4
     leaf.color         = color;
     leaf.meshPositions = std::move(mesh.positions);
     leaf.meshIndices   = std::move(mesh.indices);
+    return makeLeaf(std::move(leaf));
+}
+
+// ---------------------------------------------------------------------------
+// text(t [, size=10] [, font=] [, halign="left"] [, valign="baseline"]
+//      [, spacing=1] [, $fn=]) — builds a Polygon2D leaf from shaped glyph
+//      outlines, exactly like polygon(): one path per glyph contour; the
+//      EvenOdd fill rule PrimitiveGen.cpp already uses for Polygon2D turns
+//      nested contours (e.g. the counter of an "O") into holes
+//      automatically, so no new CsgLeaf::Kind was needed. Font parsing
+//      happens eagerly here (not deferred to PrimitiveGen), same rationale
+//      as import()/surface() — see the comment above reportEvalError().
+//
+// `t` is matched positionally or via `text=` (that's OpenSCAD's actual
+// keyword name for this parameter, unlike file/filename for import()/
+// surface()). `font` defaults to the bundled Roboto (defaultFontPath())
+// when omitted/empty; otherwise resolved exactly like import()/surface()
+// paths (relative to baseDir). `direction`/`language`/`script` are
+// accepted and discarded, like surface()'s `convexity` — see
+// TextLoader.h for the full scope writeup (no ligatures/bidi/
+// complex-script shaping in this first cut).
+// ---------------------------------------------------------------------------
+CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+    const lang::ExprNode* positional = nullptr;
+    const lang::ExprNode* named      = nullptr;
+    for (const auto& arg : call.args) {
+        if (arg.name.empty()) { if (!positional) positional = arg.value.get(); }
+        else if (arg.name == "text") named = arg.value.get();
+    }
+    const lang::ExprNode* textNode = positional ? positional : named;
+    if (!textNode) {
+        reportEvalError(call.loc, "text() requires a string");
+        return nullptr;
+    }
+
+    Value textVal = m_interp->evaluate(*textNode);
+    if (!textVal.isString()) {
+        reportEvalError(call.loc, "text(): argument must be a string");
+        return nullptr;
+    }
+
+    double size = 10.0, spacing = 1.0, fnOvr = 0.0;
+    std::string font, halign = "left", valign = "baseline";
+    for (const auto& arg : call.args) {
+        if (arg.name == "size")         size    = m_interp->evalNumber(*arg.value);
+        else if (arg.name == "spacing") spacing = m_interp->evalNumber(*arg.value);
+        else if (arg.name == "$fn")     fnOvr   = m_interp->evalNumber(*arg.value);
+        else if (arg.name == "font") {
+            Value v = m_interp->evaluate(*arg.value);
+            if (v.isString()) font = v.asString();
+        } else if (arg.name == "halign") {
+            Value v = m_interp->evaluate(*arg.value);
+            if (v.isString()) halign = v.asString();
+        } else if (arg.name == "valign") {
+            Value v = m_interp->evaluate(*arg.value);
+            if (v.isString()) valign = v.asString();
+        }
+        // "text"/positional already consumed above; "direction"/"language"/
+        // "script": accepted, discarded (see class comment above).
+    }
+
+    std::filesystem::path fontPath;
+    if (font.empty()) {
+        fontPath = defaultFontPath();
+    } else {
+        fontPath = font;
+        if (fontPath.is_relative()) fontPath = baseDir / fontPath;
+    }
+
+    chisel::io::RawTextOutline outline = chisel::io::loadTextOutline(
+        fontPath, textVal.asString(), size, halign, valign, spacing, fnOvr);
+    if (!outline.error.empty()) {
+        reportEvalError(call.loc, "text(): " + outline.error);
+        return nullptr;
+    }
+    if (outline.points.empty()) return nullptr; // e.g. text("") — no geometry, not an error
+
+    CsgLeaf leaf;
+    leaf.kind       = CsgLeaf::Kind::Polygon2D;
+    leaf.transform  = xform;
+    leaf.color      = color;
+    leaf.polyPoints = std::move(outline.points);
+    leaf.polyPaths  = std::move(outline.paths);
     return makeLeaf(std::move(leaf));
 }
 
