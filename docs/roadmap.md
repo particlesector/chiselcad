@@ -1,5 +1,14 @@
 # ChiselCAD — Roadmap
 
+> **Correctness bugs are tracked separately, as individual GitHub Issues, not
+> as roadmap checkboxes.** A July 2026 audit across the lexer/parser,
+> interpreter, CSG evaluator, mesh generation, and file I/O/concurrency filed
+> 33 issues (5 Critical, 7 High, 14 Medium, 7 Low) — see
+> [GitHub Issues](https://github.com/particlesector/chiselcad/issues). The
+> Critical/High ones (silent-wrong-geometry and crash-class bugs) should be
+> treated as blocking for any "drop-in replacement" claim, ahead of the v3
+> feature work below.
+
 ## v1 — Core CSG ✓
 
 - [x] CMake + vcpkg build scaffold
@@ -8,16 +17,18 @@
 - [x] CSG tree evaluator (AST → CsgNode tree)
 - [x] Primitive tessellator (cube, sphere, cylinder)
 - [x] Manifold boolean evaluation (union, difference, intersection)
-- [x] Async eval pipeline with std::stop_token cancellation
-- [x] Preview render mode (color-coded primitives)
-- [x] Result render mode (evaluated mesh, Blinn-Phong shading)
-- [x] GPU mesh double-buffer swap
+- [x] Async eval pipeline (single background thread, generation-counter
+      cancellation — not `std::stop_token`; see `docs/architecture.md` §7)
+- [x] Result render mode (evaluated mesh, multi-light Blinn-Phong shading —
+      not PBR; SSAO not implemented; see `docs/architecture.md` §10)
 - [x] Arcball orbit camera
-- [x] File watcher + VS Code external editor integration
+- [x] File watcher + VS Code external editor integration (jump-to-line via
+      `code --goto`; not a full LSP)
 - [x] Diagnostics panel with clickable jump-to-line
 - [x] Binary STL export
-- [x] Embedded ImGuiColorTextEdit editor
-- [x] Mesh cache (LRU, hash-keyed by CSG subtree)
+- [x] Mesh cache (LRU, string-keyed by resolved params/transform — not a
+      precomputed hash; currently rebuilt per file save, not persisted
+      across reloads, see GitHub Issues)
 
 ## v2 — Language Expansion ✓
 
@@ -200,10 +211,21 @@ drop-in-replacement claim is made externally.
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)
 - [ ] AI code assistant panel (Claude API integration)
-- [ ] SSAO in result render mode
+- [ ] PBR material model + SSAO in result render mode (currently Blinn-Phong,
+      no SSAO — corrected from an earlier version of this roadmap that
+      claimed these as already shipped)
 - [ ] Deferred shading pipeline
 - [ ] Additional export formats: OBJ, 3MF
 - [ ] UNDO/REDO via CSG tree snapshots
+- [ ] Embedded in-app editor (`src/editor/EditorPanel.h` is currently a
+      reserved placeholder, not implemented or compiled — corrected from an
+      earlier version of this roadmap that claimed this as already shipped)
+- [ ] Preview render mode with operation-context color coding (union/
+      difference/intersection children tinted differently) — the current
+      renderer only has a Solid/Wireframe/SolidEdges toggle, not this
+- [ ] True double-buffered/lock-free GPU mesh swap (`GpuMesh` currently holds
+      a single buffer pair and waits for the device to go idle on each
+      upload — see `docs/architecture.md` §10)
 
 ## Future / Research
 
