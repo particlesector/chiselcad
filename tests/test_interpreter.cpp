@@ -308,6 +308,13 @@ TEST_CASE("Interp:recursive user function", "[interp][tier-a]") {
     REQUIRE(ctx.interp.evalNumber(call) == Approx(120.0));
 }
 
+TEST_CASE("Interp:unbound function parameter is undef, not the caller's same-named variable", "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs("x = 100; function f(x) = x;");
+    ExprNode call = makeCall("f", {});
+    // undef coerces to 0 via evalNumber, not the global x = 100.
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(0.0));
+}
+
 // ---------------------------------------------------------------------------
 // && / || short-circuit (#28) and recursion-depth guard (#29)
 // ---------------------------------------------------------------------------

@@ -587,7 +587,9 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
         }
     }
 
-    // Fill in defaults for parameters not supplied
+    // Fill in defaults for parameters not supplied; explicitly bind unbound
+    // ones to undef rather than leaving whatever value already occupied that
+    // name in the caller's/enclosing scope.
     for (std::size_t i = 0; i < def.params.size(); ++i) {
         const auto& param = def.params[i];
         bool alreadyBound = (i < posIdx);
@@ -595,13 +597,17 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
             for (const auto& arg : call.args)
                 if (arg.name == param.name) { alreadyBound = true; break; }
         }
-        if (!alreadyBound && param.defaultVal)
-            m_interp->setVar(param.name, m_interp->evaluate(*param.defaultVal));
+        if (!alreadyBound) {
+            if (param.defaultVal)
+                m_interp->setVar(param.name, m_interp->evaluate(*param.defaultVal));
+            else
+                m_interp->setVar(param.name, Value::undef());
+        }
     }
 
     // Expose $children count and push the children context for children() access
     m_interp->setVar("$children", Value::fromNumber(static_cast<double>(call.children.size())));
-    m_childrenStack.push_back(&call.children);
+    m_childrenStack.push_back({&call.children, savedEnv});
 
     // Evaluate the module body and collect geometry
     std::vector<CsgNodePtr> all;
@@ -634,11 +640,28 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
 CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
     if (m_childrenStack.empty()) return nullptr;
 
-    const auto* activeChildren = m_childrenStack.back();
+    ChildrenFrame frame = m_childrenStack.back();
+    const auto* activeChildren = frame.children;
     if (!activeChildren || activeChildren->empty()) return nullptr;
 
     // Pop current frame so nested children() calls see the parent context
     m_childrenStack.pop_back();
+
+    // children(i)'s index expression is written in the *callee* module body,
+    // so evaluate it in the callee's (still-active) scope, before switching
+    // to the caller's scope for the child AST nodes themselves.
+    std::optional<int> idx;
+    if (!call.args.empty()) {
+        Value idxVal = m_interp->evaluate(*call.args[0].value);
+        if (idxVal.isNumber()) idx = static_cast<int>(idxVal.asNumber());
+    }
+
+    // Children AST nodes were written at the call site and must be evaluated
+    // against the caller's variable bindings, not the callee module's own
+    // (still-active) parameter bindings. Swap to the caller's env for the
+    // duration of this evaluation, then restore the callee's env afterward.
+    auto calleeEnv = m_interp->snapshotEnv();
+    m_interp->restoreEnv(frame.callerEnv);
 
     std::vector<CsgNodePtr> all;
 
@@ -648,20 +671,17 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
             if (auto c = evalNode(*child, xform, color))
                 all.push_back(std::move(c));
         }
-    } else {
+    } else if (idx && *idx >= 0 && *idx < static_cast<int>(activeChildren->size())) {
         // children(i) — evaluate the i-th child
-        Value idxVal = m_interp->evaluate(*call.args[0].value);
-        if (idxVal.isNumber()) {
-            int idx = static_cast<int>(idxVal.asNumber());
-            if (idx >= 0 && idx < static_cast<int>(activeChildren->size())) {
-                if (auto c = evalNode(*(*activeChildren)[static_cast<std::size_t>(idx)], xform, color))
-                    all.push_back(std::move(c));
-            }
-        }
+        if (auto c = evalNode(*(*activeChildren)[static_cast<std::size_t>(*idx)], xform, color))
+            all.push_back(std::move(c));
     }
 
+    // Restore the callee's environment now that caller-scope evaluation is done
+    m_interp->restoreEnv(std::move(calleeEnv));
+
     // Restore the frame
-    m_childrenStack.push_back(activeChildren);
+    m_childrenStack.push_back(std::move(frame));
 
     if (all.empty())     return nullptr;
     if (all.size() == 1) return std::move(all[0]);
