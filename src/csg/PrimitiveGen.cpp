@@ -1,4 +1,5 @@
 #include "PrimitiveGen.h"
+#include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -200,14 +201,22 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
         // just omitting the bad triangle.
         const auto numVerts = static_cast<uint32_t>(leaf.meshPositions.size());
         mesh.triVerts.reserve(leaf.meshIndices.size());
+        std::size_t droppedTris = 0;
         for (std::size_t i = 0; i + 2 < leaf.meshIndices.size(); i += 3) {
             uint32_t a = leaf.meshIndices[i], b = leaf.meshIndices[i + 1], c = leaf.meshIndices[i + 2];
             if (a < numVerts && b < numVerts && c < numVerts) {
                 mesh.triVerts.push_back(a);
                 mesh.triVerts.push_back(b);
                 mesh.triVerts.push_back(c);
+            } else {
+                ++droppedTris;
             }
         }
+        // Summarized once per leaf rather than logged per-triangle, so a
+        // badly corrupted mesh doesn't flood the log.
+        if (droppedTris > 0)
+            spdlog::debug("[mesh] dropped {} triangle(s) referencing an out-of-range "
+                          "vertex index (mesh has {} vertices)", droppedTris, numVerts);
         return manifold::Manifold(mesh);
     }
     }
