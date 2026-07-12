@@ -45,3 +45,15 @@ TEST_CASE("StlLoader:binary file with zero triangles reports an error", "[stl-lo
     REQUIRE_FALSE(mesh.error.empty());
     REQUIRE(mesh.positions.empty());
 }
+
+TEST_CASE("StlLoader:corrupt triangle-count header is rejected, not a DoS", "[stl-loader][bugfix]") {
+    // corrupt_tricount.stl claims 0xFFFFFFFF triangles (~4 billion) in an 80-
+    // byte header on a file that is only 184 bytes total. Before the fix,
+    // loadBinary would attempt to loop triCount times and grow its vectors to
+    // tens/hundreds of GB before ever observing the stream's fail state; the
+    // fix rejects triCount against the actual file size up front, so this
+    // must return immediately with an error instead of hanging or OOMing.
+    auto mesh = loadStlRaw(fixture("import/corrupt_tricount.stl"));
+    REQUIRE_FALSE(mesh.error.empty());
+    REQUIRE(mesh.positions.empty());
+}

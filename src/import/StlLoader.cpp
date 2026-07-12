@@ -20,20 +20,26 @@ static RawStlMesh loadBinary(std::ifstream& f, uint32_t triCount) {
         glm::vec3 normal{};
         f.read(reinterpret_cast<char*>(&normal), 12);
 
-        for (int v = 0; v < 3; ++v) {
-            glm::vec3 pos{};
+        std::array<glm::vec3, 3> verts{};
+        for (auto& pos : verts)
             f.read(reinterpret_cast<char*>(&pos), 12);
-            out.indices.push_back(static_cast<uint32_t>(out.positions.size()));
-            out.positions.push_back(pos);
-            out.normals.push_back(normal);
-        }
+
         uint16_t attr = 0;
         f.read(reinterpret_cast<char*>(&attr), 2);
 
         // Caller already bounds triCount against the file's actual size, but
         // stop as soon as the stream fails regardless, rather than spinning
-        // through the remaining iterations appending zeroed geometry.
+        // through the remaining iterations appending zeroed geometry. Nothing
+        // is pushed to `out` until the full 50-byte triangle record has read
+        // successfully, so a truncated final triangle never leaves a partial
+        // (1- or 2-vertex) zeroed entry behind.
         if (!f) break;
+
+        for (const auto& pos : verts) {
+            out.indices.push_back(static_cast<uint32_t>(out.positions.size()));
+            out.positions.push_back(pos);
+            out.normals.push_back(normal);
+        }
     }
 
     if (!f)

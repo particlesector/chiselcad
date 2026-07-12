@@ -832,6 +832,38 @@ TEST_CASE("CsgEval:assert fail inside module", "[csg][tier-c]") {
 }
 
 // ---------------------------------------------------------------------------
+// Module recursion-depth guard (#30) — a module with no base case (or mutual
+// recursion) must not overflow the native call stack.
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:unbounded module recursion is capped, not a stack-overflow crash", "[csg][bugfix]") {
+    auto s = evaluate(
+        "module r() { r(); }"
+        "r();"
+    );
+    REQUIRE_FALSE(s.evalDiags.empty());
+    REQUIRE(s.evalDiags[0].level == chisel::lang::DiagLevel::Error);
+}
+
+TEST_CASE("CsgEval:mutually recursive modules with no base case are capped", "[csg][bugfix]") {
+    auto s = evaluate(
+        "module a() { b(); }"
+        "module b() { a(); }"
+        "a();"
+    );
+    REQUIRE_FALSE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:legitimate bounded module recursion still produces geometry", "[csg][bugfix]") {
+    // Depth well under the cap; the guard must not interfere with normal use.
+    auto s = evaluate(
+        "module nest(n) { if (n > 0) { translate([1,0,0]) nest(n-1); } else { cube(1); } }"
+        "nest(50);"
+    );
+    REQUIRE(s.evalDiags.empty());
+    REQUIRE(s.roots.size() == 1);
+}
+
+// ---------------------------------------------------------------------------
 // children() / $children
 // ---------------------------------------------------------------------------
 TEST_CASE("CsgEval:children basic passthrough", "[csg][tier-c]") {

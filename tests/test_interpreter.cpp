@@ -309,6 +309,50 @@ TEST_CASE("Interp:recursive user function", "[interp][tier-a]") {
 }
 
 // ---------------------------------------------------------------------------
+// && / || short-circuit (#28) and recursion-depth guard (#29)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:&& short-circuits and does not evaluate right operand", "[interp][bugfix]") {
+    // bad() has no base case; if `&&` evaluated both operands unconditionally,
+    // this would recurse until the native stack overflows and crash the test.
+    auto ctx = loadEnvWithFuncs(
+        "function bad(x) = bad(x);\n"
+        "function h(n) = (n > 0) && bad(n);");
+    ExprNode call = makeCall("h", {-1.0});
+    REQUIRE(bool(ctx.interp.evaluate(call)) == false);
+}
+
+TEST_CASE("Interp:|| short-circuits and does not evaluate right operand", "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs(
+        "function bad(x) = bad(x);\n"
+        "function h(n) = (n > 0) || bad(n);");
+    ExprNode call = makeCall("h", {1.0});
+    REQUIRE(bool(ctx.interp.evaluate(call)) == true);
+}
+
+TEST_CASE("Interp:|| short-circuit lets a guarded recursive function terminate", "[interp][bugfix]") {
+    // Idiomatic recursion guard: functions have no `if`, so `n<=0 || f(n-1)`
+    // relies entirely on `||` never evaluating its right side once n<=0.
+    auto ctx = loadEnvWithFuncs("function f(n) = n <= 0 || f(n-1);");
+    ExprNode call = makeCall("f", {3.0});
+    REQUIRE(bool(ctx.interp.evaluate(call)) == true);
+}
+
+TEST_CASE("Interp:unbounded function recursion returns undef instead of crashing", "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs("function f(x) = f(x+1);");
+    ExprNode call = makeCall("f", {0.0});
+    Value r = ctx.interp.evaluate(call);
+    REQUIRE(r.isUndef());
+}
+
+TEST_CASE("Interp:deep-but-bounded recursion still computes the correct result", "[interp][bugfix]") {
+    // Depth 1000 is well under the recursion cap; the guard must not affect
+    // legitimate recursive functions.
+    auto ctx = loadEnvWithFuncs("function sum(n) = n <= 0 ? 0 : n + sum(n - 1);");
+    ExprNode call = makeCall("sum", {1000.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(500500.0));
+}
+
+// ---------------------------------------------------------------------------
 // Tier A: concat
 // ---------------------------------------------------------------------------
 TEST_CASE("Interp:concat", "[interp][tier-a]") {
