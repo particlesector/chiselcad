@@ -441,8 +441,15 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, co
         else
             for (double v = start; v >= end - 1e-10 && (int)values.size() < kMaxIter; v += step)
                 values.push_back(Value::fromNumber(v));
+    } else if (node.range.isBracketedList) {
+        // Bracketed list literal `[a, b, c]` — each element is its own loop
+        // value, even if it evaluates to a vector (e.g. a point list
+        // `[[1,2,3], [4,5,6]]` must yield two vector iterations, not six
+        // scalars).
+        for (const auto& e : node.range.list)
+            values.push_back(m_interp->evaluate(*e));
     } else {
-        // List form — evaluate each element; if one evaluates to a Vector,
+        // Expression form `for (v = expr)` — expr must evaluate to a vector;
         // expand it so that `for (pt = pts)` iterates over pts' elements.
         for (const auto& e : node.range.list) {
             Value v = m_interp->evaluate(*e);

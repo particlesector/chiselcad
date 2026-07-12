@@ -251,14 +251,19 @@ Token Lexer::scanNumber(uint32_t startOffset) {
     // Integer part
     while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
 
-    // Fractional part
-    if (peek() == '.' && std::isdigit(static_cast<unsigned char>(peek(1)))) {
+    // Fractional part — OpenSCAD allows a trailing dot with no digits after
+    // it (e.g. `3.`), so only require a leading digit before the dot.
+    if (peek() == '.') {
         advance(); // consume '.'
         while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
     }
 
-    // Exponent
-    if (peek() == 'e' || peek() == 'E') {
+    // Exponent — only consume 'e'/'E' (and an optional sign) if at least one
+    // digit follows; otherwise leave them unconsumed so a bare 'e'/'-'/'+'
+    // isn't silently swallowed into a truncated number.
+    if ((peek() == 'e' || peek() == 'E') &&
+        (std::isdigit(static_cast<unsigned char>(peek(1))) ||
+         ((peek(1) == '+' || peek(1) == '-') && std::isdigit(static_cast<unsigned char>(peek(2)))))) {
         advance();
         if (peek() == '+' || peek() == '-') advance();
         while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
@@ -396,11 +401,15 @@ void Lexer::skipBlockComment() {
     // Unterminated block comment — not a fatal error, just note it
     SourceLoc loc;
     loc.line = m_line; loc.col = m_col; loc.offset = static_cast<uint32_t>(m_pos);
-    addError("unterminated block comment", loc);
+    addWarning("unterminated block comment", loc);
 }
 
 void Lexer::addError(const std::string& msg, SourceLoc loc) {
     m_diags.push_back({DiagLevel::Error, msg, loc, m_filePath});
+}
+
+void Lexer::addWarning(const std::string& msg, SourceLoc loc) {
+    m_diags.push_back({DiagLevel::Warning, msg, loc, m_filePath});
 }
 
 } // namespace chisel::lang

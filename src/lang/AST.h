@@ -112,6 +112,10 @@ struct ForRange {
     ExprPtr          step;            // range form — nullptr means step of 1
     ExprPtr          end;             // range form — required
     std::vector<ExprPtr> list;        // list form
+    // true when `list` came from a bracketed literal `[a, b, c]` (each entry
+    // is its own loop value, even if it evaluates to a vector); false when it
+    // came from `for (v = expr)` (single expr, expanded if it's a vector).
+    bool             isBracketedList = false;
 };
 
 struct ForNode {

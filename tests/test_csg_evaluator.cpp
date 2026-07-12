@@ -664,6 +664,32 @@ TEST_CASE("CsgEval:for empty range yields no geometry", "[csg]") {
     REQUIRE(s.roots.empty());
 }
 
+TEST_CASE("CsgEval:for over bracketed point-list literal iterates per-point, not flattened", "[csg]") {
+    // Regression test: a bracketed list literal whose own elements are
+    // vectors — the common point-list idiom — must yield one iteration per
+    // point (2), not one per flattened scalar (6).
+    auto s = evaluate("for (p = [[1,2,3], [4,5,6]]) translate(p) sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 2);
+    REQUIRE(asLeaf(b.children[0]).transform[3][0] == Approx(1.0f));
+    REQUIRE(asLeaf(b.children[0]).transform[3][1] == Approx(2.0f));
+    REQUIRE(asLeaf(b.children[0]).transform[3][2] == Approx(3.0f));
+    REQUIRE(asLeaf(b.children[1]).transform[3][0] == Approx(4.0f));
+    REQUIRE(asLeaf(b.children[1]).transform[3][1] == Approx(5.0f));
+    REQUIRE(asLeaf(b.children[1]).transform[3][2] == Approx(6.0f));
+}
+
+TEST_CASE("CsgEval:for over variable holding a point list still expands per-point", "[csg]") {
+    // Same point-list idiom via a variable (expression form) — must keep
+    // working the same way it did before the bracketed-list fix.
+    auto s = evaluate("pts = [[1,2,3], [4,5,6]]; for (p = pts) translate(p) sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 2);
+    REQUIRE(asLeaf(b.children[1]).transform[3][0] == Approx(4.0f));
+}
+
 // ---------------------------------------------------------------------------
 // User-defined modules
 // ---------------------------------------------------------------------------

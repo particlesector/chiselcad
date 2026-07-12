@@ -41,6 +41,7 @@ private:
     void  skipBlockComment();
 
     void addError(const std::string& msg, SourceLoc loc);
+    void addWarning(const std::string& msg, SourceLoc loc);
 
     // ---- state ------------------------------------------------------------
     std::string_view m_source;

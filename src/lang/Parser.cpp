@@ -5,6 +5,16 @@
 
 namespace chisel::lang {
 
+// A token can be used as a named-parameter name (e.g. `scale=`) if it's an
+// identifier or a keyword scanned as one (both carry non-empty `.text`).
+// Number/String literals also carry non-empty `.text` but must NOT be
+// accepted as param names — `cube(3=5)` should be a syntax error, not a
+// named param called "3".
+static bool isParamNameToken(const Token& t) {
+    return !t.text.empty() && t.kind != TokenKind::Number && t.kind != TokenKind::String &&
+           t.kind != TokenKind::SpecialVar;
+}
+
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
@@ -97,8 +107,9 @@ void Parser::parseStatement(ParseResult& result) {
     auto node = parseNode();
     if (node) {
         result.roots.push_back(std::move(node));
-    } else {
-        if (!atEnd()) advance(); // skip unrecognised token
+    } else if (!atEnd()) {
+        addError("unexpected token '" + peek().text + "' at statement position", peek().loc);
+        advance(); // skip unrecognised token
     }
     match(TokenKind::Semicolon);
 }
@@ -350,7 +361,18 @@ AstNodePtr Parser::parseColor() {
     while (!check(TokenKind::RParen) && !atEnd()) {
         const size_t prevPos = m_pos; // guard against zero-progress infinite loops
 
-        if (peek(1).kind == TokenKind::Equals && !peek().text.empty()) {
+        // Special variable override: $fn = expr — color() has no use for
+        // special vars, but accept and discard them (consistent with
+        // parseParamList/parseExtrusionParams) rather than erroring.
+        if (check(TokenKind::SpecialVar)) {
+            advance();
+            expect(TokenKind::Equals, "expected '=' after special variable");
+            parseExpr();
+            match(TokenKind::Comma);
+            continue;
+        }
+
+        if (peek(1).kind == TokenKind::Equals && isParamNameToken(peek())) {
             std::string name = peek().text;
             advance(); // name
             advance(); // =
@@ -431,6 +453,7 @@ AstNodePtr Parser::parseFor() {
         } else {
             // List form: [first, ...]
             node.range.isRange = false;
+            node.range.isBracketedList = true;
             node.range.list.push_back(std::move(first));
             while (match(TokenKind::Comma)) {
                 if (check(TokenKind::RBracket)) break;
@@ -501,8 +524,7 @@ void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
         }
 
         // Named param: any token (Ident or keyword like 'scale') followed by '='
-        if (peek(1).kind == TokenKind::Equals && !peek().text.empty() &&
-            !check(TokenKind::SpecialVar)) {
+        if (peek(1).kind == TokenKind::Equals && isParamNameToken(peek())) {
             std::string name = peek().text;
             advance(); // name token
             advance(); // =
@@ -916,7 +938,7 @@ void Parser::parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& para
             continue;
         }
         // Accept any token (Ident or keyword like 'scale') when followed by '='
-        if (peek(1).kind == TokenKind::Equals && !peek().text.empty()) {
+        if (peek(1).kind == TokenKind::Equals && isParamNameToken(peek())) {
             std::string name = advance().text;
             advance(); // consume '='
             params[name] = parseExpr();

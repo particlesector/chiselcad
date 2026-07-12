@@ -15,6 +15,9 @@ manifold::Manifold MeshCache::getOrCompute(const std::string& key,
 
     // Cache miss — compute, then insert
     manifold::Manifold mesh = compute();
+    if (m_maxEntries == 0)
+        return mesh; // caching disabled — nothing to insert or evict
+
     if (m_map.size() >= m_maxEntries)
         evictLru();
 

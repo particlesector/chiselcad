@@ -125,6 +125,48 @@ TEST_CASE("Lexer:leading dot float", "[lexer]") {
     REQUIRE(t[0].numberValue() == Approx(0.5));
 }
 
+TEST_CASE("Lexer:trailing dot float", "[lexer]") {
+    auto t = lex("3.");
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0].kind == TokenKind::Number);
+    REQUIRE(t[0].numberValue() == Approx(3.0));
+}
+
+TEST_CASE("Lexer:trailing dot float followed by comma", "[lexer]") {
+    auto t = kinds("[3., 1, 1]");
+    REQUIRE(t == std::vector{TokenKind::LBracket, TokenKind::Number, TokenKind::Comma,
+                              TokenKind::Number, TokenKind::Comma, TokenKind::Number,
+                              TokenKind::RBracket});
+}
+
+TEST_CASE("Lexer:exponent with digits", "[lexer]") {
+    auto t = lex("5e3");
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0].kind == TokenKind::Number);
+    REQUIRE(t[0].numberValue() == Approx(5000.0));
+}
+
+TEST_CASE("Lexer:exponent with signed digits", "[lexer]") {
+    auto t = lex("5e+3");
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0].numberValue() == Approx(5000.0));
+}
+
+TEST_CASE("Lexer:bare 'e' after number is not consumed as exponent", "[lexer]") {
+    // No digits follow 'e', so it must not be swallowed into the number —
+    // it should tokenize as a separate identifier.
+    auto t = kinds("5e;");
+    REQUIRE(t == std::vector{TokenKind::Number, TokenKind::Ident, TokenKind::Semicolon});
+}
+
+TEST_CASE("Lexer:exponent sign without digits does not eat a following operator", "[lexer]") {
+    // Previously `2e-h` would swallow the '-' into a truncated "2e-" number,
+    // silently dropping the intended binary minus. It must now tokenize as
+    // Number(2) Ident(e) Minus Ident(h).
+    auto t = kinds("2e-h");
+    REQUIRE(t == std::vector{TokenKind::Number, TokenKind::Ident, TokenKind::Minus, TokenKind::Ident});
+}
+
 TEST_CASE("Lexer:negative number", "[lexer]") {
     // '-' is now always a Minus token; negation is handled by the parser.
     auto t = lex("-1");
@@ -198,6 +240,14 @@ TEST_CASE("Lexer:block comment skipped", "[lexer]") {
     REQUIRE(kinds("/* comment */ cube") == std::vector{TokenKind::Cube});
     // "cu" and "be" are separate idents — the comment is stripped mid-token
     REQUIRE(kinds("cu/* mid */be") == (std::vector{TokenKind::Ident, TokenKind::Ident}));
+}
+
+TEST_CASE("Lexer:unterminated block comment is a warning, not an error", "[lexer]") {
+    Lexer lexer("cube /* never closed");
+    lexer.tokenize();
+    REQUIRE_FALSE(lexer.hasErrors());
+    REQUIRE(lexer.diagnostics().size() == 1);
+    REQUIRE(lexer.diagnostics()[0].level == DiagLevel::Warning);
 }
 
 // ---------------------------------------------------------------------------
