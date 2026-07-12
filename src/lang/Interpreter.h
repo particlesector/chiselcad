@@ -44,7 +44,15 @@ private:
     // Guards against unbounded recursion in user-defined functions (e.g. a
     // missing base case) blowing the native call stack. Silent cap, no
     // diagnostic, matching the existing `for`-loop kMaxIter convention.
-    static constexpr int kMaxCallDepth = 2000;
+    //
+    // Kept conservative rather than generous: each recursive evaluate() call
+    // carries several locals (snapshotEnv's unordered_map copy, arg vectors,
+    // Value copies), and the smallest stack we need to fit under is MSVC's
+    // default 1 MiB thread stack (Windows CI build has no custom /STACK).
+    // Empirically, an unguarded 1 MiB-stack GCC Release build overflows
+    // between depth 800-1000; this cap stays well under that with margin to
+    // spare for MSVC's likely-larger per-frame footprint.
+    static constexpr int kMaxCallDepth = 200;
     int m_callDepth = 0;
 
     Value callBuiltin(const std::string& name,

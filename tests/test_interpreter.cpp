@@ -345,11 +345,11 @@ TEST_CASE("Interp:unbounded function recursion returns undef instead of crashing
 }
 
 TEST_CASE("Interp:deep-but-bounded recursion still computes the correct result", "[interp][bugfix]") {
-    // Depth 1000 is well under the recursion cap; the guard must not affect
-    // legitimate recursive functions.
+    // Depth 100 is comfortably under kMaxCallDepth (200); the guard must not
+    // affect legitimate recursive functions at ordinary depths.
     auto ctx = loadEnvWithFuncs("function sum(n) = n <= 0 ? 0 : n + sum(n - 1);");
-    ExprNode call = makeCall("sum", {1000.0});
-    REQUIRE(ctx.interp.evalNumber(call) == Approx(500500.0));
+    ExprNode call = makeCall("sum", {100.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(5050.0));
 }
 
 // ---------------------------------------------------------------------------
