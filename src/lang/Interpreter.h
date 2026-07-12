@@ -41,6 +41,12 @@ private:
     std::unordered_map<std::string, Value>             m_env;
     std::unordered_map<std::string, const FunctionDef*> m_funcDefs;
 
+    // Guards against unbounded recursion in user-defined functions (e.g. a
+    // missing base case) blowing the native call stack. Silent cap, no
+    // diagnostic, matching the existing `for`-loop kMaxIter convention.
+    static constexpr int kMaxCallDepth = 2000;
+    int m_callDepth = 0;
+
     Value callBuiltin(const std::string& name,
                       const std::vector<Value>& args) const;
 };

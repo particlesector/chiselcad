@@ -50,6 +50,11 @@ private:
     // Non-owning pointer to the scene being built — valid during evaluate().
     CsgScene* m_scene = nullptr;
 
+    // Guards against unbounded recursion (missing base case, or mutual
+    // recursion between modules) blowing the native call stack.
+    static constexpr int kMaxModuleDepth = 2000;
+    int m_moduleDepth = 0;
+
     CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform, const ColorAttr& color);

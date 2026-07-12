@@ -77,6 +77,18 @@ Value Interpreter::evaluate(const ExprNode& expr) {
 
         // ---- Binary expression ----
         else if constexpr (std::is_same_v<T, BinaryExpr>) {
+            // && / || short-circuit: the right operand must not be evaluated
+            // when the left operand already determines the result (this is
+            // the only guard available in function bodies, which have no
+            // `if` statement, so recursive functions rely on it to terminate).
+            if (node.op == BinaryExpr::Op::And || node.op == BinaryExpr::Op::Or) {
+                Value lv = evaluate(*node.left);
+                bool lb = bool(lv);
+                if (node.op == BinaryExpr::Op::And && !lb) return Value::fromBool(false);
+                if (node.op == BinaryExpr::Op::Or  &&  lb) return Value::fromBool(true);
+                return Value::fromBool(bool(evaluate(*node.right)));
+            }
+
             Value lv = evaluate(*node.left);
             Value rv = evaluate(*node.right);
 
@@ -97,8 +109,8 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 case BinaryExpr::Op::Le:  return Value::fromBool(l <= r);
                 case BinaryExpr::Op::Gt:  return Value::fromBool(l >  r);
                 case BinaryExpr::Op::Ge:  return Value::fromBool(l >= r);
-                case BinaryExpr::Op::And: return Value::fromBool(l != 0.0 && r != 0.0);
-                case BinaryExpr::Op::Or:  return Value::fromBool(l != 0.0 || r != 0.0);
+                case BinaryExpr::Op::And:
+                case BinaryExpr::Op::Or:  break; // handled by the short-circuit branch above
                 }
             }
 
@@ -122,10 +134,8 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 return Value::fromVec(std::move(out));
             }
 
-            // Logical / mixed-type fallback
+            // Logical / mixed-type fallback (And/Or already handled above)
             switch (node.op) {
-            case BinaryExpr::Op::And: return Value::fromBool(bool(lv) && bool(rv));
-            case BinaryExpr::Op::Or:  return Value::fromBool(bool(lv) || bool(rv));
             case BinaryExpr::Op::Eq:  return Value::fromBool(valEqRec(lv, rv));
             case BinaryExpr::Op::Ne:  return Value::fromBool(!valEqRec(lv, rv));
             default: break;
@@ -208,6 +218,8 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             // Try user-defined function first
             auto fit = m_funcDefs.find(node.name);
             if (fit != m_funcDefs.end()) {
+                if (m_callDepth >= kMaxCallDepth) return Value::undef();
+
                 const FunctionDef& def = *fit->second;
                 auto savedEnv = snapshotEnv();
 
@@ -227,7 +239,9 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                     }
                 }
 
+                ++m_callDepth;
                 Value result = evaluate(*def.body);
+                --m_callDepth;
                 restoreEnv(std::move(savedEnv));
                 return result;
             }

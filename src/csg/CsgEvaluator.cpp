@@ -558,6 +558,17 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     auto it = m_moduleDefs.find(call.name);
     if (it == m_moduleDefs.end()) return nullptr; // undefined module
 
+    if (m_moduleDepth >= kMaxModuleDepth) {
+        if (m_scene) {
+            lang::Diagnostic d;
+            d.level   = lang::DiagLevel::Error;
+            d.loc     = call.loc;
+            d.message = "module recursion limit exceeded calling '" + call.name + "'";
+            m_scene->evalDiags.push_back(std::move(d));
+        }
+        return nullptr;
+    }
+
     const ModuleDef& def = *it->second;
 
     // Snapshot the interpreter env so we can restore it after the call
@@ -594,10 +605,12 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
 
     // Evaluate the module body and collect geometry
     std::vector<CsgNodePtr> all;
+    ++m_moduleDepth;
     for (const auto& child : def.body) {
         if (auto c = evalNode(*child, xform, color))
             all.push_back(std::move(c));
     }
+    --m_moduleDepth;
 
     m_childrenStack.pop_back();
     // Restore the caller's environment

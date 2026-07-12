@@ -12,9 +12,9 @@ namespace chisel::io {
 // ---------------------------------------------------------------------------
 static RawStlMesh loadBinary(std::ifstream& f, uint32_t triCount) {
     RawStlMesh out;
-    out.positions.reserve(triCount * 3);
-    out.normals.reserve(triCount * 3);
-    out.indices.reserve(triCount * 3);
+    out.positions.reserve(static_cast<std::size_t>(triCount) * 3);
+    out.normals.reserve(static_cast<std::size_t>(triCount) * 3);
+    out.indices.reserve(static_cast<std::size_t>(triCount) * 3);
 
     for (uint32_t i = 0; i < triCount; ++i) {
         glm::vec3 normal{};
@@ -29,6 +29,11 @@ static RawStlMesh loadBinary(std::ifstream& f, uint32_t triCount) {
         }
         uint16_t attr = 0;
         f.read(reinterpret_cast<char*>(&attr), 2);
+
+        // Caller already bounds triCount against the file's actual size, but
+        // stop as soon as the stream fails regardless, rather than spinning
+        // through the remaining iterations appending zeroed geometry.
+        if (!f) break;
     }
 
     if (!f)
@@ -98,16 +103,29 @@ RawStlMesh loadStlRaw(const std::filesystem::path& path) {
     if (!f)
         return {{}, {}, {}, "File too small to be a valid STL: " + path.string()};
 
-    // ASCII STL starts with "solid"; binary may too, so also check expected size
-    bool looksAscii = (std::strncmp(header, "solid", 5) == 0);
-    if (looksAscii) {
-        // Verify by checking if file size matches the binary formula
+    // Each binary triangle record is 12 (normal) + 3*12 (vertices) + 2 (attr)
+    // bytes. Compute in a 64-bit type throughout — triCount is attacker/
+    // corruption-controlled and 32-bit `triCount * 50` overflows above
+    // ~85.9M triangles, which would otherwise misclassify a corrupt file's
+    // true size (used below both for the ASCII/binary heuristic and to
+    // reject a bogus triangle count before ever looping over it).
+    constexpr std::streamoff kHeaderSize   = 84;
+    constexpr std::streamoff kTriRecordSize = 50;
+    std::streamoff expectedBinary =
+        kHeaderSize + static_cast<std::streamoff>(triCount) * kTriRecordSize;
+
+    auto fileSize = [&] {
         auto curPos = f.tellg();
         f.seekg(0, std::ios::end);
-        auto fileSize = f.tellg();
-        auto expectedBinary = static_cast<std::streamoff>(80 + 4 + triCount * 50);
+        auto size = f.tellg();
+        f.seekg(curPos);
+        return size;
+    }();
+
+    // ASCII STL starts with "solid"; binary may too, so also check expected size
+    bool looksAscii = (std::strncmp(header, "solid", 5) == 0);
+    if (looksAscii)
         looksAscii = (fileSize != expectedBinary);
-    }
 
     if (looksAscii) {
         // Re-open as text for ASCII parsing
@@ -117,6 +135,14 @@ RawStlMesh loadStlRaw(const std::filesystem::path& path) {
             return {{}, {}, {}, "Cannot re-open file for ASCII parsing: " + path.string()};
         return loadAscii(tf);
     }
+
+    // Reject a triangle count the file can't actually hold (corrupted/
+    // truncated file, or a deliberately crafted header) before loadBinary
+    // ever allocates or reads based on it — otherwise a bogus triCount near
+    // UINT32_MAX drives ~4 billion loop iterations and tens of GB of vector
+    // growth before the stream's fail state is ever observed.
+    if (expectedBinary > fileSize)
+        return {{}, {}, {}, "Binary STL triangle count exceeds file size: " + path.string()};
 
     return loadBinary(f, triCount);
 }
