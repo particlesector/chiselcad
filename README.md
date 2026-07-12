@@ -13,11 +13,23 @@
 
 ChiselCAD is an open-source 3D CAD modeler for engineers and makers who prefer
 code-driven design. It reads OpenSCAD-syntax `.scad` files and renders them with
-a modern Vulkan renderer — giving you a dramatically faster and better-looking
-result than legacy OpenGL-based tools.
+a modern Vulkan renderer — giving you a dramatically faster result than
+legacy OpenGL-based tools.
 
-It is **not** a drop-in OpenSCAD replacement. It targets the core CSG workflow —
-primitives, booleans, and transforms — and does that subset extremely well.
+It implements most of the OpenSCAD language today — primitives, booleans,
+transforms, control flow, user-defined functions/modules, 2D extrusion,
+`color()`/`offset()`/`projection()`, and file I/O (`include`/`use`/`import`/
+`surface`/`text`). See [Supported Language](#supported-language) below for the
+full breakdown and the handful of constructs still missing.
+
+It is **not yet** a verified drop-in replacement, for two reasons: a few
+language constructs aren't implemented yet (tracked in
+[docs/roadmap.md](docs/roadmap.md), v3), and an ongoing correctness audit has
+found real bugs — including some common primitive argument forms that
+currently produce silently wrong geometry. These are tracked individually in
+[GitHub Issues](https://github.com/particlesector/chiselcad/issues); until the
+Critical/High-severity ones are resolved, verify output geometry rather than
+assuming full compatibility.
 
 ```scad
 difference() {
@@ -33,35 +45,49 @@ difference() {
 >
 > | | OpenSCAD | ChiselCAD |
 > |---|---|---|
-> | Renderer | Legacy OpenGL + OpenCSG | Vulkan, PBR shading, SSAO |
+> | Renderer | Legacy OpenGL + OpenCSG | Vulkan, multi-light Blinn-Phong + rim lighting (PBR/SSAO planned) |
 > | Boolean backend | CGAL (slow) / Manifold (experimental) | Manifold (always on) |
 > | UI responsiveness | Blocks on F6 render | Async — UI never freezes |
-> | Editor | Embedded QScintilla | VS Code + LSP + file watch |
+> | Editor | Embedded QScintilla | External (VS Code) + file watch + diagnostics panel; embedded editor and LSP planned |
 > | AI assistance | None | Claude integration (planned) |
-> | Language coverage | Full OpenSCAD | Core CSG subset (v1) |
+> | Language coverage | Full OpenSCAD | Broad subset — most of the language; a few constructs + open correctness bugs remain (see below) |
 
 ---
 
 ## Features
 
-- **Vulkan renderer** with PBR shading and SSAO — models look like real objects
+- **Vulkan renderer** with multi-light Blinn-Phong shading, rim lighting, and ACES tonemapping (PBR + SSAO on the roadmap)
 - **Async dual-phase preview** — instant primitive display while booleans evaluate in the background
 - **[Manifold](https://github.com/elalish/manifold) boolean backend** — 100–1000× faster than CGAL
-- **OpenSCAD-syntax compatible** — `.scad` files work as-is for the supported subset
+- **OpenSCAD-syntax compatible** — `.scad` files work as-is for most of the language (see below)
 - **VS Code integration** — edit in VS Code, ChiselCAD hot-reloads on save with live error feedback
 - **ImGui interface** — lightweight, dockable, fast
 - **Cross-platform** — Windows and Linux (macOS planned)
 - **C++20** throughout
 
-### Supported Language (v1)
+### Supported Language
 
 | Category | Supported |
 |---|---|
-| Primitives | `cube`, `sphere`, `cylinder` |
-| Booleans | `union()`, `difference()`, `intersection()` |
-| Transforms | `translate()`, `rotate()`, `scale()`, `mirror()` |
-| Quality | `$fn`, `$fs`, `$fa` |
+| Primitives (3D) | `cube`, `sphere`, `cylinder` |
+| Primitives (2D) | `square`, `circle`, `polygon`, `text()` |
+| Booleans / CSG | `union()`, `difference()`, `intersection()`, `hull()`, `minkowski()` |
+| Transforms | `translate()`, `rotate()`, `scale()`, `mirror()`, `multmatrix()`, `color()` |
+| Control flow | `for`, `if`/`else`, `let`, ternary `?:`, ranges in `for` |
+| Functions & modules | user-defined `function`/`module`, `children()`/`$children`, named + default args |
+| Built-ins | full math set, string/vector helpers (`concat`, `str`, `len`, `lookup`, `rands`, ...) |
+| 2D → 3D | `linear_extrude`, `rotate_extrude`, `offset()`, `projection()` |
+| File I/O | `include <>`, `use <>`, `import()` (STL), `surface()` (text `.dat`) |
+| Diagnostics | `echo()`, `assert()` |
+| Quality | `$fn`, `$fs`, `$fa` (global and per-node) |
 | Export | Binary STL |
+
+**Known gaps** (tracked as [docs/roadmap.md](docs/roadmap.md) v3): CSG modifier
+characters `# % ! *`, list comprehensions and `each`, `polyhedron()`,
+`resize()`, general range-literal expressions outside `for`, nested
+extrusion, and import/export formats beyond STL. See the roadmap for details
+and the [issue tracker](https://github.com/particlesector/chiselcad/issues)
+for known correctness bugs currently being fixed.
 
 ---
 
@@ -127,8 +153,13 @@ A full LSP extension for VS Code is planned (see [docs/roadmap.md](docs/roadmap.
 
 ## Project Status
 
-ChiselCAD is in **early development**. The architecture is designed, the test model
-is ready, and the build scaffold is in place. Core subsystems are being implemented.
+ChiselCAD is in **active development**. The core rendering pipeline, CSG
+evaluator, and most of the OpenSCAD language are implemented and working
+(see [Supported Language](#supported-language) above). Current focus is
+closing the remaining language gaps and fixing correctness bugs found by an
+ongoing audit — both tracked in [docs/roadmap.md](docs/roadmap.md) and
+[GitHub Issues](https://github.com/particlesector/chiselcad/issues) — before
+making any drop-in-replacement claim.
 
 If you want to follow along or contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
