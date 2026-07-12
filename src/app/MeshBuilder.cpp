@@ -270,11 +270,20 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     }
     result->elapsedMs = elapsedMs();
 
-    m_elapsedMs        = result->elapsedMs;
-    m_lastVolume       = result->volume;
-    m_lastSurfaceArea  = result->surfaceArea;
-    m_lastTriCount     = result->triCount;
-    m_lastVertCount    = result->vertCount;
+    // A newer generation may have been requested while the above ran (no gen
+    // check gates this final block) — skip publishing stats/phase for a
+    // superseded generation so the on-screen overlay never shows generation
+    // N's numbers after generation N+1 has already been queued. The mesh
+    // geometry itself doesn't need a check here: poll() already discards
+    // m_pendingResult when m_pendingGen != m_currentGen.
+    if (gen == m_currentGen.load()) {
+        m_elapsedMs        = result->elapsedMs;
+        m_lastVolume       = result->volume;
+        m_lastSurfaceArea  = result->surfaceArea;
+        m_lastTriCount     = result->triCount;
+        m_lastVertCount    = result->vertCount;
+        m_phase            = BuildPhase::Done;
+    }
 
     auto fmtN = [](uint32_t n) {
         std::string s = std::to_string(n);
@@ -285,7 +294,6 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     spdlog::info("[mesh] Render: {:.3f}s  |  {} facets  |  {} vertices  |  volume: {:.4f}  |  area: {:.4f}",
         result->elapsedMs / 1000.0, fmtN(result->triCount), fmtN(result->vertCount),
         result->volume, result->surfaceArea);
-    m_phase = BuildPhase::Done;
 
     {
         std::lock_guard<std::mutex> lk(m_resultMutex);
