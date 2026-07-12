@@ -43,9 +43,23 @@ private:
     // Module definitions indexed by name — populated at evaluate() entry.
     std::unordered_map<std::string, const chisel::lang::ModuleDef*> m_moduleDefs;
 
-    // Stack of children vectors for children() access inside module bodies.
+    // Stack frame for children() access inside module bodies: the children
+    // AST nodes from the call site, plus a snapshot of the *caller's*
+    // variable environment (taken before the callee's own params were
+    // bound) so children() evaluates that AST using caller-visible
+    // variables rather than the callee's parameter bindings.
+    //
+    // callerEnv points at evalModuleCall's local `savedEnv`, which is
+    // declared before this frame is pushed and not touched again until
+    // after the matching pop — its lifetime strictly encloses the frame's
+    // time on the stack, so a pointer avoids an env-map copy on every
+    // module call (only children(), when actually invoked, pays for a copy).
+    struct ChildrenFrame {
+        const std::vector<chisel::lang::AstNodePtr>* children;
+        const std::unordered_map<std::string, chisel::lang::Value>* callerEnv;
+    };
     // Each user module call pushes its children; evalChildren pops/re-pushes for nesting.
-    std::vector<const std::vector<chisel::lang::AstNodePtr>*> m_childrenStack;
+    std::vector<ChildrenFrame> m_childrenStack;
 
     // Non-owning pointer to the scene being built — valid during evaluate().
     CsgScene* m_scene = nullptr;

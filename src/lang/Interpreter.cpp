@@ -235,7 +235,8 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                             setVar(param.name, posArgs[posIdx++]);
                         else if (param.defaultVal)
                             setVar(param.name, evaluate(*param.defaultVal));
-                        // else: unbound → undef (already the case in a fresh env)
+                        else
+                            setVar(param.name, Value::undef()); // unbound → undef, not the caller's same-named variable
                     }
                 }
 

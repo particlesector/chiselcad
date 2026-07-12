@@ -724,6 +724,29 @@ TEST_CASE("CsgEval:module call restores caller env", "[csg]") {
     REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(99.0));
 }
 
+TEST_CASE("CsgEval:unbound module parameter is undef, not the caller's/global same-named variable", "[csg][bugfix]") {
+    auto s = evaluate(
+        "r = 42;"
+        "module ball(r) { sphere(r=r); }"
+        "ball();"
+    );
+    REQUIRE(s.roots.size() == 1);
+    // undef coerces to 0, not the enclosing global r = 42.
+    REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(0.0));
+}
+
+TEST_CASE("CsgEval:children() evaluates caller-authored geometry in the caller's scope, not the callee's params", "[csg][bugfix]") {
+    auto s = evaluate(
+        "r = 100;"
+        "module container(r) { children(); }"
+        "container(5) sphere(r=r);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    // sphere(r=r) was written at the call site, so r must resolve to the
+    // caller's r = 100, not container's own parameter r = 5.
+    REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(100.0));
+}
+
 TEST_CASE("CsgEval:undefined module call yields no geometry", "[csg]") {
     // unknown_module() is not defined — should silently produce nothing
     Lexer  lexer("unknown_module(5);");
