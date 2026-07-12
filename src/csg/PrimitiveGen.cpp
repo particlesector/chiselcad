@@ -190,7 +190,24 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
         if (!leaf.meshPositions.empty())
             std::memcpy(mesh.vertProperties.data(), leaf.meshPositions.data(),
                         leaf.meshPositions.size() * sizeof(glm::vec3));
-        mesh.triVerts = leaf.meshIndices;
+
+        // Defensive bounds check: today's loaders (StlLoader/SurfaceLoader)
+        // always emit self-consistent indices, but this is the last point
+        // before an out-of-range index would be handed to Manifold's MeshGL
+        // constructor as raw, unchecked vertex offsets. Drop (rather than
+        // clamp) any triangle referencing an out-of-range vertex, since
+        // clamping would silently splice in an unrelated vertex instead of
+        // just omitting the bad triangle.
+        const auto numVerts = static_cast<uint32_t>(leaf.meshPositions.size());
+        mesh.triVerts.reserve(leaf.meshIndices.size());
+        for (std::size_t i = 0; i + 2 < leaf.meshIndices.size(); i += 3) {
+            uint32_t a = leaf.meshIndices[i], b = leaf.meshIndices[i + 1], c = leaf.meshIndices[i + 2];
+            if (a < numVerts && b < numVerts && c < numVerts) {
+                mesh.triVerts.push_back(a);
+                mesh.triVerts.push_back(b);
+                mesh.triVerts.push_back(c);
+            }
+        }
         return manifold::Manifold(mesh);
     }
     }

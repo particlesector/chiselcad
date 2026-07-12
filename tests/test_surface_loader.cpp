@@ -98,3 +98,15 @@ TEST_CASE("SurfaceLoader:a comments-only file reports an error", "[surface-loade
     auto mesh = loadSurfaceMesh(fixture("surface/empty.dat"), false, false);
     REQUIRE_FALSE(mesh.error.empty());
 }
+
+TEST_CASE("SurfaceLoader:a non-numeric token mid-row reports an error instead of truncating", "[surface-loader][tier-e]") {
+    auto mesh = loadSurfaceMesh(fixture("surface/malformed_token.dat"), false, false);
+    REQUIRE_FALSE(mesh.error.empty());
+}
+
+TEST_CASE("SurfaceLoader:a non-numeric token in the very first data row still reports an error", "[surface-loader][tier-e]") {
+    // Before the fix, a malformed first row silently set expectedCols from
+    // the truncated read count and the file "loaded" with corrupted data.
+    auto mesh = loadSurfaceMesh(fixture("surface/malformed_first_row.dat"), false, false);
+    REQUIRE_FALSE(mesh.error.empty());
+}

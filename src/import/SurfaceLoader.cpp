@@ -27,6 +27,14 @@ HeightGrid parseGrid(std::ifstream& f) {
         std::vector<double> row;
         double v;
         while (ss >> v) row.push_back(v);
+        // A failure that isn't plain end-of-stream means extraction stopped
+        // on a non-numeric token partway through the row (e.g. "1 2 abc 4")
+        // rather than having cleanly consumed every token — report it
+        // instead of silently truncating the row to whatever was read so far.
+        if (ss.fail() && !ss.eof()) {
+            grid.error = "malformed value in data row " + std::to_string(grid.rows.size() + 1);
+            return grid;
+        }
         if (row.empty()) continue; // blank or comment-only line
 
         if (grid.rows.empty()) {

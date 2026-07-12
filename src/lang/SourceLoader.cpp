@@ -1,6 +1,7 @@
 #include "SourceLoader.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "util/PathUtf8.h"
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -118,7 +119,7 @@ private:
         size_t rootsOffset = 0, assignOffset = 0, moduleOffset = 0, functionOffset = 0;
 
         for (const auto& inc : includes) {
-            std::filesystem::path childPath = baseDir / inc.path;
+            std::filesystem::path childPath = baseDir / chisel::util::utf8ToPath(inc.path);
             ParseResult child = loadFile(childPath, /*isRoot=*/false, inc.loc, selfPathStr);
 
             // Sizes must be captured before spliceAt moves out of `child` —

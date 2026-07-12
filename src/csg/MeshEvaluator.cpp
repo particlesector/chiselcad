@@ -13,8 +13,12 @@ namespace chisel::csg {
 // Cache key helpers
 // ---------------------------------------------------------------------------
 static std::string fmtFloat(double v) {
+    // %.17g is round-trip-safe for a double (17 significant digits is the
+    // maximum needed to uniquely recover any double from its decimal text)
+    // — %.6g previously used here could give two distinct values the same
+    // cache key, causing MeshCache to return the wrong cached mesh.
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.6g", v);
+    std::snprintf(buf, sizeof(buf), "%.17g", v);
     return buf;
 }
 

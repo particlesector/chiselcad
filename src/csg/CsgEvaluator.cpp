@@ -2,6 +2,7 @@
 #include "import/StlLoader.h"
 #include "import/SurfaceLoader.h"
 #include "import/TextLoader.h"
+#include "util/PathUtf8.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cctype>
 #include <cmath>
@@ -838,7 +839,7 @@ std::optional<std::filesystem::path> CsgEvaluator::resolveFilePathArg(
         return std::nullopt;
     }
 
-    std::filesystem::path filePath(pathVal.asString());
+    std::filesystem::path filePath = chisel::util::utf8ToPath(pathVal.asString());
     if (filePath.is_relative())
         filePath = baseDir / filePath;
     return filePath;
@@ -982,7 +983,7 @@ CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& x
     if (font.empty()) {
         fontPath = defaultFontPath();
     } else {
-        fontPath = font;
+        fontPath = chisel::util::utf8ToPath(font);
         if (fontPath.is_relative()) fontPath = baseDir / fontPath;
     }
 
