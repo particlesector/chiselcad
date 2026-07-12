@@ -110,23 +110,61 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
     leaf.color     = color;
 
     switch (p.kind) {
-    // ---- 3-D primitives: resolve all params as scalars --------------------
-    case PrimitiveNode::Kind::Cube:
+    // ---- cube([w,h,d]) / cube(s) / cube(size=[w,h,d]) / cube(size=s) ------
+    case PrimitiveNode::Kind::Cube: {
         leaf.kind = CsgLeaf::Kind::Cube;
-        for (const auto& [name, exprPtr] : p.params)
+        // Resolve scalar params ($fn, etc.) — skip "size"/"_pos0", which may
+        // be vectors, so they aren't coerced to 0 by the blanket evalNumber.
+        for (const auto& [name, exprPtr] : p.params) {
+            if (name == "size" || name == "_pos0") continue;
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        }
+        // Named "size=" takes priority; otherwise a bare positional arg
+        // (cube(5) or cube(v) where v is a vector variable) is "size".
+        const ExprNode* sizeExpr = p.params.count("size") ? p.params.at("size").get()
+                                  : p.params.count("_pos0") ? p.params.at("_pos0").get()
+                                  : nullptr;
+        if (sizeExpr) {
+            Value sv = m_interp->evaluate(*sizeExpr);
+            if (sv.isNumber()) {
+                leaf.params["x"] = leaf.params["y"] = leaf.params["z"] = sv.asNumber();
+            } else if (sv.isVector()) {
+                const auto& vec = sv.asVec();
+                if (vec.size() >= 1 && vec[0].isNumber()) leaf.params["x"] = vec[0].asNumber();
+                if (vec.size() >= 2 && vec[1].isNumber()) leaf.params["y"] = vec[1].asNumber();
+                if (vec.size() >= 3 && vec[2].isNumber()) leaf.params["z"] = vec[2].asNumber();
+            }
+        }
         break;
+    }
 
+    // ---- sphere(r) / sphere(d) ---------------------------------------------
     case PrimitiveNode::Kind::Sphere:
         leaf.kind = CsgLeaf::Kind::Sphere;
         for (const auto& [name, exprPtr] : p.params)
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        // diameter → radius
+        if (!leaf.params.count("r") && leaf.params.count("d"))
+            leaf.params["r"] = leaf.params["d"] * 0.5;
         break;
 
+    // ---- cylinder(h, r) / cylinder(h=, r=/r1=/r2=/d=/d1=/d2=) --------------
     case PrimitiveNode::Kind::Cylinder:
         leaf.kind = CsgLeaf::Kind::Cylinder;
         for (const auto& [name, exprPtr] : p.params)
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
+        // Bare positional args: cylinder(h) / cylinder(h, r)
+        if (!leaf.params.count("h") && leaf.params.count("_pos0"))
+            leaf.params["h"] = leaf.params["_pos0"];
+        if (!leaf.params.count("r") && leaf.params.count("_pos1"))
+            leaf.params["r"] = leaf.params["_pos1"];
+        // diameter → radius conversions
+        if (!leaf.params.count("r")  && leaf.params.count("d"))
+            leaf.params["r"]  = leaf.params["d"]  * 0.5;
+        if (!leaf.params.count("r1") && leaf.params.count("d1"))
+            leaf.params["r1"] = leaf.params["d1"] * 0.5;
+        if (!leaf.params.count("r2") && leaf.params.count("d2"))
+            leaf.params["r2"] = leaf.params["d2"] * 0.5;
         break;
 
     // ---- square([w,h]) / square(s) / square(size=[w,h]) ------------------

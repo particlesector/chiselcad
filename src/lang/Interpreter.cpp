@@ -9,6 +9,24 @@ static constexpr double kRad2Deg = 180.0 / 3.14159265358979323846;
 
 namespace chisel::lang {
 
+// Structural equality used by the `==`/`!=` fallback for non-numeric,
+// non-bool types (string content, and element-wise vector comparison).
+static bool valEqRec(const Value& a, const Value& b) {
+    if (a.tag != b.tag) return false;
+    if (a.isNumber()) return a.asNumber() == b.asNumber();
+    if (a.isBool())   return a.asBool()   == b.asBool();
+    if (a.isString()) return a.asString() == b.asString();
+    if (a.isVector()) {
+        const auto& av = a.asVec();
+        const auto& bv = b.asVec();
+        if (av.size() != bv.size()) return false;
+        for (std::size_t i = 0; i < av.size(); ++i)
+            if (!valEqRec(av[i], bv[i])) return false;
+        return true;
+    }
+    return a.isUndef(); // both Undef, since tags already matched
+}
+
 // ---------------------------------------------------------------------------
 // Environment loading
 // ---------------------------------------------------------------------------
@@ -89,10 +107,10 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 (node.op == BinaryExpr::Op::Add || node.op == BinaryExpr::Op::Sub)) {
                 const auto& lv_ = lv.asVec();
                 const auto& rv_ = rv.asVec();
-                std::size_t n = std::min(lv_.size(), rv_.size());
+                if (lv_.size() != rv_.size()) return Value::undef();
                 std::vector<Value> out;
-                out.reserve(n);
-                for (std::size_t i = 0; i < n; ++i) {
+                out.reserve(lv_.size());
+                for (std::size_t i = 0; i < lv_.size(); ++i) {
                     if (lv_[i].isNumber() && rv_[i].isNumber()) {
                         double l = lv_[i].asNumber(), r = rv_[i].asNumber();
                         out.push_back(Value::fromNumber(
@@ -105,18 +123,11 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             }
 
             // Logical / mixed-type fallback
-            auto valEq = [](const Value& a, const Value& b) -> bool {
-                if (a.tag != b.tag) return false;
-                if (a.isNumber()) return a.asNumber() == b.asNumber();
-                if (a.isBool())   return a.asBool()   == b.asBool();
-                if (a.isUndef())  return true;
-                return false;
-            };
             switch (node.op) {
             case BinaryExpr::Op::And: return Value::fromBool(bool(lv) && bool(rv));
             case BinaryExpr::Op::Or:  return Value::fromBool(bool(lv) || bool(rv));
-            case BinaryExpr::Op::Eq:  return Value::fromBool(valEq(lv, rv));
-            case BinaryExpr::Op::Ne:  return Value::fromBool(!valEq(lv, rv));
+            case BinaryExpr::Op::Eq:  return Value::fromBool(valEqRec(lv, rv));
+            case BinaryExpr::Op::Ne:  return Value::fromBool(!valEqRec(lv, rv));
             default: break;
             }
             return Value::undef();
@@ -153,8 +164,11 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             Value target = evaluate(*node.target);
             Value idx    = evaluate(*node.index);
             if (!idx.isNumber()) return Value::undef();
-            int i = static_cast<int>(idx.asNumber());
-            if (i < 0) return Value::undef();
+            double idxNum = idx.asNumber();
+            if (!std::isfinite(idxNum) || idxNum < 0 ||
+                idxNum > static_cast<double>(std::numeric_limits<int>::max()))
+                return Value::undef();
+            int i = static_cast<int>(idxNum);
             if (target.isVector()) {
                 if (static_cast<std::size_t>(i) >= target.asVec().size())
                     return Value::undef();
@@ -274,15 +288,22 @@ Value Interpreter::callBuiltin(const std::string& name,
     };
 
     // ---- Math ----
+    // Wrap a possibly domain-erroring math result: NaN/Inf becomes undef,
+    // matching the Div/Mod convention of returning undef on error rather
+    // than letting NaN/Inf silently poison downstream arithmetic.
+    auto finite = [](double v) -> Value {
+        return std::isfinite(v) ? Value::fromNumber(v) : Value::undef();
+    };
+
     if (name == "abs")   return args.size() >= 1 ? Value::fromNumber(std::abs(num(0)))  : Value::undef();
-    if (name == "sqrt")  return args.size() >= 1 ? Value::fromNumber(std::sqrt(num(0))) : Value::undef();
-    if (name == "pow")   return args.size() >= 2 ? Value::fromNumber(std::pow(num(0), num(1))) : Value::undef();
+    if (name == "sqrt")  return args.size() >= 1 ? finite(std::sqrt(num(0))) : Value::undef();
+    if (name == "pow")   return args.size() >= 2 ? finite(std::pow(num(0), num(1))) : Value::undef();
     if (name == "floor") return args.size() >= 1 ? Value::fromNumber(std::floor(num(0))) : Value::undef();
     if (name == "ceil")  return args.size() >= 1 ? Value::fromNumber(std::ceil(num(0)))  : Value::undef();
     if (name == "round") return args.size() >= 1 ? Value::fromNumber(std::round(num(0))) : Value::undef();
-    if (name == "exp")   return args.size() >= 1 ? Value::fromNumber(std::exp(num(0)))  : Value::undef();
-    if (name == "log")   return args.size() >= 1 ? Value::fromNumber(std::log(num(0)))  : Value::undef();
-    if (name == "log10") return args.size() >= 1 ? Value::fromNumber(std::log10(num(0))): Value::undef();
+    if (name == "exp")   return args.size() >= 1 ? finite(std::exp(num(0)))  : Value::undef();
+    if (name == "log")   return args.size() >= 1 ? finite(std::log(num(0)))  : Value::undef();
+    if (name == "log10") return args.size() >= 1 ? finite(std::log10(num(0))): Value::undef();
     if (name == "sign")  return args.size() >= 1
                                ? Value::fromNumber(num(0) > 0.0 ? 1.0 : num(0) < 0.0 ? -1.0 : 0.0)
                                : Value::undef();
@@ -291,35 +312,38 @@ Value Interpreter::callBuiltin(const std::string& name,
     if (name == "sin")   return args.size() >= 1 ? Value::fromNumber(std::sin(num(0) * kDeg2Rad)) : Value::undef();
     if (name == "cos")   return args.size() >= 1 ? Value::fromNumber(std::cos(num(0) * kDeg2Rad)) : Value::undef();
     if (name == "tan")   return args.size() >= 1 ? Value::fromNumber(std::tan(num(0) * kDeg2Rad)) : Value::undef();
-    if (name == "asin")  return args.size() >= 1 ? Value::fromNumber(std::asin(num(0)) * kRad2Deg) : Value::undef();
-    if (name == "acos")  return args.size() >= 1 ? Value::fromNumber(std::acos(num(0)) * kRad2Deg) : Value::undef();
+    if (name == "asin")  return args.size() >= 1 ? finite(std::asin(num(0)) * kRad2Deg) : Value::undef();
+    if (name == "acos")  return args.size() >= 1 ? finite(std::acos(num(0)) * kRad2Deg) : Value::undef();
     if (name == "atan")  return args.size() >= 1 ? Value::fromNumber(std::atan(num(0)) * kRad2Deg) : Value::undef();
     if (name == "atan2") return args.size() >= 2 ? Value::fromNumber(std::atan2(num(0), num(1)) * kRad2Deg) : Value::undef();
 
     // ---- min/max — variadic ----
-    if (name == "min") {
+    if (name == "min" || name == "max") {
         if (args.empty()) return Value::undef();
-        // If first arg is a vector, take min of its elements
+        bool isMin = (name == "min");
+        // If first arg is a vector, take min/max of its elements — but only
+        // when it's the sole argument; a vector mixed with scalar args is a
+        // likely authoring mistake, so treat it as an error rather than
+        // silently discarding the vector.
         if (args.size() == 1 && args[0].isVector()) {
-            double m = std::numeric_limits<double>::infinity();
-            for (const auto& e : args[0].asVec())
-                if (e.isNumber()) m = std::min(m, e.asNumber());
-            return std::isinf(m) ? Value::undef() : Value::fromNumber(m);
+            const auto& v = args[0].asVec();
+            if (v.empty() || !v[0].isNumber()) return Value::undef();
+            double m = v[0].asNumber();
+            for (std::size_t i = 1; i < v.size(); ++i) {
+                if (!v[i].isNumber()) return Value::undef();
+                double e = v[i].asNumber();
+                m = isMin ? std::min(m, e) : std::max(m, e);
+            }
+            return Value::fromNumber(m);
         }
-        double m = num(0);
-        for (std::size_t i = 1; i < args.size(); ++i) m = std::min(m, num(i));
-        return Value::fromNumber(m);
-    }
-    if (name == "max") {
-        if (args.empty()) return Value::undef();
-        if (args.size() == 1 && args[0].isVector()) {
-            double m = -std::numeric_limits<double>::infinity();
-            for (const auto& e : args[0].asVec())
-                if (e.isNumber()) m = std::max(m, e.asNumber());
-            return std::isinf(m) ? Value::undef() : Value::fromNumber(m);
+        if (args[0].isVector()) return Value::undef();
+        if (!args[0].isNumber()) return Value::undef();
+        double m = args[0].asNumber();
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (!args[i].isNumber()) return Value::undef();
+            double v = args[i].asNumber();
+            m = isMin ? std::min(m, v) : std::max(m, v);
         }
-        double m = num(0);
-        for (std::size_t i = 1; i < args.size(); ++i) m = std::max(m, num(i));
         return Value::fromNumber(m);
     }
 
@@ -337,7 +361,9 @@ Value Interpreter::callBuiltin(const std::string& name,
         if (args.size() >= 2 && args[0].isVector() && args[1].isVector()) {
             const auto& a = args[0].asVec();
             const auto& b = args[1].asVec();
-            if (a.size() >= 3 && b.size() >= 3) {
+            if (a.size() >= 3 && b.size() >= 3 &&
+                a[0].isNumber() && a[1].isNumber() && a[2].isNumber() &&
+                b[0].isNumber() && b[1].isNumber() && b[2].isNumber()) {
                 double ax = a[0].asNumber(), ay = a[1].asNumber(), az = a[2].asNumber();
                 double bx = b[0].asNumber(), by = b[1].asNumber(), bz = b[2].asNumber();
                 return Value::fromVec({
@@ -374,13 +400,20 @@ Value Interpreter::callBuiltin(const std::string& name,
         std::string out;
         for (const auto& arg : args) {
             if (arg.isNumber()) {
-                char buf[32];
                 double v = arg.asNumber();
-                if (v == static_cast<long long>(v))
-                    std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(v));
-                else
-                    std::snprintf(buf, sizeof(buf), "%g", v);
-                out += buf;
+                if (std::isnan(v)) {
+                    out += "nan";
+                } else if (std::isinf(v)) {
+                    out += v < 0 ? "-inf" : "inf";
+                } else {
+                    char buf[32];
+                    constexpr double kMaxExactInt = 9.007199254740992e15; // 2^53
+                    if (std::abs(v) < kMaxExactInt && v == static_cast<long long>(v))
+                        std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(v));
+                    else
+                        std::snprintf(buf, sizeof(buf), "%g", v);
+                    out += buf;
+                }
             } else if (arg.isBool())   { out += arg.asBool() ? "true" : "false"; }
             else if (arg.isString())   { out += arg.asString(); }
             else if (arg.isUndef())    { out += "undef"; }
@@ -389,9 +422,9 @@ Value Interpreter::callBuiltin(const std::string& name,
     }
     if (name == "chr") {
         if (args.size() >= 1 && args[0].isNumber()) {
-            int code = static_cast<int>(args[0].asNumber());
-            if (code >= 0 && code <= 127)
-                return Value::fromString(std::string(1, static_cast<char>(code)));
+            double v = args[0].asNumber();
+            if (std::isfinite(v) && v >= 0 && v <= 127)
+                return Value::fromString(std::string(1, static_cast<char>(static_cast<int>(v))));
         }
         return Value::undef();
     }
@@ -407,8 +440,11 @@ Value Interpreter::callBuiltin(const std::string& name,
         if (args.size() < 3) return Value::undef();
         double minVal = num(0);
         double maxVal = num(1);
-        int    count  = static_cast<int>(num(2));
-        if (count <= 0 || minVal > maxVal) return Value::fromVec({});
+        double countArg = num(2);
+        if (!std::isfinite(countArg) || countArg <= 0 || minVal > maxVal)
+            return Value::fromVec({});
+        constexpr double kMaxCount = 1'000'000.0; // sane cap against runaway allocation
+        int count = static_cast<int>(std::min(countArg, kMaxCount));
         std::mt19937_64 rng;
         if (args.size() >= 4 && args[3].isNumber())
             rng.seed(static_cast<uint64_t>(args[3].asNumber()));

@@ -485,6 +485,7 @@ ExprPtr Parser::parseVecExpr() {
 void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
                              bool& center) {
     center = false;
+    int posIdx = 0;
 
     while (!check(TokenKind::RParen) && !atEnd()) {
         const size_t prevPos = m_pos; // guard against zero-progress infinite loops
@@ -537,9 +538,10 @@ void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
             continue;
         }
 
-        // Positional number/expression — treat as _pos0
+        // Positional number/expression — indexed _pos0, _pos1, ... so that
+        // multiple positional args don't collide into a single key.
         if (!check(TokenKind::RParen)) {
-            params["_pos0"] = parseExpr();
+            params["_pos" + std::to_string(posIdx++)] = parseExpr();
             match(TokenKind::Comma);
         }
 
@@ -901,6 +903,7 @@ AstNodePtr Parser::parseExtrusion(TokenKind k) {
 // Parses key=value params for linear/rotate_extrude.  Unlike parseParamList,
 // all values are kept as ExprPtr (including center and scale vectors).
 void Parser::parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& params) {
+    int posIdx = 0;
     while (!check(TokenKind::RParen) && !atEnd()) {
         const size_t prevPos = m_pos;
 
@@ -920,9 +923,10 @@ void Parser::parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& para
             match(TokenKind::Comma);
             continue;
         }
-        // Positional scalar (height for linear_extrude)
+        // Positional scalar (height for linear_extrude) — indexed to avoid
+        // multiple positional args colliding into a single key.
         if (!check(TokenKind::RParen)) {
-            params["_pos0"] = parseExpr();
+            params["_pos" + std::to_string(posIdx++)] = parseExpr();
             match(TokenKind::Comma);
         }
         if (m_pos == prevPos) break;

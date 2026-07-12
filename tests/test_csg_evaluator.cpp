@@ -99,6 +99,69 @@ TEST_CASE("CsgEval:cylinder produces CsgLeaf", "[csg]") {
 }
 
 // ---------------------------------------------------------------------------
+// cube()/cylinder()/sphere() argument-form handling (issue #31)
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:cube bare scalar shorthand", "[csg]") {
+    auto s = evaluate("cube(5);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("x") == Approx(5.0));
+    REQUIRE(leaf.params.at("y") == Approx(5.0));
+    REQUIRE(leaf.params.at("z") == Approx(5.0));
+}
+
+TEST_CASE("CsgEval:cube named size vector", "[csg]") {
+    auto s = evaluate("cube(size=[10,20,30]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("x") == Approx(10.0));
+    REQUIRE(leaf.params.at("y") == Approx(20.0));
+    REQUIRE(leaf.params.at("z") == Approx(30.0));
+}
+
+TEST_CASE("CsgEval:cube named size scalar", "[csg]") {
+    auto s = evaluate("cube(size=4);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("x") == Approx(4.0));
+    REQUIRE(leaf.params.at("y") == Approx(4.0));
+    REQUIRE(leaf.params.at("z") == Approx(4.0));
+}
+
+TEST_CASE("CsgEval:cube positional vector variable", "[csg]") {
+    auto s = evaluate("v = [1,2,3]; cube(v);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("x") == Approx(1.0));
+    REQUIRE(leaf.params.at("y") == Approx(2.0));
+    REQUIRE(leaf.params.at("z") == Approx(3.0));
+}
+
+TEST_CASE("CsgEval:cylinder bare positional height", "[csg]") {
+    auto s = evaluate("cylinder(10);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("h") == Approx(10.0));
+}
+
+TEST_CASE("CsgEval:cylinder positional height and radius", "[csg]") {
+    auto s = evaluate("cylinder(10, 5);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("h") == Approx(10.0));
+    REQUIRE(leaf.params.at("r") == Approx(5.0));
+}
+
+TEST_CASE("CsgEval:cylinder diameter forms", "[csg]") {
+    auto s1 = evaluate("cylinder(h=10, d=6);");
+    REQUIRE(asLeaf(s1.roots[0]).params.at("r") == Approx(3.0));
+
+    auto s2 = evaluate("cylinder(h=10, d1=8, d2=2);");
+    const auto& leaf2 = asLeaf(s2.roots[0]);
+    REQUIRE(leaf2.params.at("r1") == Approx(4.0));
+    REQUIRE(leaf2.params.at("r2") == Approx(1.0));
+}
+
+TEST_CASE("CsgEval:sphere diameter form", "[csg]") {
+    auto s = evaluate("sphere(d=10);");
+    REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(5.0));
+}
+
+// ---------------------------------------------------------------------------
 // Identity transform on un-transformed primitives
 // ---------------------------------------------------------------------------
 TEST_CASE("CsgEval:un-transformed leaf has identity matrix", "[csg]") {

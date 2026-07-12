@@ -541,6 +541,14 @@ TEST_CASE("Parser:circle positional radius", "[parser]") {
     REQUIRE(paramVal(p, "_pos0") == Approx(3.0));
 }
 
+TEST_CASE("Parser:multiple positional args indexed distinctly", "[parser]") {
+    auto r = parse("cylinder(10, 5);");
+    const auto& p = asPrim(r.roots[0]);
+    REQUIRE(p.kind == PrimitiveNode::Kind::Cylinder);
+    REQUIRE(paramVal(p, "_pos0") == Approx(10.0));
+    REQUIRE(paramVal(p, "_pos1") == Approx(5.0));
+}
+
 TEST_CASE("Parser:polygon with points", "[parser]") {
     auto r = parse("polygon(points=[[0,0],[10,0],[5,8]]);");
     REQUIRE(r.roots.size() == 1);

@@ -456,3 +456,76 @@ TEST_CASE("Interp:lookup unsorted table", "[interp][tier-b]") {
     // lookup must sort by key
     REQUIRE(evalNum("lookup(0.5, [[1,10],[0,0]])") == Approx(5.0));
 }
+
+// ---------------------------------------------------------------------------
+// String/vector equality (issue #34)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:string equality", "[interp]") {
+    REQUIRE(evalVal("\"abc\" == \"abc\"").asBool() == true);
+    REQUIRE(evalVal("\"abc\" == \"xyz\"").asBool() == false);
+    REQUIRE(evalVal("\"abc\" != \"xyz\"").asBool() == true);
+}
+
+TEST_CASE("Interp:vector equality", "[interp]") {
+    REQUIRE(evalVal("[1,2] == [1,2]").asBool() == true);
+    REQUIRE(evalVal("[1,2] == [1,3]").asBool() == false);
+    REQUIRE(evalVal("[1,2] == [1,2,3]").asBool() == false); // length mismatch
+    REQUIRE(evalVal("[[1,2],3] == [[1,2],3]").asBool() == true); // nested vectors
+}
+
+// ---------------------------------------------------------------------------
+// Vector +/- with mismatched lengths returns undef (issue #45)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:vector add/sub length mismatch is undef", "[interp]") {
+    REQUIRE(evalVal("[1,2,3] + [1,2]").isUndef());
+    REQUIRE(evalVal("[1,2,3] - [1,2]").isUndef());
+    REQUIRE(evalNum("([1,2,3] + [1,2,3])[2]") == Approx(6.0));
+}
+
+// ---------------------------------------------------------------------------
+// Math domain errors return undef instead of NaN/Inf (issue #43)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:math domain errors return undef", "[interp]") {
+    REQUIRE(evalVal("sqrt(-1)").isUndef());
+    REQUIRE(evalVal("log(-1)").isUndef());
+    REQUIRE(evalVal("log(0)").isUndef());
+    REQUIRE(evalVal("asin(2)").isUndef());
+    REQUIRE(evalVal("acos(2)").isUndef());
+    REQUIRE(evalNum("sqrt(4)") == Approx(2.0));
+}
+
+// ---------------------------------------------------------------------------
+// min/max no longer silently coerce bad args (issue #58)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:min max reject non-numeric args", "[interp]") {
+    REQUIRE(evalVal("max(3, \"abc\")").isUndef());
+    REQUIRE(evalVal("min(3, \"abc\")").isUndef());
+    REQUIRE(evalVal("max([1,2,3], 5)").isUndef()); // vector mixed with scalar
+    REQUIRE(evalNum("max([1,2,3])") == Approx(3.0)); // sole vector arg still works
+    REQUIRE(evalNum("min(3, 7)") == Approx(3.0));
+}
+
+// ---------------------------------------------------------------------------
+// cross() validates element types like norm() (issue #57)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:cross rejects non-numeric elements", "[interp]") {
+    REQUIRE(evalVal("cross([\"a\",\"b\",\"c\"], [1,2,3])").isUndef());
+    REQUIRE(evalNum("cross([1,0,0],[0,1,0])[2]") == Approx(1.0));
+}
+
+// ---------------------------------------------------------------------------
+// Unchecked double->int casts no longer UB / leak "-nan" (issue #44)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:index with huge index returns undef", "[interp]") {
+    REQUIRE(evalVal("[1,2,3][1e20]").isUndef());
+}
+
+TEST_CASE("Interp:str never leaks nan text with a sign glitch", "[interp]") {
+    // sqrt(-1) is now undef (see domain-error fix), so str() sees Undef,
+    // not a raw NaN payload.
+    REQUIRE(evalVal("str(sqrt(-1))").asString() == "undef");
+}
+
+TEST_CASE("Interp:chr rejects huge/non-finite codepoints", "[interp]") {
+    REQUIRE(evalVal("chr(1e20)").isUndef());
+}
