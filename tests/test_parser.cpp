@@ -296,6 +296,20 @@ TEST_CASE("Parser:color with named c and alpha args", "[parser]") {
     REQUIRE(interp.evalNumber(*c.alphaExpr) == Approx(0.25));
 }
 
+TEST_CASE("Parser:color accepts and discards a special-var override", "[parser]") {
+    // color() has no use for $fn, but a stray override must be consumed
+    // gracefully (consistent with parseParamList/parseExtrusionParams)
+    // rather than becoming a parse error.
+    auto r = parse("color($fn=8, \"red\") cube([1,1,1]);");
+    auto& c = asColor(r.roots[0]);
+    REQUIRE(c.colorExpr != nullptr);
+
+    Interpreter interp;
+    Value v = interp.evaluate(*c.colorExpr);
+    REQUIRE(v.isString());
+    REQUIRE(v.asString() == "red");
+}
+
 // ---------------------------------------------------------------------------
 // Nested operations
 // ---------------------------------------------------------------------------

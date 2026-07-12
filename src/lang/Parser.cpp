@@ -361,6 +361,17 @@ AstNodePtr Parser::parseColor() {
     while (!check(TokenKind::RParen) && !atEnd()) {
         const size_t prevPos = m_pos; // guard against zero-progress infinite loops
 
+        // Special variable override: $fn = expr — color() has no use for
+        // special vars, but accept and discard them (consistent with
+        // parseParamList/parseExtrusionParams) rather than erroring.
+        if (check(TokenKind::SpecialVar)) {
+            advance();
+            expect(TokenKind::Equals, "expected '=' after special variable");
+            parseExpr();
+            match(TokenKind::Comma);
+            continue;
+        }
+
         if (peek(1).kind == TokenKind::Equals && isParamNameToken(peek())) {
             std::string name = peek().text;
             advance(); // name
