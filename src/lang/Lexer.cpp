@@ -150,6 +150,7 @@ std::vector<Token> Lexer::tokenize() {
         case '*':  tokens.push_back(makeToken(TokenKind::Star,      startOffset)); break;
         case '/':  tokens.push_back(makeToken(TokenKind::Slash,     startOffset)); break;
         case '%':  tokens.push_back(makeToken(TokenKind::Percent,   startOffset)); break;
+        case '#':  tokens.push_back(makeToken(TokenKind::Hash,      startOffset)); break;
         case '!':
             if (match('=')) tokens.push_back(makeToken(TokenKind::BangEqual,    startOffset));
             else            tokens.push_back(makeToken(TokenKind::Bang,         startOffset));

@@ -446,3 +446,38 @@ TEST_CASE("Lexer:block comment between use and path is skipped", "[lexer][tier-e
     REQUIRE(t[1].kind == TokenKind::AngledPath);
     REQUIRE(t[1].text == "a.scad");
 }
+
+// ---------------------------------------------------------------------------
+// v3 Phase 2: CSG modifier characters (# % ! *)
+// ---------------------------------------------------------------------------
+TEST_CASE("Lexer:hash tokenizes as its own kind", "[lexer]") {
+    REQUIRE(kinds("#") == std::vector{TokenKind::Hash});
+    REQUIRE(kinds("#cube();") == std::vector{
+        TokenKind::Hash, TokenKind::Cube, TokenKind::LParen,
+        TokenKind::RParen, TokenKind::Semicolon,
+    });
+}
+
+TEST_CASE("Lexer:percent/star/bang keep their existing operator token kinds", "[lexer]") {
+    // These aren't new tokens — the Parser reinterprets Percent/Star/Bang as
+    // modifiers only when found in statement-start position.
+    REQUIRE(kinds("%cube();") == std::vector{
+        TokenKind::Percent, TokenKind::Cube, TokenKind::LParen,
+        TokenKind::RParen, TokenKind::Semicolon,
+    });
+    REQUIRE(kinds("*cube();") == std::vector{
+        TokenKind::Star, TokenKind::Cube, TokenKind::LParen,
+        TokenKind::RParen, TokenKind::Semicolon,
+    });
+    REQUIRE(kinds("!cube();") == std::vector{
+        TokenKind::Bang, TokenKind::Cube, TokenKind::LParen,
+        TokenKind::RParen, TokenKind::Semicolon,
+    });
+}
+
+TEST_CASE("Lexer:stacked modifier characters", "[lexer]") {
+    REQUIRE(kinds("#!cube();") == std::vector{
+        TokenKind::Hash, TokenKind::Bang, TokenKind::Cube, TokenKind::LParen,
+        TokenKind::RParen, TokenKind::Semicolon,
+    });
+}

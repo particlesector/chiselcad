@@ -1405,3 +1405,85 @@ TEST_CASE("CsgEval:text() ignores direction/language/script for forward compatib
     REQUIRE(s.roots.size() == 1);
     REQUIRE(s.evalDiags.empty());
 }
+
+// ---------------------------------------------------------------------------
+// v3 Phase 2: CSG modifier characters (# % ! *)
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:disabled (*) subtree is skipped entirely", "[csg]") {
+    auto s = evaluate("*cube(1); sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:disabled (*) subtree runs no side effects (echo)", "[csg]") {
+    auto s = evaluate("*echo(\"should not run\");");
+    REQUIRE(s.echoMessages.empty());
+}
+
+TEST_CASE("CsgEval:background (%) node is excluded from its parent's boolean", "[csg]") {
+    auto s = evaluate("union() { cube(1); %sphere(r=1); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& u = asBool(s.roots[0]);
+    REQUIRE(u.children.size() == 1);
+    REQUIRE(asLeaf(u.children[0]).kind == CsgLeaf::Kind::Cube);
+}
+
+TEST_CASE("CsgEval:background (%) node becomes its own tinted root", "[csg]") {
+    auto s = evaluate("union() { cube(1); %sphere(r=1); }");
+    REQUIRE(s.backgroundRoots.size() == 1);
+    const auto& leaf = asLeaf(s.backgroundRoots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Sphere);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value == kBackgroundColor);
+}
+
+TEST_CASE("CsgEval:background (%) node keeps its accumulated transform", "[csg]") {
+    auto s = evaluate("translate([5,0,0]) %cube(1);");
+    REQUIRE(s.roots.empty());
+    REQUIRE(s.backgroundRoots.size() == 1);
+    const auto& leaf = asLeaf(s.backgroundRoots[0]);
+    REQUIRE(leaf.transform[3][0] == Approx(5.0));
+}
+
+TEST_CASE("CsgEval:highlight (#) forces a tint but still participates in its parent boolean", "[csg]") {
+    auto s = evaluate("union() { #cube(1); sphere(r=1); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& u = asBool(s.roots[0]);
+    REQUIRE(u.children.size() == 2); // both children still present — # doesn't exclude
+    REQUIRE(asLeaf(u.children[0]).color.value == kHighlightColor);
+}
+
+TEST_CASE("CsgEval:highlight (#) at top level tints the scene root", "[csg]") {
+    auto s = evaluate("#cube(1);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value == kHighlightColor);
+}
+
+TEST_CASE("CsgEval:root (!) makes its subtree the only thing in the scene", "[csg]") {
+    auto s = evaluate("cube(1); !sphere(r=1); cylinder(h=1,r=1);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:root (!) discards its own enclosing boolean, not just siblings", "[csg]") {
+    auto s = evaluate("union() { cube(1); !sphere(r=1); }");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
+TEST_CASE("CsgEval:root (!) also discards background roots", "[csg]") {
+    auto s = evaluate("%cube(1); !sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+    REQUIRE(s.backgroundRoots.empty());
+}
+
+TEST_CASE("CsgEval:stacked modifiers combine (highlight + root)", "[csg]") {
+    auto s = evaluate("#!cube(1);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.color.has);
+    REQUIRE(leaf.color.value == kHighlightColor);
+}

@@ -28,6 +28,13 @@ struct ColorAttr {
     glm::vec4 value{1.0f, 1.0f, 1.0f, 1.0f};
 };
 
+// Forced tints applied by the CSG modifier characters `#`/`%` (see
+// CsgEvaluator's handling of Modifier in AST.h). No alpha-blending pipeline
+// exists yet (see docs/roadmap.md v4), so both render fully opaque rather
+// than translucent like OpenSCAD's preview.
+inline constexpr glm::vec4 kHighlightColor{1.0f, 0.45f, 0.0f, 1.0f};   // '#' — orange
+inline constexpr glm::vec4 kBackgroundColor{0.6f, 0.6f, 0.65f, 1.0f};  // '%' — neutral gray
+
 // ---------------------------------------------------------------------------
 // CsgLeaf — a primitive with its fully-accumulated world transform.
 // The transform encodes every translate/rotate/scale/mirror applied above
@@ -167,6 +174,13 @@ inline const ColorAttr& nodeColor(const CsgNode& node) {
 // ---------------------------------------------------------------------------
 struct CsgScene {
     std::vector<CsgNodePtr>     roots;
+    // `%`-tagged nodes (CSG modifier, see docs/roadmap.md v3 Phase 2):
+    // evaluated but excluded from their parent's boolean/group, rendered
+    // independently as their own reference-only roots instead. Kept apart
+    // from `roots` so MeshBuilder can exclude them from volume/surface-area
+    // stats and STL export, matching OpenSCAD's "not part of the model"
+    // semantics for background objects.
+    std::vector<CsgNodePtr>     backgroundRoots;
     double globalFn = 0.0;
     double globalFs = 2.0;
     double globalFa = 12.0;

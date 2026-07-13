@@ -183,7 +183,8 @@ uses it — it isn't in `vcpkg.json` and there's no `find_package(embree3)` in
 - Primitives (2D): `square`, `circle`, `polygon`, `text()`
 - Booleans/CSG: `union()`, `difference()`, `intersection()`, `hull()`, `minkowski()`
 - Transforms: `translate()`, `rotate()`, `scale()`, `mirror()`, `multmatrix()`, `color()`, `render()`
-- Control flow: `for` (with ranges), `if`/`else`, statement- and expression-level `let`, ternary `?:`
+- CSG modifier characters: `#` (highlight), `%` (background), `*` (disable), `!` (root) — see §6
+- Control flow: `for` (with ranges), `if`/`else`, statement- and expression-level `let`, ternary `?:`, list comprehensions (`[for (i=range) expr]`, with `if`/`each`)
 - Functions & modules: user-defined `function`/`module`, `children()`/`$children`, named + default args, recursion
 - Built-ins: full math set, string/vector helpers (`concat`, `str`, `chr`, `ord`, `len`, `lookup`, `rands`, `norm`, `cross`, ...)
 - 2D → 3D: `linear_extrude`, `rotate_extrude`, `offset()`, `projection()`
@@ -193,12 +194,10 @@ uses it — it isn't in `vcpkg.json` and there's no `find_package(embree3)` in
 - Literals: numbers, strings, vectors `[x,y,z]`, `true`/`false`, `undef`
 - Comments: `//` and `/* */`
 
-Known gaps (tracked in `docs/roadmap.md`, v3): CSG modifier characters
-`# % ! *`, list comprehensions and `each`, `polyhedron()`, `resize()`,
-general range-literal expressions outside a `for(...)` header, nested
-extrusion, and module-local variable scoping (see §6 note on the
-environment model). Import/export formats beyond STL (OFF/3MF/AMF/DXF/SVG,
-PNG heightmaps) are also deferred.
+Known gaps (tracked in `docs/roadmap.md`, v3 Phases 3-4): `polyhedron()`,
+`resize()`, nested extrusion (extrude wrapping extrude, currently a silent
+no-op). Import/export formats beyond STL (OFF/3MF/AMF/DXF/SVG, PNG
+heightmaps) are also deferred.
 
 ### 5.2 AST Design
 
@@ -304,6 +303,34 @@ surviving per-part identity, `color()` tints a whole boolean result rather
 than individual children the way OpenSCAD's CGAL-based per-facet coloring
 can.
 
+**CSG modifier characters (`# % ! *`)** are parsed as a `Modifier` bitmask
+(`src/lang/AST.h`) stamped onto whichever `AstNode` they prefix — any
+statement, at file scope or nested in a block — and interpreted centrally in
+`CsgEvaluator::evalNode()`:
+- `*` (disable) — the subtree isn't evaluated at all; `evalNode()` returns
+  `nullptr` for it immediately, so nested `echo()`/`assert()`/module calls
+  never run.
+- `#` (highlight) — the node's own `ColorAttr` is forced to a fixed tint,
+  exactly like an implicit `color()` wrapper, while it still participates in
+  its parent's boolean normally. Like nested `color()`, the tint is only
+  visible once the node is (or is inside) a `CsgScene` root, per the
+  boolean-merge limitation below.
+- `%` (background) — excluded from its parent's boolean (doesn't affect the
+  computed result) and instead pushed onto a new `CsgScene::backgroundRoots`
+  list, meshed and rendered like any other root but kept out of
+  `MeshBuilder`'s volume/surface-area/triangle-count stats and out of the
+  STL-exportable index range (`BuildResult::realIndexCount`).
+- `!` (root) — every `!`-tagged node encountered anywhere in the tree is
+  collected; if that list is non-empty once the whole tree has been walked,
+  `CsgEvaluator::evaluate()` replaces `CsgScene::roots` with exactly that
+  list (discarding `backgroundRoots` too), matching OpenSCAD's "only show
+  this" semantics.
+
+Both `#` and `%` render as fully opaque tints rather than OpenSCAD's
+translucent preview — there is no alpha-blending pipeline yet (`render::Vertex`
+has no alpha channel, and no pipeline enables `blendEnable`; see §10 and the
+v4 roadmap).
+
 **Local-space evaluation for non-equivariant ops:** `hull()`, `minkowski()`,
 `offset()`, and `projection()` all evaluate their children in local space and
 apply the accumulated outer `transform` once to the final result, rather than
@@ -318,13 +345,15 @@ each node's resolved params and transform into a string
 precomputed bottom-up hash.
 
 **Known scoping limitation:** the `Interpreter`'s variable environment is a
-single flat map that's snapshotted/restored around function and module
-calls, not a real lexical scope stack. This causes module-local variable
-assignments to be silently discarded today (tracked in `docs/roadmap.md` v3),
-plus related scope-leak bugs where an unbound function/module parameter
-resolves to a same-named caller variable instead of `undef` (tracked in
-GitHub Issues). A proper fix likely means implementing an actual scope stack
-rather than a single map.
+single flat map, not a real lexical scope stack. Every block-producing
+`evalXxx()` (boolean/transform/if/for/extrusion/offset/projection/color)
+now snapshots it before evaluating its children and restores it after
+(`docs/roadmap.md` v3 Phase 1), so a local assignment inside a block is
+visible to later statements in that same block but doesn't leak past it —
+this fixed the previous silent-discard bug. What snapshot/restore doesn't
+fix: unbound function/module parameters can still resolve to a same-named
+caller variable instead of `undef`, since it's still one flat map rather
+than a real scope chain (tracked in GitHub Issues).
 
 ---
 

@@ -15,6 +15,15 @@ static bool isParamNameToken(const Token& t) {
            t.kind != TokenKind::SpecialVar;
 }
 
+// A CSG modifier character (# % ! *) — only meaningful at statement-start,
+// where Percent/Star/Bang double as this instead of their expression-operator
+// meaning. Shared by parseNode() (consumes the run) and parseStatement()'s
+// assignment lookahead (needs to see past it without consuming yet).
+static bool isModifierToken(TokenKind k) {
+    return k == TokenKind::Hash || k == TokenKind::Percent ||
+           k == TokenKind::Star || k == TokenKind::Bang;
+}
+
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
@@ -101,6 +110,29 @@ void Parser::parseStatement(ParseResult& result) {
     if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
         parseAssignment(result);
         return;
+    }
+
+    // A leading run of CSG modifier characters (# % ! *) followed by an
+    // assignment (`#x = 2;`) isn't valid OpenSCAD — modifiers only apply to
+    // module instantiations — but falling through to parseNode() below would
+    // still *perform* the assignment, just via result.roots (evaluated
+    // in-place during the CSG tree walk) instead of result.assignments
+    // (hoisted by Interpreter::loadAssignments() before any geometry runs).
+    // That silently breaks "last assignment wins" ordering against a plain
+    // top-level assignment of the same variable elsewhere in the file, so
+    // detect it here and route it through the normal hoisted path instead,
+    // with a diagnostic that the modifier itself has no effect.
+    if (isModifierToken(peek().kind)) {
+        size_t look = 0;
+        while (isModifierToken(peek(static_cast<int>(look)).kind)) ++look;
+        if (peek(static_cast<int>(look)).kind == TokenKind::Ident &&
+            peek(static_cast<int>(look) + 1).kind == TokenKind::Equals) {
+            SourceLoc modLoc = peek().loc;
+            for (size_t i = 0; i < look; ++i) advance();
+            addError("CSG modifier characters ('#', '%', '!', '*') cannot prefix a variable assignment", modLoc);
+            parseAssignment(result);
+            return;
+        }
     }
 
     // Geometry node
@@ -202,7 +234,45 @@ void Parser::parseInclude(ParseResult& result) {
 // ---------------------------------------------------------------------------
 // Node dispatch
 // ---------------------------------------------------------------------------
+// A statement may be prefixed by any run of CSG modifier characters
+// (# % ! *, in any order/repetition — OpenSCAD allows stacking them, e.g.
+// `#!cube();`). None of the four are valid at statement-start any other
+// way, so this is unambiguous with their operator meanings inside
+// expressions (parseExpr() never calls parseNode()).
 AstNodePtr Parser::parseNode() {
+    uint8_t mods = ModNone;
+    SourceLoc modLoc;
+    while (isModifierToken(peek().kind)) {
+        if (mods == ModNone) modLoc = peek().loc;
+        switch (peek().kind) {
+        case TokenKind::Hash:    mods |= ModHighlight;  break;
+        case TokenKind::Percent: mods |= ModBackground; break;
+        case TokenKind::Star:    mods |= ModDisable;    break;
+        case TokenKind::Bang:    mods |= ModRoot;        break;
+        default: break; // unreachable — isModifierToken() only allows the four above
+        }
+        advance();
+    }
+
+    AstNodePtr node = parseNodeInner();
+    if (node && mods != ModNone) {
+        // A block-scoped assignment (`union() { #x = 2; } `) reaches here via
+        // the Ident+Equals case in parseNodeInner()'s switch — modifiers on
+        // an assignment aren't valid OpenSCAD (they only apply to module
+        // instantiations), so diagnose it and leave the assignment itself
+        // untouched rather than silently tagging it with a meaningless flag.
+        // (A *top-level* modifier-prefixed assignment never reaches this
+        // function at all — parseStatement() intercepts it earlier so it
+        // stays on the normal hoisted result.assignments path.)
+        if (std::holds_alternative<AssignStmt>(*node))
+            addError("CSG modifier characters ('#', '%', '!', '*') cannot prefix a variable assignment", modLoc);
+        else
+            setAstModifiers(*node, mods);
+    }
+    return node;
+}
+
+AstNodePtr Parser::parseNodeInner() {
     TokenKind k = peek().kind;
 
     switch (k) {

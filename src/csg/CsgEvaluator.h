@@ -86,6 +86,13 @@ private:
     // is kept, matching in-order script execution up to the abort point.
     bool m_aborted = false;
 
+    // Nodes tagged with the '!' (root/show-only) CSG modifier, collected as
+    // they're encountered anywhere in the tree. If non-empty once the whole
+    // tree has been walked, evaluate() replaces CsgScene::roots with exactly
+    // this list, discarding everything else — matching OpenSCAD's "only show
+    // this" semantics for `!`.
+    std::vector<CsgNodePtr> m_rootOnlyNodes;
+
     CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform, const ColorAttr& color);

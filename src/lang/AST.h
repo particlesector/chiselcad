@@ -9,6 +9,18 @@
 
 namespace chisel::lang {
 
+// ---------------------------------------------------------------------------
+// Modifier — CSG modifier characters (# % ! *) that can prefix any statement.
+// A bitmask so stacked modifiers (e.g. `#!cube();`) combine.
+// ---------------------------------------------------------------------------
+enum Modifier : uint8_t {
+    ModNone       = 0,
+    ModHighlight  = 1 << 0, // # — highlight/debug
+    ModBackground = 1 << 1, // % — background/reference-only, excluded from CSG
+    ModDisable    = 1 << 2, // * — disable: subtree is skipped entirely
+    ModRoot       = 1 << 3, // ! — root: only this subtree is shown
+};
+
 // Forward declarations
 struct PrimitiveNode;
 struct BooleanNode;
@@ -34,6 +46,7 @@ struct AssignStmt {
     std::string name;
     ExprPtr     value;
     SourceLoc   loc;
+    uint8_t     modifiers = ModNone; // meaningless for assignments; present for uniform std::visit access
 };
 
 // ---------------------------------------------------------------------------
@@ -55,6 +68,7 @@ struct PrimitiveNode {
     // center is always a boolean literal in practice — kept as bool.
     bool center = false;
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +80,7 @@ struct BooleanNode {
     Op op;
     std::vector<AstNodePtr> children;
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 // ---------------------------------------------------------------------------
@@ -86,6 +101,7 @@ struct TransformNode {
     ExprPtr vec;
     std::vector<AstNodePtr> children;
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 // ---------------------------------------------------------------------------
@@ -109,6 +125,7 @@ struct IfNode {
     std::vector<AstNodePtr>  thenChildren;
     std::vector<AstNodePtr>  elseChildren; // empty when no else branch
     SourceLoc                loc;
+    uint8_t                  modifiers = ModNone;
 };
 
 inline AstNodePtr makeIf(IfNode n) {
@@ -137,6 +154,7 @@ struct ForNode {
     ForRange                range;
     std::vector<AstNodePtr> children;
     SourceLoc               loc;
+    uint8_t                 modifiers = ModNone;
 };
 
 inline AstNodePtr makeFor(ForNode n) {
@@ -181,6 +199,7 @@ struct ModuleCallNode {
     std::vector<ModuleArg>   args;
     std::vector<AstNodePtr>  children; // body passed as children (future use)
     SourceLoc                loc;
+    uint8_t                  modifiers = ModNone;
 };
 
 inline AstNodePtr makeModuleCall(ModuleCallNode n) {
@@ -199,6 +218,7 @@ struct ExtrusionNode {
     std::unordered_map<std::string, ExprPtr> params;
     std::vector<AstNodePtr> children; // 2-D geometry
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 inline AstNodePtr makeExtrusion(ExtrusionNode n) {
@@ -231,6 +251,7 @@ struct LetNode {
     std::vector<std::pair<std::string, ExprPtr>> bindings;
     std::vector<AstNodePtr> children;
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 inline AstNodePtr makeLetNode(LetNode n) {
@@ -249,6 +270,7 @@ struct ColorNode {
     ExprPtr alphaExpr; // nullptr if no explicit alpha override
     std::vector<AstNodePtr> children;
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 inline AstNodePtr makeColorNode(ColorNode n) {
@@ -266,6 +288,7 @@ struct OffsetNode {
     std::unordered_map<std::string, ExprPtr> params;
     std::vector<AstNodePtr> children; // 2-D geometry
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 inline AstNodePtr makeOffset(OffsetNode n) {
@@ -283,10 +306,20 @@ struct ProjectionNode {
     std::unordered_map<std::string, ExprPtr> params;
     std::vector<AstNodePtr> children; // 3-D geometry
     SourceLoc loc;
+    uint8_t   modifiers = ModNone;
 };
 
 inline AstNodePtr makeProjection(ProjectionNode n) {
     return std::make_unique<AstNode>(std::move(n));
+}
+
+// The Modifier bitmask (# % ! *) in effect on this node, regardless of
+// concrete node kind — set by Parser::parseNode() from a prefix token.
+inline uint8_t astModifiers(const AstNode& node) {
+    return std::visit([](const auto& n) -> uint8_t { return n.modifiers; }, node);
+}
+inline void setAstModifiers(AstNode& node, uint8_t mods) {
+    std::visit([mods](auto& n) { n.modifiers = mods; }, node);
 }
 
 // ---------------------------------------------------------------------------

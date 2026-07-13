@@ -170,8 +170,9 @@ void Application::run() {
                     m_camera.fitToBounds(bmin, bmax);
                     m_firstMesh = false;
                 }
-                m_meshVerts   = result->verts;
-                m_meshIndices = result->indices;
+                m_meshVerts      = result->verts;
+                m_meshIndices    = result->indices;
+                m_realIndexCount = result->realIndexCount;
                 m_renderer.uploadMesh(m_ctx, m_vma, result->verts, result->indices);
             }
         }
@@ -351,8 +352,9 @@ void Application::loadStlFile(const std::filesystem::path& path) {
     m_firstMesh      = true;
     m_watcher.reset(); // no file watching for STL
 
-    m_meshVerts   = mesh.verts;
-    m_meshIndices = mesh.indices;
+    m_meshVerts      = mesh.verts;
+    m_meshIndices    = mesh.indices;
+    m_realIndexCount = static_cast<uint32_t>(mesh.indices.size());
 
     // Compute AABB and fit camera
     glm::vec3 bmin{ 1e30f,  1e30f,  1e30f};
@@ -380,7 +382,14 @@ void Application::exportStl() {
     auto outPath = saveFileDialog(defaultName);
     if (outPath.empty()) return;
 
-    auto err = io::exportBinaryStl(outPath, m_meshVerts, m_meshIndices);
+    // Exclude any '%'-tagged background/reference geometry appended after
+    // the real model's indices (see m_realIndexCount) — it was never part
+    // of the model, only shown on screen as a visual reference.
+    std::vector<uint32_t> exportIndices(
+        m_meshIndices.begin(),
+        m_meshIndices.begin() + std::min<size_t>(m_realIndexCount, m_meshIndices.size()));
+
+    auto err = io::exportBinaryStl(outPath, m_meshVerts, exportIndices);
     if (!err.empty()) {
         m_exportError = err;
         spdlog::error("STL export failed: {}", err);

@@ -214,9 +214,14 @@ std::vector<manifold::Manifold> MeshEvaluator::evaluate(const CsgScene& scene) {
     gen.globalFa           = scene.globalFa;
     gen.useManifoldSphere  = useManifoldSphere;
 
+    // Background ('%') roots are appended after the "real" ones — MeshBuilder
+    // uses scene.roots.size() as the boundary to exclude them from volume/
+    // surface-area stats and STL export while still meshing/rendering them.
     std::vector<manifold::Manifold> result;
-    result.reserve(scene.roots.size());
+    result.reserve(scene.roots.size() + scene.backgroundRoots.size());
     for (const auto& root : scene.roots)
+        result.push_back(evalNode(*root, gen));
+    for (const auto& root : scene.backgroundRoots)
         result.push_back(evalNode(*root, gen));
     return result;
 }

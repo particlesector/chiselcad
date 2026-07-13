@@ -201,19 +201,30 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     std::vector<uint32_t> rootVertStart; // per-root start index into result->verts
     rootVertStart.reserve(rootMeshes.size());
 
+    // Background ('%') roots were appended after the real ones by
+    // MeshEvaluator::evaluate() — see CsgScene::backgroundRoots. They're
+    // meshed and rendered like any other root, but excluded from volume/
+    // surface-area/triangle stats and from the STL-exportable index range,
+    // since OpenSCAD's '%' explicitly means "reference only, not the model."
     for (std::size_t ri = 0; ri < rootMeshes.size(); ++ri) {
+        const bool isBackground = ri >= scene.roots.size();
         const auto& m = rootMeshes[ri];
         rootVertStart.push_back(static_cast<uint32_t>(result->verts.size()));
 
-        result->volume      += m.Volume();
-        result->surfaceArea += m.SurfaceArea();
+        if (!isBackground) {
+            result->volume      += m.Volume();
+            result->surfaceArea += m.SurfaceArea();
 
-        auto rawMesh = m.GetMeshGL();
-        result->triCount  += static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
-        result->vertCount += static_cast<uint32_t>(
-            rawMesh.numProp > 0 ? rawMesh.vertProperties.size() / rawMesh.numProp : 0);
+            auto rawMesh = m.GetMeshGL();
+            result->triCount  += static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
+            result->vertCount += static_cast<uint32_t>(
+                rawMesh.numProp > 0 ? rawMesh.vertProperties.size() / rawMesh.numProp : 0);
+        }
 
-        const csg::ColorAttr& rootColor = csg::nodeColor(*scene.roots[ri]);
+        const csg::CsgNode& srcNode = isBackground
+            ? *scene.backgroundRoots[ri - scene.roots.size()]
+            : *scene.roots[ri];
+        const csg::ColorAttr& rootColor = csg::nodeColor(srcNode);
         const glm::vec3 tint = rootColor.has ? glm::vec3(rootColor.value) : render::kDefaultVertexColor;
 
         std::vector<render::Vertex>  verts;
@@ -226,10 +237,18 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
 
         result->verts.insert(result->verts.end(), verts.begin(), verts.end());
         result->indices.insert(result->indices.end(), indices.begin(), indices.end());
+
+        if (ri + 1 == scene.roots.size())
+            result->realIndexCount = static_cast<uint32_t>(result->indices.size());
     }
+    if (scene.backgroundRoots.empty())
+        result->realIndexCount = static_cast<uint32_t>(result->indices.size());
 
     // ---- Optional: pairwise overlap detection ----
-    if (m_warnOverlappingRoots.load() && rootMeshes.size() > 1) {
+    // Background ('%') roots are deliberately excluded: overlapping a
+    // reference/ghost object with the real model is the entire point of '%',
+    // not a mistake worth warning about.
+    if (m_warnOverlappingRoots.load() && scene.roots.size() > 1) {
         // Compute per-root AABB from the already-converted vertex data
         const auto totalVerts = static_cast<uint32_t>(result->verts.size());
         auto rootAABB = [&](std::size_t ri) -> std::pair<glm::vec3, glm::vec3> {
@@ -252,10 +271,10 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
                    (mn1.z <= mx2.z && mx1.z >= mn2.z);
         };
 
-        for (std::size_t i = 0; i < rootMeshes.size(); ++i) {
+        for (std::size_t i = 0; i < scene.roots.size(); ++i) {
             if (gen != m_currentGen.load()) return; // newer build queued — abort
             auto [mn1, mx1] = rootAABB(i);
-            for (std::size_t j = i + 1; j < rootMeshes.size(); ++j) {
+            for (std::size_t j = i + 1; j < scene.roots.size(); ++j) {
                 auto [mn2, mx2] = rootAABB(j);
                 if (!aabbOverlap(mn1, mx1, mn2, mx2)) continue;
 
