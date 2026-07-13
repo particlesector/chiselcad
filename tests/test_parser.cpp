@@ -937,3 +937,53 @@ TEST_CASE("Parser:percent/star/bang still work as expression operators", "[parse
     auto r = parse("x = 5 % 2;\ny = 3 * 4;\nz = !true;");
     REQUIRE(r.assignments.size() == 3);
 }
+
+// ---------------------------------------------------------------------------
+// Regression (PR #69 review): a modifier-prefixed *assignment* must not
+// silently reroute through result.roots — it has to stay on the same
+// hoisted result.assignments path as a plain top-level assignment, since
+// mixing the two paths broke "last assignment wins" ordering. OpenSCAD's
+// grammar doesn't allow modifiers on assignments at all, so this is also a
+// parse error.
+// ---------------------------------------------------------------------------
+TEST_CASE("Parser:modifier before a top-level assignment is a parse error and still hoists", "[parser]") {
+    Lexer lexer("#x = 2;");
+    auto tokens = lexer.tokenize();
+    Parser parser(std::move(tokens));
+    auto r = parser.parse();
+    REQUIRE(parser.hasErrors());
+    // Must land in result.assignments (hoisted), not result.roots.
+    REQUIRE(r.roots.empty());
+    REQUIRE(r.assignments.size() == 1);
+    REQUIRE(r.assignments[0].name == "x");
+}
+
+TEST_CASE("Parser:modifier-prefixed and plain top-level assignments hoist in file order", "[parser]") {
+    // Regression for the exact scenario from the review comment: without the
+    // fix, `#x = 2;` took a different (non-hoisted) path than `x = 1;`, so
+    // the interpreter saw x=2 last instead of x=1 (file-order last-write).
+    Lexer lexer("#x = 2;\nx = 1;\ncube(x);");
+    auto tokens = lexer.tokenize();
+    Parser parser(std::move(tokens));
+    auto r = parser.parse();
+    REQUIRE(parser.hasErrors()); // the '#' itself is still diagnosed
+    REQUIRE(r.assignments.size() == 2);
+    REQUIRE(r.roots.size() == 1); // just the cube — no phantom assignment root
+
+    Interpreter interp;
+    interp.loadAssignments(r);
+    REQUIRE(interp.getVar("x").asNumber() == Approx(1.0)); // last one in file order wins
+}
+
+TEST_CASE("Parser:modifier before a nested (block-scoped) assignment is a parse error", "[parser]") {
+    Lexer lexer("union() { #x = 2; sphere(1); }");
+    auto tokens = lexer.tokenize();
+    Parser parser(std::move(tokens));
+    auto r = parser.parse();
+    REQUIRE(parser.hasErrors());
+    REQUIRE(r.roots.size() == 1);
+    const auto& u = asBool(r.roots[0]);
+    REQUIRE(u.children.size() == 2);
+    REQUIRE(asAssign(u.children[0]).name == "x");
+    REQUIRE(asAssign(u.children[0]).modifiers == ModNone); // rejected, not silently tagged
+}
