@@ -23,9 +23,23 @@ struct OffsetNode;
 struct ProjectionNode;
 
 // ---------------------------------------------------------------------------
+// AssignStmt — a variable assignment: x = expr;
+// Used both as a file-scope statement (ParseResult::assignments) and as an
+// AstNode alternative for a local assignment inside any block (module/for/
+// if/... body) — putting it in the same variant as geometry nodes keeps it
+// in its correct sibling order relative to the geometry around it, which is
+// what evaluation order (and therefore variable scoping) depends on.
+// ---------------------------------------------------------------------------
+struct AssignStmt {
+    std::string name;
+    ExprPtr     value;
+    SourceLoc   loc;
+};
+
+// ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode, ColorNode, OffsetNode, ProjectionNode>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode, ColorNode, OffsetNode, ProjectionNode, AssignStmt>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -129,14 +143,9 @@ inline AstNodePtr makeFor(ForNode n) {
     return std::make_unique<AstNode>(std::move(n));
 }
 
-// ---------------------------------------------------------------------------
-// AssignStmt — a variable assignment at file or block scope: x = expr;
-// ---------------------------------------------------------------------------
-struct AssignStmt {
-    std::string name;
-    ExprPtr     value;
-    SourceLoc   loc;
-};
+inline AstNodePtr makeAssign(AssignStmt n) {
+    return std::make_unique<AstNode>(std::move(n));
+}
 
 // ---------------------------------------------------------------------------
 // ModuleParam — one formal parameter in a module definition

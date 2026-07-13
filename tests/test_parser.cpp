@@ -18,7 +18,7 @@ static double paramVal(const PrimitiveNode& p, const std::string& name) {
 static double vecComp(const TransformNode& t, int i) {
     Interpreter interp;
     const auto& vlit = std::get<VectorLit>(*t.vec);
-    return interp.evalNumber(*vlit.elements[static_cast<std::size_t>(i)]);
+    return interp.evalNumber(*vlit.elements[static_cast<std::size_t>(i)].value);
 }
 
 // Helper: lex + parse, assert no errors, return result
@@ -44,6 +44,9 @@ static const TransformNode& asTrans(const AstNodePtr& n) {
 }
 static const ColorNode& asColor(const AstNodePtr& n) {
     return std::get<ColorNode>(*n);
+}
+static const AssignStmt& asAssign(const AstNodePtr& n) {
+    return std::get<AssignStmt>(*n);
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +454,102 @@ TEST_CASE("Parser:for with brace body", "[parser]") {
 }
 
 // ---------------------------------------------------------------------------
+// General range-literal expressions (usable outside `for`)
+// ---------------------------------------------------------------------------
+TEST_CASE("Parser:range literal [start:end] outside for is a RangeLit assignment", "[parser][bugfix]") {
+    auto r = parse("x = [0:5];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& range = std::get<RangeLit>(*r.assignments[0].value);
+    REQUIRE(range.step == nullptr);
+    Interpreter interp;
+    REQUIRE(interp.evalNumber(*range.start) == Approx(0.0));
+    REQUIRE(interp.evalNumber(*range.end) == Approx(5.0));
+}
+
+TEST_CASE("Parser:range literal [start:step:end] outside for is a RangeLit assignment", "[parser][bugfix]") {
+    auto r = parse("x = [0:2:10];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& range = std::get<RangeLit>(*r.assignments[0].value);
+    REQUIRE(range.step != nullptr);
+    Interpreter interp;
+    REQUIRE(interp.evalNumber(*range.step) == Approx(2.0));
+    REQUIRE(interp.evalNumber(*range.end) == Approx(10.0));
+}
+
+TEST_CASE("Parser:a plain vector literal is still a VectorLit, not a range", "[parser]") {
+    auto r = parse("x = [1, 2, 3];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& vlit = std::get<VectorLit>(*r.assignments[0].value);
+    REQUIRE(vlit.elements.size() == 3);
+}
+
+TEST_CASE("Parser:an empty vector literal still parses", "[parser]") {
+    auto r = parse("x = [];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& vlit = std::get<VectorLit>(*r.assignments[0].value);
+    REQUIRE(vlit.elements.empty());
+}
+
+TEST_CASE("Parser:range literal as a function argument", "[parser]") {
+    auto r = parse("echo([0:3]);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& call = std::get<ModuleCallNode>(*r.roots[0]);
+    REQUIRE(call.args.size() == 1);
+    REQUIRE(std::holds_alternative<RangeLit>(*call.args[0].value));
+}
+
+// ---------------------------------------------------------------------------
+// List comprehensions and `each`
+// ---------------------------------------------------------------------------
+TEST_CASE("Parser:basic list comprehension", "[parser]") {
+    auto r = parse("x = [for (i = [0:3]) i * 2];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& comp = std::get<ListCompExpr>(*r.assignments[0].value);
+    REQUIRE(comp.var == "i");
+    REQUIRE(std::holds_alternative<RangeLit>(*comp.source));
+    REQUIRE(comp.body->kind == ListCompBody::Kind::Expr);
+}
+
+TEST_CASE("Parser:list comprehension with if filter", "[parser]") {
+    auto r = parse("x = [for (i = [0:5]) if (i % 2 == 0) i];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& comp = std::get<ListCompExpr>(*r.assignments[0].value);
+    REQUIRE(comp.body->kind == ListCompBody::Kind::If);
+    REQUIRE(comp.body->thenBody->kind == ListCompBody::Kind::Expr);
+    REQUIRE(comp.body->elseBody == nullptr);
+}
+
+TEST_CASE("Parser:list comprehension with if/else", "[parser]") {
+    auto r = parse("x = [for (i = [0:5]) if (i % 2 == 0) i else -i];");
+    const auto& comp = std::get<ListCompExpr>(*r.assignments[0].value);
+    REQUIRE(comp.body->kind == ListCompBody::Kind::If);
+    REQUIRE(comp.body->elseBody != nullptr);
+    REQUIRE(comp.body->elseBody->kind == ListCompBody::Kind::Expr);
+}
+
+TEST_CASE("Parser:list comprehension with each in the body", "[parser]") {
+    auto r = parse("x = [for (i = [0:2]) each [i, i]];");
+    const auto& comp = std::get<ListCompExpr>(*r.assignments[0].value);
+    REQUIRE(comp.body->kind == ListCompBody::Kind::Each);
+}
+
+TEST_CASE("Parser:each as a plain list element", "[parser]") {
+    auto r = parse("x = [each [1, 2], 3];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& vlit = std::get<VectorLit>(*r.assignments[0].value);
+    REQUIRE(vlit.elements.size() == 2);
+    REQUIRE(vlit.elements[0].isEach == true);
+    REQUIRE(vlit.elements[1].isEach == false);
+}
+
+TEST_CASE("Parser:a plain vector element defaults to isEach = false", "[parser]") {
+    auto r = parse("x = [1, 2, 3];");
+    const auto& vlit = std::get<VectorLit>(*r.assignments[0].value);
+    for (const auto& elem : vlit.elements)
+        REQUIRE(elem.isEach == false);
+}
+
+// ---------------------------------------------------------------------------
 // Module definitions and calls
 // ---------------------------------------------------------------------------
 static const ModuleCallNode& asModuleCall(const AstNodePtr& n) {
@@ -466,6 +565,26 @@ TEST_CASE("Parser:module definition stored in moduleDefs", "[parser]") {
     REQUIRE(r.moduleDefs[0].params[0].name == "w");
     REQUIRE(r.moduleDefs[0].params[1].name == "h");
     REQUIRE(r.moduleDefs[0].body.size() == 1);
+}
+
+TEST_CASE("Parser:module-local variable assignment is kept, not discarded", "[parser][bugfix]") {
+    auto r = parse("module box(r) { d = r * 2; cube(d); }");
+    REQUIRE(r.moduleDefs.size() == 1);
+    const auto& body = r.moduleDefs[0].body;
+    REQUIRE(body.size() == 2);
+    REQUIRE(asAssign(body[0]).name == "d");
+    Interpreter interp;
+    interp.setVar("r", Value::fromNumber(3.0));
+    REQUIRE(interp.evalNumber(*asAssign(body[0]).value) == Approx(6.0));
+    REQUIRE(asPrim(body[1]).kind == PrimitiveNode::Kind::Cube);
+}
+
+TEST_CASE("Parser:local variable assignment inside a for-body is kept", "[parser][bugfix]") {
+    auto r = parse("for (i = [0:2]) { x = i * 2; cube(x); }");
+    REQUIRE(r.roots.size() == 1);
+    const auto& forBody = std::get<ForNode>(*r.roots[0]).children;
+    REQUIRE(forBody.size() == 2);
+    REQUIRE(asAssign(forBody[0]).name == "x");
 }
 
 TEST_CASE("Parser:module param with default value", "[parser]") {

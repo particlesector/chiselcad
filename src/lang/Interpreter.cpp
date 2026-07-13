@@ -24,6 +24,8 @@ static bool valEqRec(const Value& a, const Value& b) {
             if (!valEqRec(av[i], bv[i])) return false;
         return true;
     }
+    if (a.isRange())
+        return a.rangeStart == b.rangeStart && a.rangeStep == b.rangeStep && a.rangeEnd == b.rangeEnd;
     return a.isUndef(); // both Undef, since tags already matched
 }
 
@@ -63,8 +65,11 @@ Value Interpreter::evaluate(const ExprNode& expr) {
         else if constexpr (std::is_same_v<T, VectorLit>) {
             std::vector<Value> elems;
             elems.reserve(node.elements.size());
-            for (const auto& e : node.elements)
-                elems.push_back(evaluate(*e));
+            for (const auto& e : node.elements) {
+                Value v = evaluate(*e.value);
+                if (e.isEach) flattenAppend(elems, v);
+                else          elems.push_back(std::move(v));
+            }
             return Value::fromVec(std::move(elems));
         }
 
@@ -189,6 +194,11 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                     return Value::undef();
                 return Value::fromString(std::string(1, target.asString()[static_cast<std::size_t>(i)]));
             }
+            if (target.isRange()) {
+                auto vals = expandRange(target.rangeStart, target.rangeStep, target.rangeEnd);
+                if (static_cast<std::size_t>(i) >= vals.size()) return Value::undef();
+                return vals[static_cast<std::size_t>(i)];
+            }
             return Value::undef();
         }
 
@@ -200,6 +210,41 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             Value result = evaluate(*node.body);
             restoreEnv(std::move(savedEnv));
             return result;
+        }
+
+        // ---- Range literal: [start:end] / [start:step:end] ----
+        else if constexpr (std::is_same_v<T, RangeLit>) {
+            double start = evalNumber(*node.start);
+            double step  = node.step ? evalNumber(*node.step) : 1.0;
+            double end   = evalNumber(*node.end);
+            return Value::fromRange(start, step, end);
+        }
+
+        // ---- List comprehension: [for (var = source) body] ----
+        else if constexpr (std::is_same_v<T, ListCompExpr>) {
+            Value sourceVal = evaluate(*node.source);
+            auto  values    = iterationValues(sourceVal);
+
+            // Only the outermost comprehension in a (possibly nested) chain
+            // resets the shared element budget — a nested one reuses
+            // whatever the outer one has left, so the total across all
+            // nesting levels of this expression stays bounded even though
+            // each range's own kMaxRangeCount cap is per-range, not joint.
+            const bool isOutermost = (m_listCompDepth == 0);
+            if (isOutermost) m_listCompBudget = kMaxListCompElements;
+            ++m_listCompDepth;
+
+            auto savedEnv = snapshotEnv();
+            std::vector<Value> out;
+            for (const Value& v : values) {
+                if (m_listCompBudget <= 0) break;
+                setVar(node.var, v);
+                collectListCompBody(*node.body, out);
+            }
+            restoreEnv(std::move(savedEnv));
+
+            --m_listCompDepth;
+            return Value::fromVec(std::move(out));
         }
 
         // ---- Function call ----
@@ -279,6 +324,72 @@ std::array<double, 3> Interpreter::evalVec3(const ExprNode& expr) {
         if (elem.isNumber()) result[i] = elem.asNumber();
     }
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// expandRange — [start:step:end] -> the concrete sequence of values it
+// denotes. Mirrors OpenSCAD's inclusive-endpoint, direction-aware stepping:
+// step > 0 counts up while v <= end (with a small epsilon so a step that
+// lands numerically just short of end due to float error still includes
+// it); step < 0 counts down while v >= end. A step of exactly 0 denotes an
+// empty range (not an infinite loop).
+// ---------------------------------------------------------------------------
+std::vector<Value> Interpreter::expandRange(double start, double step, double end) const {
+    std::vector<Value> values;
+    if (step == 0.0) return values;
+    if (step > 0.0)
+        for (double v = start; v <= end + 1e-10 && static_cast<int>(values.size()) < kMaxRangeCount; v += step)
+            values.push_back(Value::fromNumber(v));
+    else
+        for (double v = start; v >= end - 1e-10 && static_cast<int>(values.size()) < kMaxRangeCount; v += step)
+            values.push_back(Value::fromNumber(v));
+    return values;
+}
+
+// ---------------------------------------------------------------------------
+// iterationValues / flattenAppend — see Interpreter.h
+// ---------------------------------------------------------------------------
+std::vector<Value> Interpreter::iterationValues(const Value& v) const {
+    if (v.isVector()) return v.asVec();
+    if (v.isRange())  return expandRange(v.rangeStart, v.rangeStep, v.rangeEnd);
+    return {v};
+}
+
+void Interpreter::flattenAppend(std::vector<Value>& out, const Value& v) const {
+    for (auto& e : iterationValues(v)) out.push_back(std::move(e));
+}
+
+// ---------------------------------------------------------------------------
+// collectListCompBody — one list-comprehension body clause; see
+// ListCompBody in Expr.h for the grammar this mirrors.
+// ---------------------------------------------------------------------------
+void Interpreter::collectListCompBody(const ListCompBody& body, std::vector<Value>& out) {
+    // Checked before evaluating body.expr at all (not just before pushing
+    // the result) since a nested comprehension's expense is in evaluating
+    // it, not in appending its already-computed result.
+    if (m_listCompBudget <= 0) return;
+
+    switch (body.kind) {
+    case ListCompBody::Kind::Expr:
+        out.push_back(evaluate(*body.expr));
+        --m_listCompBudget;
+        break;
+    case ListCompBody::Kind::Each: {
+        Value v = evaluate(*body.expr);
+        for (auto& e : iterationValues(v)) {
+            if (m_listCompBudget <= 0) break;
+            out.push_back(std::move(e));
+            --m_listCompBudget;
+        }
+        break;
+    }
+    case ListCompBody::Kind::If:
+        if (bool(evaluate(*body.condition)))
+            collectListCompBody(*body.thenBody, out);
+        else if (body.elseBody)
+            collectListCompBody(*body.elseBody, out);
+        break;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +507,9 @@ Value Interpreter::callBuiltin(const std::string& name,
         if (args.size() >= 1) {
             if (args[0].isVector()) return Value::fromNumber(static_cast<double>(args[0].asVec().size()));
             if (args[0].isString()) return Value::fromNumber(static_cast<double>(args[0].asString().size()));
+            if (args[0].isRange())
+                return Value::fromNumber(static_cast<double>(
+                    expandRange(args[0].rangeStart, args[0].rangeStep, args[0].rangeEnd).size()));
         }
         return Value::undef();
     }

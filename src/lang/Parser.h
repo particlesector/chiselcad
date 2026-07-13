@@ -45,6 +45,7 @@ private:
     AstNodePtr parseExtrusion(TokenKind k);
     AstNodePtr parseOffset();
     AstNodePtr parseProjection();
+    AstNodePtr parseAssignNode(); // local assignment inside any block: name = expr;
 
     // ---- module / function definitions ------------------------------------
     void parseModuleDef(ParseResult& result);
@@ -59,7 +60,9 @@ private:
     ExprPtr parsePostfix();     // handles postfix [idx] after primary
     ExprPtr parsePrimary();
     ExprPtr parseLetExpr();
-    ExprPtr parseVecExpr();     // parse [x, y, z] → VectorLit ExprPtr
+    VectorElem parseVectorElem();           // one list element: expr, or `each expr`
+    ExprPtr parseListComp(SourceLoc loc);   // [for (var = source) body]
+    ListCompBodyPtr parseListCompBody();    // body clause: expr / each expr / if (..) body [else body]
 
     // ---- argument helpers ------------------------------------------------
     void parseParamList(std::unordered_map<std::string, ExprPtr>& params,
@@ -68,6 +71,9 @@ private:
 
     // ---- child body ------------------------------------------------------
     std::vector<AstNodePtr> parseBody();
+    // Statements up to (not including) the closing '}' — shared by parseBody's
+    // brace form and parseModuleDef, which also requires a brace block.
+    std::vector<AstNodePtr> parseBraceBlock();
 
     // ---- error recovery --------------------------------------------------
     void synchronize();

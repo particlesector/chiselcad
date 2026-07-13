@@ -23,10 +23,12 @@ struct TernaryExpr;
 struct IndexExpr;
 struct LetExpr;
 struct FunctionCall;
+struct RangeLit;
+struct ListCompExpr;
 
 using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, StringLit, VectorLit, VarRef,
                                BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr,
-                               LetExpr, FunctionCall>;
+                               LetExpr, FunctionCall, RangeLit, ListCompExpr>;
 using ExprPtr  = std::unique_ptr<ExprNode>;
 
 template<typename T>
@@ -56,8 +58,16 @@ struct StringLit {
     SourceLoc   loc;
 };
 
+// One element of a vector/list literal: a plain expression, or `each expr`
+// which flattens expr's elements into the surrounding list instead of
+// nesting expr itself as a single element (e.g. `[each [1,2], 3] == [1,2,3]`).
+struct VectorElem {
+    ExprPtr value;
+    bool    isEach = false;
+};
+
 struct VectorLit {
-    std::vector<ExprPtr> elements;
+    std::vector<VectorElem> elements;
     SourceLoc loc;
 };
 
@@ -121,6 +131,52 @@ struct FunctionCall {
     std::string              name;
     std::vector<FunctionArg> args;
     SourceLoc                loc;
+};
+
+// ---------------------------------------------------------------------------
+// Range literal — [start:end] or [start:step:end], usable as a general
+// expression (assigned to a variable, passed as an argument, echoed, used as
+// the source of a for loop or list comprehension), not just inside a `for`
+// header. step is nullptr when omitted (defaults to 1 at evaluation time).
+// ---------------------------------------------------------------------------
+struct RangeLit {
+    ExprPtr   start;
+    ExprPtr   step; // nullptr means step of 1
+    ExprPtr   end;
+    SourceLoc loc;
+};
+
+// ---------------------------------------------------------------------------
+// List comprehension — [for (var = source) body].
+//
+// `body` is recursive so `if (cond) body [else body]` and `each expr` can
+// nest inside the for-clause (mirroring OpenSCAD's actual comprehension
+// grammar): a plain expression contributes one element per iteration; an
+// `each` sub-expression flattens its own vector/range into the result
+// instead of nesting it; an `if [else]` picks which nested body (if any)
+// runs for that iteration. Multi-variable/C-style `for(init;cond;next)` and
+// nested `for` clauses inside the body aren't supported — out of scope for
+// this pass.
+// ---------------------------------------------------------------------------
+struct ListCompBody;
+using ListCompBodyPtr = std::unique_ptr<ListCompBody>;
+
+struct ListCompBody {
+    enum class Kind { Expr, Each, If };
+    Kind kind = Kind::Expr;
+
+    ExprPtr expr; // Kind::Expr: the element; Kind::Each: the list/range to flatten in
+
+    ExprPtr         condition; // Kind::If
+    ListCompBodyPtr thenBody;  // Kind::If
+    ListCompBodyPtr elseBody;  // Kind::If — nullptr when there's no else clause
+};
+
+struct ListCompExpr {
+    std::string     var;
+    ExprPtr         source; // range or list to iterate
+    ListCompBodyPtr body;
+    SourceLoc       loc;
 };
 
 } // namespace chisel::lang

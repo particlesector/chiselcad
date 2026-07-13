@@ -157,6 +157,20 @@ void Parser::parseAssignment(ParseResult& result) {
 }
 
 // ---------------------------------------------------------------------------
+// Local variable assignment inside a block: name = expr;
+// Reached via parseNode(), so it's usable anywhere a geometry statement is —
+// module/for/if/boolean/transform/... bodies — not just at file scope. Like
+// the other parseNode() cases, the trailing ';' is left for the caller's
+// body-parsing loop to consume (see parseBraceBlock()/parseBody()).
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseAssignNode() {
+    const Token& name_tok = advance(); // identifier
+    advance();                         // consume '='
+    auto value = parseExpr();
+    return makeAssign(AssignStmt{name_tok.text, std::move(value), name_tok.loc});
+}
+
+// ---------------------------------------------------------------------------
 // include <path>; / use <path>; — no file I/O here (Parser is file-agnostic);
 // this just records the directive for SourceLoader to resolve recursively.
 // ---------------------------------------------------------------------------
@@ -243,6 +257,10 @@ AstNodePtr Parser::parseNode() {
         // Could be a module call: name(args) { ... }
         if (peek(1).kind == TokenKind::LParen)
             return parseModuleCall();
+        // Local variable assignment: name = expr; — valid as a statement in
+        // any block (module/for/if/... body), not just at file scope.
+        if (peek(1).kind == TokenKind::Equals)
+            return parseAssignNode();
         return nullptr;
 
     case TokenKind::Include:
@@ -492,35 +510,6 @@ AstNodePtr Parser::parseFor() {
 }
 
 // ---------------------------------------------------------------------------
-// parseVecExpr — parse a [x, y, z] literal into a VectorLit ExprPtr
-// ---------------------------------------------------------------------------
-ExprPtr Parser::parseVecExpr() {
-    SourceLoc loc = peek().loc;
-    if (!match(TokenKind::LBracket)) {
-        addError("expected '[' for vector argument", peek().loc);
-        VectorLit vlit;
-        vlit.loc = loc;
-        for (int i = 0; i < 3; ++i)
-            vlit.elements.push_back(makeExpr(NumberLit{0.0, loc}));
-        return makeExpr(std::move(vlit));
-    }
-
-    VectorLit vlit;
-    vlit.loc = loc;
-    for (int i = 0; i < 3; ++i) {
-        if (check(TokenKind::RBracket)) {
-            // Fewer than 3 components — fill rest with 0
-            vlit.elements.push_back(makeExpr(NumberLit{0.0, peek().loc}));
-            continue;
-        }
-        vlit.elements.push_back(parseExpr());
-        if (i < 2) match(TokenKind::Comma);
-    }
-    expect(TokenKind::RBracket, "expected ']' after vector");
-    return makeExpr(std::move(vlit));
-}
-
-// ---------------------------------------------------------------------------
 // parseParamList — named and positional params → ExprPtr map + center flag
 // ---------------------------------------------------------------------------
 void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
@@ -731,14 +720,52 @@ ExprPtr Parser::parsePrimary() {
         expect(TokenKind::RParen, "expected ')'");
         return expr;
     }
-    // Vector literal [e0, e1, ...]
+    // Vector literal [e0, e1, ...], range literal [start:end]/[start:step:end],
+    // or list comprehension [for (var = source) body].
     if (check(TokenKind::LBracket)) {
         SourceLoc loc = advance().loc; // consume [
+
+        if (check(TokenKind::RBracket)) { // empty list: []
+            advance();
+            VectorLit vlit;
+            vlit.loc = loc;
+            return makeExpr(std::move(vlit));
+        }
+
+        if (check(TokenKind::For))
+            return parseListComp(loc);
+
+        // A leading `each` can only start a list element, not a range
+        // (`[each x : y]` isn't meaningful), so only try the range form
+        // when the first element wasn't `each`.
+        VectorElem firstElem = parseVectorElem();
+
+        if (!firstElem.isEach && check(TokenKind::Colon)) {
+            // Range literal — same grammar as a `for` header's range form,
+            // but usable as a general expression (see RangeLit in Expr.h).
+            advance(); // consume ':'
+            auto second = parseExpr();
+            RangeLit range;
+            range.loc = loc;
+            if (check(TokenKind::Colon)) {
+                advance(); // consume ':'
+                range.start = std::move(firstElem.value);
+                range.step  = std::move(second);
+                range.end   = parseExpr();
+            } else {
+                range.start = std::move(firstElem.value);
+                range.end   = std::move(second);
+            }
+            expect(TokenKind::RBracket, "expected ']' after range");
+            return makeExpr(std::move(range));
+        }
+
         VectorLit vlit;
         vlit.loc = loc;
-        while (!check(TokenKind::RBracket) && !atEnd()) {
-            vlit.elements.push_back(parseExpr());
-            if (!match(TokenKind::Comma)) break;
+        vlit.elements.push_back(std::move(firstElem));
+        while (match(TokenKind::Comma)) {
+            if (check(TokenKind::RBracket)) break;
+            vlit.elements.push_back(parseVectorElem());
         }
         expect(TokenKind::RBracket, "expected ']'");
         return makeExpr(std::move(vlit));
@@ -798,22 +825,7 @@ void Parser::parseModuleDef(ParseResult& result) {
 
     // Body must be a brace block for module definitions
     expect(TokenKind::LBrace, "expected '{' for module body");
-    while (!check(TokenKind::RBrace) && !atEnd()) {
-        auto child = parseNode();
-        if (child) {
-            def.body.push_back(std::move(child));
-        } else if (check(TokenKind::Semicolon)) {
-            advance();
-        } else if (!check(TokenKind::RBrace)) {
-            // Handle assignments inside module body
-            if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
-                // Variable assignment in module body — ignore for now (not scope-captured)
-                advance(); advance(); parseExpr(); match(TokenKind::Semicolon);
-            } else {
-                synchronize();
-            }
-        }
-    }
+    def.body = parseBraceBlock();
     expect(TokenKind::RBrace, "expected '}' to close module body");
 
     result.moduleDefs.push_back(std::move(def));
@@ -887,6 +899,75 @@ ExprPtr Parser::parseLetExpr() {
 
     expr.body = parseExpr();
     return makeExpr(std::move(expr));
+}
+
+// ---------------------------------------------------------------------------
+// parseVectorElem — one element of a vector/list literal: `expr` or
+// `each expr` (the latter flattens expr's own elements into the list).
+// ---------------------------------------------------------------------------
+VectorElem Parser::parseVectorElem() {
+    if (check(TokenKind::Each)) {
+        advance(); // consume 'each'
+        return VectorElem{parseExpr(), true};
+    }
+    return VectorElem{parseExpr(), false};
+}
+
+// ---------------------------------------------------------------------------
+// List comprehension — [for (var = source) body]. The leading '[' and the
+// 'for' keyword have already been confirmed present (not yet consumed for
+// 'for') by the caller; this owns everything through the closing ']'.
+// ---------------------------------------------------------------------------
+ExprPtr Parser::parseListComp(SourceLoc loc) {
+    advance(); // consume 'for'
+    expect(TokenKind::LParen, "expected '(' after 'for'");
+    std::string var = expect(TokenKind::Ident, "expected loop variable").text;
+    expect(TokenKind::Equals, "expected '=' after loop variable");
+    auto source = parseExpr();
+    expect(TokenKind::RParen, "expected ')' after for-clause");
+
+    ListCompExpr comp;
+    comp.var    = std::move(var);
+    comp.source = std::move(source);
+    comp.loc    = loc;
+    comp.body   = parseListCompBody();
+
+    expect(TokenKind::RBracket, "expected ']' after list comprehension");
+    return makeExpr(std::move(comp));
+}
+
+// ---------------------------------------------------------------------------
+// parseListCompBody — one body clause of a list comprehension:
+//   expr | each expr | if (cond) body [else body]
+// Recursive so if/else/each can nest (e.g. `if (cond) each a else b`).
+// ---------------------------------------------------------------------------
+ListCompBodyPtr Parser::parseListCompBody() {
+    auto body = std::make_unique<ListCompBody>();
+
+    if (check(TokenKind::If)) {
+        advance(); // consume 'if'
+        expect(TokenKind::LParen, "expected '(' after 'if'");
+        body->kind      = ListCompBody::Kind::If;
+        body->condition = parseExpr();
+        expect(TokenKind::RParen, "expected ')' after if-condition");
+        body->thenBody = parseListCompBody();
+        if (check(TokenKind::Else)) {
+            advance(); // consume 'else'
+            body->elseBody = parseListCompBody();
+        }
+        return body;
+    }
+
+    if (check(TokenKind::Each)) {
+        advance(); // consume 'each'
+        body->kind = ListCompBody::Kind::Each;
+        body->expr = parseExpr();
+        return body;
+    }
+
+    body->kind = ListCompBody::Kind::Expr;
+    body->expr = parseExpr();
+    return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,22 +1090,33 @@ AstNodePtr Parser::parseProjection() {
 }
 
 // ---------------------------------------------------------------------------
+// parseBraceBlock: statements up to (not including) the closing '}' — each
+// is either a geometry node or a local assignment (both come back from
+// parseNode(), which now handles `name = expr;` as well as geometry).
+// ---------------------------------------------------------------------------
+std::vector<AstNodePtr> Parser::parseBraceBlock() {
+    std::vector<AstNodePtr> children;
+    while (!check(TokenKind::RBrace) && !atEnd()) {
+        auto child = parseNode();
+        if (child) {
+            children.push_back(std::move(child));
+        } else if (check(TokenKind::Semicolon)) {
+            advance();
+        } else if (!check(TokenKind::RBrace)) {
+            synchronize();
+        }
+    }
+    return children;
+}
+
+// ---------------------------------------------------------------------------
 // parseBody: { children* } or single child node
 // ---------------------------------------------------------------------------
 std::vector<AstNodePtr> Parser::parseBody() {
     std::vector<AstNodePtr> children;
 
     if (match(TokenKind::LBrace)) {
-        while (!check(TokenKind::RBrace) && !atEnd()) {
-            auto child = parseNode();
-            if (child) {
-                children.push_back(std::move(child));
-            } else if (check(TokenKind::Semicolon)) {
-                advance();
-            } else if (!check(TokenKind::RBrace)) {
-                synchronize();
-            }
-        }
+        children = parseBraceBlock();
         expect(TokenKind::RBrace, "expected '}' to close block");
         match(TokenKind::Semicolon);
     } else {

@@ -33,6 +33,24 @@ public:
     Value       getVar(const std::string& name) const;
     void        setVar(const std::string& name, Value val);
 
+    // Expands a range's [start:step:end] bounds into the concrete sequence
+    // of values it denotes — shared by for-loops (both the `for (v =
+    // [a:b:c])` literal form and `for (v = expr)` when expr is a Range
+    // value) and list comprehensions. Empty if step is 0. Capped at
+    // kMaxRangeCount so a runaway range (e.g. a typo'd step) can't exhaust
+    // memory the way an unbounded for-loop already can't (see ForNode's own
+    // matching cap in CsgEvaluator.cpp).
+    static constexpr int kMaxRangeCount = 10000;
+    std::vector<Value> expandRange(double start, double step, double end) const;
+
+    // Expands a value into the sequence of per-iteration values a for-loop
+    // or list-comprehension for-clause visits for it: a Range expands via
+    // expandRange(); a Vector iterates its own elements (`for (p = pts)`
+    // visits each element of pts); anything else is a single iteration of
+    // that value unchanged. Shared by CsgEvaluator::evalFor's expression
+    // form and ListCompExpr below.
+    std::vector<Value> iterationValues(const Value& v) const;
+
     // Environment snapshot/restore for scoping.
     std::unordered_map<std::string, Value> snapshotEnv() const { return m_env; }
     void restoreEnv(std::unordered_map<std::string, Value> env) { m_env = std::move(env); }
@@ -55,8 +73,31 @@ private:
     static constexpr int kMaxCallDepth = 200;
     int m_callDepth = 0;
 
+    // Guards against a nested list comprehension's element count multiplying
+    // out of control — each individual range is already capped at
+    // kMaxRangeCount, but that cap is per-range, so
+    // `[for (i=[0:9999]) [for (j=[0:9999]) i+j]]` would otherwise allocate
+    // ~1e8 Values despite neither range exceeding its own cap. m_listCompBudget
+    // is shared across an entire (possibly nested) comprehension expression —
+    // reset only when the outermost one starts (m_listCompDepth == 0) — and
+    // decremented per element actually produced by collectListCompBody, so
+    // the total across all nesting levels of one expression is bounded.
+    static constexpr long long kMaxListCompElements = 1'000'000;
+    long long m_listCompBudget = 0;
+    int       m_listCompDepth  = 0;
+
     Value callBuiltin(const std::string& name,
                       const std::vector<Value>& args) const;
+
+    // Appends v's per-iteration values (see iterationValues()) onto out —
+    // used by `each` in both a plain list literal and a list-comprehension
+    // body.
+    void flattenAppend(std::vector<Value>& out, const Value& v) const;
+
+    // Evaluates one list-comprehension body clause (see ListCompBody in
+    // Expr.h), appending whatever it contributes onto out (subject to
+    // m_listCompBudget). Recursive since if/else/each clauses can nest.
+    void collectListCompBody(const ListCompBody& body, std::vector<Value>& out);
 };
 
 } // namespace chisel::lang

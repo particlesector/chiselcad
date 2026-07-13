@@ -54,6 +54,7 @@ enum class TokenKind : uint8_t {
     If,       // if
     Else,     // else
     For,      // for
+    Each,     // each
     Module,   // module
     Function, // function
     Let,      // let

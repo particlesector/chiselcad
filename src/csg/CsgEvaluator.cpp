@@ -119,6 +119,14 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, c
             return evalOffset(n, xform, color);
         else if constexpr (std::is_same_v<T, ProjectionNode>)
             return evalProjection(n, xform, color);
+        else if constexpr (std::is_same_v<T, AssignStmt>) {
+            // Local assignment as a block statement: mutates the current
+            // scope in place (the enclosing evalXxx call is responsible for
+            // snapshot/restore around its whole child list, so this doesn't
+            // leak past the block it's written in). Produces no geometry.
+            m_interp->setVar(n.name, m_interp->evaluate(*n.value));
+            return nullptr;
+        }
         return nullptr;
     }, node);
 }
@@ -290,10 +298,15 @@ CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xfor
     const glm::mat4 childXform = isLocalSpaceOp ? glm::mat4{1.0f} : xform;
     if (isLocalSpaceOp) bnode.transform = xform;
 
+    // Local assignments among the children (see AssignStmt in evalNode) are
+    // scoped to this block: save/restore around the whole child list so they
+    // don't leak into whatever follows this node in the enclosing scope.
+    auto savedEnv = m_interp->snapshotEnv();
     for (const auto& child : b.children) {
         if (auto c = evalNode(*child, childXform, color))
             bnode.children.push_back(std::move(c));
     }
+    m_interp->restoreEnv(std::move(savedEnv));
     return makeBoolean(std::move(bnode));
 }
 
@@ -305,10 +318,12 @@ CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& 
 
     std::vector<CsgNodePtr> children;
     children.reserve(t.children.size());
+    auto savedEnv = m_interp->snapshotEnv();
     for (const auto& child : t.children) {
         if (auto c = evalNode(*child, combined, color))
             children.push_back(std::move(c));
     }
+    m_interp->restoreEnv(std::move(savedEnv));
 
     if (children.empty())     return nullptr;
     if (children.size() == 1) return children[0];
@@ -428,10 +443,12 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform, cons
 
     std::vector<CsgNodePtr> children;
     children.reserve(branch.size());
+    auto savedEnv = m_interp->snapshotEnv();
     for (const auto& child : branch) {
         if (auto c = evalNode(*child, xform, color))
             children.push_back(std::move(c));
     }
+    m_interp->restoreEnv(std::move(savedEnv));
 
     if (children.empty())     return nullptr;
     if (children.size() == 1) return children[0];
@@ -449,7 +466,6 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform, cons
 CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, const ColorAttr& color) {
     // Build the sequence of iteration values
     std::vector<Value> values;
-    static constexpr int kMaxIter = 10000;
 
     if (node.range.isRange) {
         double start = m_interp->evalNumber(*node.range.start);
@@ -457,13 +473,7 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, co
         double step  = node.range.step
                        ? m_interp->evalNumber(*node.range.step)
                        : 1.0;
-        if (step == 0.0) return nullptr;
-        if (step > 0.0)
-            for (double v = start; v <= end + 1e-10 && (int)values.size() < kMaxIter; v += step)
-                values.push_back(Value::fromNumber(v));
-        else
-            for (double v = start; v >= end - 1e-10 && (int)values.size() < kMaxIter; v += step)
-                values.push_back(Value::fromNumber(v));
+        values = m_interp->expandRange(start, step, end);
     } else if (node.range.isBracketedList) {
         // Bracketed list literal `[a, b, c]` — each element is its own loop
         // value, even if it evaluates to a vector (e.g. a point list
@@ -472,28 +482,32 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, co
         for (const auto& e : node.range.list)
             values.push_back(m_interp->evaluate(*e));
     } else {
-        // Expression form `for (v = expr)` — expr must evaluate to a vector;
-        // expand it so that `for (pt = pts)` iterates over pts' elements.
+        // Expression form `for (v = expr)` — expr must evaluate to a vector
+        // or a range (e.g. a variable holding one, or a general range
+        // literal used directly: `for (i = someRange)`); expand either so
+        // `for (pt = pts)` iterates over pts' elements.
         for (const auto& e : node.range.list) {
             Value v = m_interp->evaluate(*e);
-            if (v.isVector())
-                for (const auto& elem : v.asVec()) values.push_back(elem);
-            else
-                values.push_back(std::move(v));
+            for (auto& elem : m_interp->iterationValues(v)) values.push_back(std::move(elem));
         }
     }
 
-    // Save the loop variable's current binding, iterate, then restore
-    const Value saved = m_interp->getVar(node.var);
+    // Each iteration gets a fresh copy of the enclosing scope: the loop
+    // variable and any local assignment inside the body must not leak into
+    // the next iteration or survive past the loop (matching OpenSCAD's
+    // per-iteration block scoping), so restore the pre-loop snapshot before
+    // each iteration rather than just saving/restoring node.var alone.
+    auto savedEnv = m_interp->snapshotEnv();
     std::vector<CsgNodePtr> all;
     for (const Value& v : values) {
+        m_interp->restoreEnv(savedEnv);
         m_interp->setVar(node.var, v);
         for (const auto& child : node.children) {
             if (auto c = evalNode(*child, xform, color))
                 all.push_back(std::move(c));
         }
     }
-    m_interp->setVar(node.var, saved);
+    m_interp->restoreEnv(std::move(savedEnv));
 
     if (all.empty())     return nullptr;
     if (all.size() == 1) return all[0];
@@ -529,6 +543,11 @@ std::string CsgEvaluator::formatValue(const Value& v) {
         }
         s += "]";
         return s;
+    }
+    if (v.isRange()) {
+        return "[" + formatValue(Value::fromNumber(v.rangeStart)) + ":" +
+                     formatValue(Value::fromNumber(v.rangeStep))  + ":" +
+                     formatValue(Value::fromNumber(v.rangeEnd))   + "]";
     }
     return "undef";
 }
@@ -756,10 +775,12 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
     // Evaluate 2-D children in local space (identity xform)
     // The outer xform is stored in ext.transform and applied to the final solid.
     const glm::mat4 identity{1.0f};
+    auto savedEnv = m_interp->snapshotEnv();
     for (const auto& child : e.children) {
         if (auto c = evalNode(*child, identity, color))
             ext.children.push_back(std::move(c));
     }
+    m_interp->restoreEnv(std::move(savedEnv));
 
     return makeExtrusion(std::move(ext));
 }
@@ -784,10 +805,12 @@ CsgNodePtr CsgEvaluator::evalOffset(const OffsetNode& o, const glm::mat4& xform,
     }
 
     const glm::mat4 identity{1.0f};
+    auto savedEnv = m_interp->snapshotEnv();
     for (const auto& child : o.children) {
         if (auto c = evalNode(*child, identity, color))
             off.children.push_back(std::move(c));
     }
+    m_interp->restoreEnv(std::move(savedEnv));
 
     return makeOffset(std::move(off));
 }
@@ -808,10 +831,12 @@ CsgNodePtr CsgEvaluator::evalProjection(const ProjectionNode& p, const glm::mat4
         proj.cut = bool(m_interp->evaluate(*it->second));
 
     const glm::mat4 identity{1.0f};
+    auto savedEnv = m_interp->snapshotEnv();
     for (const auto& child : p.children) {
         if (auto c = evalNode(*child, identity, color))
             proj.children.push_back(std::move(c));
     }
+    m_interp->restoreEnv(std::move(savedEnv));
 
     return makeProjection(std::move(proj));
 }
@@ -1075,10 +1100,12 @@ CsgNodePtr CsgEvaluator::evalColor(const ColorNode& node, const glm::mat4& xform
 
     std::vector<CsgNodePtr> children;
     children.reserve(node.children.size());
+    auto savedEnv = m_interp->snapshotEnv();
     for (const auto& child : node.children) {
         if (auto c = evalNode(*child, xform, cur))
             children.push_back(std::move(c));
     }
+    m_interp->restoreEnv(std::move(savedEnv));
 
     if (children.empty())     return nullptr;
     if (children.size() == 1) return children[0];

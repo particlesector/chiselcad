@@ -40,19 +40,32 @@
 
 ## v3 — OpenSCAD Language Completeness (final gaps)
 
-### Parser/semantics
+All 33 issues from the July 2026 correctness audit are closed. The items
+below are sequenced into four phases: fix the one known correctness bug
+first, land the expression-language features most real-world `.scad` files
+depend on (list comprehensions need general range literals first), then the
+lower-risk debug/parser ergonomics, then the remaining geometry primitives
+(ending with nested extrusion, the architecturally trickiest one), and
+close out with import/export breadth, which is additive and blocks nothing
+else.
+
+### Phase 1 — Correctness bug + core expression language ✓
+- [x] Module-local variable assignments — currently parsed and silently discarded, a real bug
+- [x] General range-literal expressions (`x = [0:5];` outside `for`)
+- [x] List comprehensions (`[for (i=range) expr]`, with `if`) and `each` (depends on range literals above)
+
+### Phase 2 — Parser/debug ergonomics
 - [ ] CSG modifier characters `# % ! *` (root/background/disable/debug)
-- [ ] List comprehensions (`[for (i=range) expr]`, with `if`) and `each`
+
+### Phase 3 — Geometry primitives & ops
 - [ ] `polyhedron(points=..., faces=...)`
 - [ ] `resize(newsize, ...)`
-- [ ] Module-local variable assignments — currently parsed and silently discarded, a real bug
-- [ ] General range-literal expressions (`x = [0:5];` outside `for`)
 - [ ] Nested extrusion (extrude wrapping extrude) — currently a silent no-op
 
-### Import/export
-- [ ] Additional `import()` formats: OFF, 3MF, AMF, DXF, SVG
-- [ ] PNG heightmap support for `surface()`
+### Phase 4 — Import/export breadth
 - [ ] Per-file diagnostics for code reached via `include`/`use`
+- [ ] PNG heightmap support for `surface()`
+- [ ] Additional `import()` formats: OFF, 3MF, AMF, DXF, SVG
 
 ## v4 — Tooling & Visual Quality
 

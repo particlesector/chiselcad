@@ -749,6 +749,91 @@ TEST_CASE("CsgEval:module call with default param", "[csg]") {
     REQUIRE(leaf.params.at("h") == Approx(2.0));
 }
 
+TEST_CASE("CsgEval:module-local variable assignment is visible to later statements in the body", "[csg][bugfix]") {
+    // Previously parsed and silently discarded; d must actually reach cube().
+    auto s = evaluate(
+        "module box(r) { d = r * 2; cube(d); }"
+        "box(3);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.params.at("x") == Approx(6.0));
+    REQUIRE(leaf.params.at("y") == Approx(6.0));
+    REQUIRE(leaf.params.at("z") == Approx(6.0));
+}
+
+TEST_CASE("CsgEval:module-local variable assignment does not leak past the module call", "[csg][bugfix]") {
+    auto s = evaluate(
+        "module box() { d = 42; cube(d); }"
+        "box();"
+        "sphere(r=d);" // 'd' is undef here -> coerces to 0
+    );
+    REQUIRE(s.roots.size() == 2);
+    REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(0.0));
+}
+
+TEST_CASE("CsgEval:module-local assignment can re-derive from an earlier module parameter", "[csg][bugfix]") {
+    auto s = evaluate(
+        "module box(r) { r = r + 1; cube(r); }"
+        "box(4);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).params.at("x") == Approx(5.0));
+}
+
+TEST_CASE("CsgEval:local assignment inside a transform block does not leak to sibling statements", "[csg][bugfix]") {
+    auto s = evaluate(
+        "translate([1,0,0]) { x = 5; cube(x); }"
+        "sphere(r=x);" // 'x' undef outside the block -> 0
+    );
+    REQUIRE(s.roots.size() == 2);
+    REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(0.0));
+}
+
+TEST_CASE("CsgEval:local assignment inside an if-block is scoped to that block", "[csg][bugfix]") {
+    auto s = evaluate(
+        "if (true) { y = 7; cube(y); }"
+        "sphere(r=y);"
+    );
+    REQUIRE(s.roots.size() == 2);
+    REQUIRE(asLeaf(s.roots[0]).params.at("x") == Approx(7.0));
+    REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(0.0));
+}
+
+TEST_CASE("CsgEval:local assignment inside a for-body does not leak past the loop", "[csg][bugfix]") {
+    // Previously only the loop variable itself was saved/restored around a
+    // for loop; any other variable a body statement assigned would leak
+    // into the enclosing scope forever once assignments-in-blocks became
+    // possible. z must read back as its pre-loop value (1), not 99.
+    auto s = evaluate(
+        "z = 1;"
+        "for (i = [0:2]) { z = 99; cube(z); }"
+        "sphere(r=z);"
+    );
+    REQUIRE(s.roots.size() == 2);
+    REQUIRE(asLeaf(s.roots[1]).params.at("r") == Approx(1.0));
+}
+
+TEST_CASE("CsgEval:local assignment inside a nested if-block inside a for-body is scoped to that if", "[csg][bugfix]") {
+    // Each `{}` — including a control-flow block nested inside another —
+    // is its own scope: an assignment inside the inner if() must not
+    // survive to a sibling statement in the enclosing for-body once that
+    // if() returns, matching OpenSCAD's per-block scoping.
+    auto s = evaluate(
+        "for (i = [0:1]) {"
+        "  if (i == 0) { z = 5; }"
+        "  cube(z == undef ? 1 : 2);"
+        "}"
+    );
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 2);
+    // Both iterations see z as undef by the time cube() runs: the if()'s
+    // own scope already restored it before the sibling statement executes.
+    REQUIRE(asLeaf(b.children[0]).params.at("x") == Approx(1.0));
+    REQUIRE(asLeaf(b.children[1]).params.at("x") == Approx(1.0));
+}
+
 TEST_CASE("CsgEval:module with multi-primitive body wraps in union", "[csg]") {
     auto s = evaluate(
         "module combo() { sphere(r=1); cube([2,2,2]); }"
@@ -851,6 +936,35 @@ TEST_CASE("CsgEval:echo formats number", "[csg][tier-c]") {
     auto s = evaluate("echo(3.14);");
     REQUIRE(!s.echoMessages.empty());
     REQUIRE(s.echoMessages[0].find("3.14") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:echo formats a range literal as [start:step:end], not an expanded list", "[csg][bugfix]") {
+    auto s = evaluate("echo([0:2:10]);");
+    REQUIRE(!s.echoMessages.empty());
+    REQUIRE(s.echoMessages[0].find("[0:2:10]") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:list comprehension builds polygon() points end-to-end", "[csg][bugfix]") {
+    auto s = evaluate("polygon(points=[for (i = [0:3]) [i, i * 2]]);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Polygon2D);
+    REQUIRE(leaf.polyPoints.size() == 4);
+    REQUIRE(leaf.polyPoints[2].x == Approx(2.0f));
+    REQUIRE(leaf.polyPoints[2].y == Approx(4.0f));
+}
+
+TEST_CASE("CsgEval:for over a variable holding a range literal expands it", "[csg][bugfix]") {
+    auto s = evaluate(
+        "r = [0:2];"
+        "for (i = r) cube(i + 1);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 3);
+    REQUIRE(asLeaf(b.children[0]).params.at("x") == Approx(1.0));
+    REQUIRE(asLeaf(b.children[1]).params.at("x") == Approx(2.0));
+    REQUIRE(asLeaf(b.children[2]).params.at("x") == Approx(3.0));
 }
 
 TEST_CASE("CsgEval:echo in for loop", "[csg][tier-c]") {

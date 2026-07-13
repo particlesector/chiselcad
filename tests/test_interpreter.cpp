@@ -580,3 +580,178 @@ TEST_CASE("Interp:str never leaks nan text with a sign glitch", "[interp]") {
 TEST_CASE("Interp:chr rejects huge/non-finite codepoints", "[interp]") {
     REQUIRE(evalVal("chr(1e20)").isUndef());
 }
+
+// ---------------------------------------------------------------------------
+// General range-literal expressions (usable outside `for`)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:range literal evaluates to a Range value, not a Vector", "[interp][bugfix]") {
+    Value v = evalVal("[0:5]");
+    REQUIRE(v.isRange());
+    REQUIRE_FALSE(v.isVector());
+    REQUIRE(v.rangeStart == Approx(0.0));
+    REQUIRE(v.rangeStep  == Approx(1.0)); // omitted step defaults to 1
+    REQUIRE(v.rangeEnd   == Approx(5.0));
+}
+
+TEST_CASE("Interp:range literal with explicit step", "[interp][bugfix]") {
+    Value v = evalVal("[0:2:10]");
+    REQUIRE(v.isRange());
+    REQUIRE(v.rangeStart == Approx(0.0));
+    REQUIRE(v.rangeStep  == Approx(2.0));
+    REQUIRE(v.rangeEnd   == Approx(10.0));
+}
+
+TEST_CASE("Interp:range bounds can reference variables", "[interp][bugfix]") {
+    Value v = evalVal("let (a = 2, b = 12) [a:2:b]");
+    REQUIRE(v.isRange());
+    REQUIRE(v.rangeStart == Approx(2.0));
+    REQUIRE(v.rangeStep  == Approx(2.0));
+    REQUIRE(v.rangeEnd   == Approx(12.0));
+}
+
+TEST_CASE("Interp:expandRange produces the inclusive stepped sequence", "[interp][bugfix]") {
+    Interpreter interp;
+    auto vals = interp.expandRange(0.0, 2.0, 6.0);
+    REQUIRE(vals.size() == 4);
+    REQUIRE(vals[0].asNumber() == Approx(0.0));
+    REQUIRE(vals[1].asNumber() == Approx(2.0));
+    REQUIRE(vals[2].asNumber() == Approx(4.0));
+    REQUIRE(vals[3].asNumber() == Approx(6.0));
+}
+
+TEST_CASE("Interp:expandRange with negative step counts down", "[interp][bugfix]") {
+    Interpreter interp;
+    auto vals = interp.expandRange(10.0, -5.0, 0.0);
+    REQUIRE(vals.size() == 3);
+    REQUIRE(vals[0].asNumber() == Approx(10.0));
+    REQUIRE(vals[2].asNumber() == Approx(0.0));
+}
+
+TEST_CASE("Interp:expandRange with a zero step is empty, not infinite", "[interp][bugfix]") {
+    Interpreter interp;
+    REQUIRE(interp.expandRange(0.0, 0.0, 10.0).empty());
+}
+
+TEST_CASE("Interp:len() on a range counts its elements", "[interp][bugfix]") {
+    REQUIRE(evalNum("len([0:2:10])") == Approx(6.0));
+}
+
+TEST_CASE("Interp:a range literal is truthy", "[interp][bugfix]") {
+    REQUIRE(bool(evalVal("[0:5]")) == true);
+}
+
+TEST_CASE("Interp:indexing into a range yields the nth expanded value", "[interp][bugfix]") {
+    REQUIRE(evalNum("[0:2:10][3]") == Approx(6.0));
+}
+
+TEST_CASE("Interp:indexing past the end of a range is undef", "[interp][bugfix]") {
+    REQUIRE(evalVal("[0:2:10][100]").isUndef());
+}
+
+// ---------------------------------------------------------------------------
+// List comprehensions and `each`
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:basic list comprehension over a range", "[interp][bugfix]") {
+    Value v = evalVal("[for (i = [0:3]) i * 2]");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 4);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(2.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(4.0));
+    REQUIRE(v.asVec()[3].asNumber() == Approx(6.0));
+}
+
+TEST_CASE("Interp:list comprehension over an existing vector variable", "[interp][bugfix]") {
+    Value v = evalVal("let (pts = [10, 20, 30]) [for (p = pts) p + 1]");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 3);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(11.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(31.0));
+}
+
+TEST_CASE("Interp:list comprehension with if filter drops non-matching elements", "[interp][bugfix]") {
+    Value v = evalVal("[for (i = [0:5]) if (i % 2 == 0) i]");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 3); // 0, 2, 4
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(2.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(4.0));
+}
+
+TEST_CASE("Interp:list comprehension with if/else keeps one branch's value per iteration", "[interp][bugfix]") {
+    Value v = evalVal("[for (i = [0:3]) if (i % 2 == 0) i else -i]");
+    REQUIRE(v.asVec().size() == 4);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(-1.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(2.0));
+    REQUIRE(v.asVec()[3].asNumber() == Approx(-3.0));
+}
+
+TEST_CASE("Interp:list comprehension each flattens a nested vector into the result", "[interp][bugfix]") {
+    Value v = evalVal("[for (i = [0:2]) each [i, i]]");
+    REQUIRE(v.asVec().size() == 6); // [0,0, 1,1, 2,2]
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(1.0));
+    REQUIRE(v.asVec()[5].asNumber() == Approx(2.0));
+}
+
+TEST_CASE("Interp:list comprehension each flattens a range", "[interp][bugfix]") {
+    Value v = evalVal("[for (i = [0:1]) each [i:i+2]]");
+    REQUIRE(v.asVec().size() == 6); // [0,1,2, 1,2,3]
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(2.0));
+    REQUIRE(v.asVec()[3].asNumber() == Approx(1.0));
+}
+
+TEST_CASE("Interp:list comprehension loop variable does not leak past the comprehension", "[interp][bugfix]") {
+    Value v = evalVal("let (i = 99) [ [for (i = [0:1]) i], i ]");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 2);
+    REQUIRE(v.asVec()[1].asNumber() == Approx(99.0)); // outer i restored
+}
+
+TEST_CASE("Interp:each as a plain list element flattens a vector", "[interp][bugfix]") {
+    Value v = evalVal("[each [1, 2], 3]");
+    REQUIRE(v.asVec().size() == 3);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(1.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(2.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(3.0));
+}
+
+TEST_CASE("Interp:each on a non-list value falls back to a single element", "[interp][bugfix]") {
+    Value v = evalVal("[each 5, 6]");
+    REQUIRE(v.asVec().size() == 2);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(5.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(6.0));
+}
+
+// ---------------------------------------------------------------------------
+// Review follow-ups: range equality, and a joint budget across nested
+// list comprehensions (PR #68 review)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:two identical range literals compare equal", "[interp][bugfix]") {
+    REQUIRE(bool(evalVal("[0:5] == [0:5]")) == true);
+}
+
+TEST_CASE("Interp:ranges with different bounds/step compare unequal", "[interp][bugfix]") {
+    REQUIRE(bool(evalVal("[0:5] == [0:2:5]")) == false);
+    REQUIRE(bool(evalVal("[0:5] == [0:6]")) == false);
+}
+
+TEST_CASE("Interp:a range is not equal to an expanded vector with the same values", "[interp][bugfix]") {
+    // Different tags -> valEqRec's tag check fails before it even looks at
+    // rangeStart/step/end, matching OpenSCAD treating range and list as
+    // distinct types.
+    REQUIRE(bool(evalVal("[0:2] == [0,1,2]")) == false);
+}
+
+TEST_CASE("Interp:nested list comprehensions share a joint element budget, not each capped independently", "[interp][bugfix]") {
+    // Each range is well within kMaxRangeCount (10000) on its own, so
+    // without a joint budget across nesting levels this would realize
+    // ~1e8 Values (10000*10000). The shared cap must cut it off far short
+    // of completing all outer iterations.
+    Value v = evalVal("[for (i=[0:9999]) [for (j=[0:9999]) i+j]]");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() < 10000);
+}
