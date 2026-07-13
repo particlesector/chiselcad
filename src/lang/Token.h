@@ -86,6 +86,11 @@ enum class TokenKind : uint8_t {
     Slash,        // /
     Percent,      // %
 
+    // CSG modifier prefix — only '#' needs its own token; '%'/'*'/'!' above
+    // double as this when the Parser finds them in statement-start position
+    // (see Modifier in AST.h).
+    Hash,         // #
+
     // Comparison / equality
     EqualEqual,   // ==
     BangEqual,    // !=

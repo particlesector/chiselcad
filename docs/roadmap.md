@@ -54,8 +54,8 @@ else.
 - [x] General range-literal expressions (`x = [0:5];` outside `for`)
 - [x] List comprehensions (`[for (i=range) expr]`, with `if`) and `each` (depends on range literals above)
 
-### Phase 2 — Parser/debug ergonomics
-- [ ] CSG modifier characters `# % ! *` (root/background/disable/debug)
+### Phase 2 — Parser/debug ergonomics ✓
+- [x] CSG modifier characters `# % ! *` (root/background/disable/debug)
 
 ### Phase 3 — Geometry primitives & ops
 - [ ] `polyhedron(points=..., faces=...)`

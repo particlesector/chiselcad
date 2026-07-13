@@ -34,6 +34,9 @@ private:
 
     // ---- geometry nodes ---------------------------------------------------
     AstNodePtr parseNode();
+    // The dispatch previously done directly by parseNode(); parseNode() now
+    // just consumes a leading # % ! * modifier run (if any) around this.
+    AstNodePtr parseNodeInner();
     AstNodePtr parsePrimitive(TokenKind k);
     AstNodePtr parseBoolean(TokenKind k);
     AstNodePtr parseTransform(TokenKind k);

@@ -78,10 +78,21 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
             scene.roots.push_back(std::move(node));
     }
 
+    // '!' (root/show-only): if any node anywhere in the tree carried it,
+    // discard everything else — the marked subtree(s) become the entire
+    // output, exactly as if the file contained only them. Background roots
+    // (from '%' elsewhere in the file) are discarded too, matching
+    // OpenSCAD: '!' means *only* this, full stop.
+    if (!m_rootOnlyNodes.empty()) {
+        scene.roots = m_rootOnlyNodes;
+        scene.backgroundRoots.clear();
+    }
+
     m_interp = nullptr;
     m_scene  = nullptr;
     m_moduleDefs.clear();
     m_childrenStack.clear();
+    m_rootOnlyNodes.clear();
     return scene;
 }
 
@@ -95,7 +106,14 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, c
     // through this function, so bailing out here halts all of them without
     // needing a check in each individual loop.
     if (m_aborted) return nullptr;
-    return std::visit([&](const auto& n) -> CsgNodePtr {
+
+    // '*' (disable): the subtree is skipped entirely — not evaluated at all,
+    // so nested echo()/assert() or expensive module calls inside it never
+    // run, matching OpenSCAD's "as if this statement wasn't here" semantics.
+    const uint8_t mods = astModifiers(node);
+    if (mods & ModDisable) return nullptr;
+
+    CsgNodePtr result = std::visit([&](const auto& n) -> CsgNodePtr {
         using T = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<T, PrimitiveNode>)
             return evalPrimitive(n, xform, color);
@@ -129,6 +147,33 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, c
         }
         return nullptr;
     }, node);
+
+    if (!result || mods == ModNone) return result;
+
+    // '#' (highlight/debug): force a highlight tint on this node's own
+    // subtree, exactly like an implicit color() wrapper — and like a nested
+    // (non-root) color(), it only becomes visible once this node ends up as
+    // (or inside) a CsgScene root, since Manifold's boolean merge discards
+    // per-child color identity below that level (see ColorAttr's comment).
+    if (mods & ModHighlight)
+        std::visit([](auto& n) { n.color = ColorAttr{true, kHighlightColor}; }, *result);
+
+    // '!' (root/show-only): stash this fully-evaluated subtree; evaluate()
+    // swaps it in for the whole scene once the entire tree has been walked.
+    if (mods & ModRoot)
+        m_rootOnlyNodes.push_back(result);
+
+    // '%' (background): excluded from whatever boolean/group it's nested
+    // in — returning nullptr here means the parent's own children/geometry
+    // loop simply doesn't add it — and instead rendered as its own
+    // independent, tinted reference root.
+    if (mods & ModBackground) {
+        std::visit([](auto& n) { n.color = ColorAttr{true, kBackgroundColor}; }, *result);
+        if (m_scene) m_scene->backgroundRoots.push_back(result);
+        return nullptr;
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------

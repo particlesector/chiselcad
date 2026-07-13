@@ -81,6 +81,10 @@ private:
     // Last successfully built/loaded mesh (kept for STL export)
     std::vector<render::Vertex>   m_meshVerts;
     std::vector<uint32_t>         m_meshIndices;
+    // Prefix of m_meshIndices that's real model geometry, excluding any
+    // '%'-tagged background/reference roots appended after it (see
+    // BuildResult::realIndexCount) — exportStl() only writes this prefix.
+    uint32_t                      m_realIndexCount = 0;
 
     // True when the current file is a loaded STL (no build pipeline)
     bool     m_isStlFile    = false;

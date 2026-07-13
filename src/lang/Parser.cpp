@@ -202,7 +202,30 @@ void Parser::parseInclude(ParseResult& result) {
 // ---------------------------------------------------------------------------
 // Node dispatch
 // ---------------------------------------------------------------------------
+// A statement may be prefixed by any run of CSG modifier characters
+// (# % ! *, in any order/repetition — OpenSCAD allows stacking them, e.g.
+// `#!cube();`). None of the four are valid at statement-start any other
+// way, so this is unambiguous with their operator meanings inside
+// expressions (parseExpr() never calls parseNode()).
 AstNodePtr Parser::parseNode() {
+    uint8_t mods = ModNone;
+    for (;;) {
+        switch (peek().kind) {
+        case TokenKind::Hash:    mods |= ModHighlight;  advance(); continue;
+        case TokenKind::Percent: mods |= ModBackground; advance(); continue;
+        case TokenKind::Star:    mods |= ModDisable;    advance(); continue;
+        case TokenKind::Bang:    mods |= ModRoot;        advance(); continue;
+        default: break;
+        }
+        break;
+    }
+
+    AstNodePtr node = parseNodeInner();
+    if (node && mods != ModNone) setAstModifiers(*node, mods);
+    return node;
+}
+
+AstNodePtr Parser::parseNodeInner() {
     TokenKind k = peek().kind;
 
     switch (k) {

@@ -889,3 +889,51 @@ TEST_CASE("Parser:keyword-named param still parses as a named param", "[parser]"
     auto r = parse("linear_extrude(height=5, scale=2) square(1);");
     REQUIRE(r.roots.size() == 1);
 }
+
+// ---------------------------------------------------------------------------
+// v3 Phase 2: CSG modifier characters (# % ! *)
+// ---------------------------------------------------------------------------
+TEST_CASE("Parser:each modifier character tags the following primitive", "[parser]") {
+    REQUIRE((asPrim(parse("#cube(1);").roots[0]).modifiers & ModHighlight) != 0);
+    REQUIRE((asPrim(parse("%cube(1);").roots[0]).modifiers & ModBackground) != 0);
+    REQUIRE((asPrim(parse("*cube(1);").roots[0]).modifiers & ModDisable) != 0);
+    REQUIRE((asPrim(parse("!cube(1);").roots[0]).modifiers & ModRoot) != 0);
+}
+
+TEST_CASE("Parser:no modifier characters means modifiers is ModNone", "[parser]") {
+    REQUIRE(asPrim(parse("cube(1);").roots[0]).modifiers == ModNone);
+}
+
+TEST_CASE("Parser:stacked modifier characters combine into one bitmask", "[parser]") {
+    auto mods = asPrim(parse("#!cube(1);").roots[0]).modifiers;
+    REQUIRE((mods & ModHighlight) != 0);
+    REQUIRE((mods & ModRoot) != 0);
+    REQUIRE((mods & ModBackground) == 0);
+    REQUIRE((mods & ModDisable) == 0);
+}
+
+TEST_CASE("Parser:modifier character tags a boolean/group node", "[parser]") {
+    auto r = parse("%union() { cube(1); sphere(1); }");
+    REQUIRE((asBool(r.roots[0]).modifiers & ModBackground) != 0);
+}
+
+TEST_CASE("Parser:modifier character tags a transform node", "[parser]") {
+    auto r = parse("#translate([1,0,0]) cube(1);");
+    REQUIRE((asTrans(r.roots[0]).modifiers & ModHighlight) != 0);
+}
+
+TEST_CASE("Parser:modifier character works on a statement nested in a block", "[parser]") {
+    auto r = parse("union() { *cube(1); sphere(1); }");
+    const auto& u = asBool(r.roots[0]);
+    REQUIRE(u.children.size() == 2);
+    REQUIRE((asPrim(u.children[0]).modifiers & ModDisable) != 0);
+    REQUIRE(asPrim(u.children[1]).modifiers == ModNone);
+}
+
+TEST_CASE("Parser:percent/star/bang still work as expression operators", "[parser]") {
+    // These characters only mean CSG modifiers at statement-start;
+    // parseNode() never fires mid-expression, so ordinary arithmetic/
+    // logical-not usage inside a param expression must be unaffected.
+    auto r = parse("x = 5 % 2;\ny = 3 * 4;\nz = !true;");
+    REQUIRE(r.assignments.size() == 3);
+}

@@ -33,6 +33,13 @@ struct BuildResult {
     double                       volume     = 0.0;
     double                       surfaceArea = 0.0;
     double                       elapsedMs  = 0.0;
+    // Prefix length of `indices` (and, transitively, the verts it refers to)
+    // that belongs to "real" model geometry, as opposed to '%'-tagged
+    // background/reference roots appended after it — see CsgScene::
+    // backgroundRoots. STL export uses only this prefix; the rest is
+    // rendered on screen but was never part of the model. Equal to
+    // indices.size() when the scene has no background roots.
+    uint32_t                     realIndexCount = 0;
 };
 
 // ---------------------------------------------------------------------------
