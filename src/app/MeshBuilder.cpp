@@ -175,8 +175,10 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
 
     // ---- Phase: Meshing (Manifold — the slow part) ----
     m_phase = BuildPhase::Meshing;
-    csg::MeshCache     cache;
-    csg::MeshEvaluator meshEval(cache);
+    // m_meshCache persists across buildOne() calls (see MeshBuilder.h) so
+    // that unchanged subtrees reuse their previously-tessellated mesh across
+    // file saves instead of every leaf being recomputed on every edit.
+    csg::MeshEvaluator meshEval(m_meshCache);
     meshEval.useManifoldSphere = m_useManifoldSphere.load();
     std::vector<manifold::Manifold> rootMeshes;
     try {
@@ -186,6 +188,8 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
         storeError(std::move(result));
         return;
     }
+    for (auto& d : meshEval.diagnostics())
+        result->diags.push_back(d);
 
     if (gen != m_currentGen.load()) return;
 

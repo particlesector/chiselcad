@@ -41,19 +41,35 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
 
     // Index module definitions by name for O(1) lookup during calls
     m_moduleDefs.clear();
+    m_aborted = false;
     for (const auto& def : result.moduleDefs)
         m_moduleDefs[def.name] = &def;
 
     CsgScene scene;
     m_scene = &scene;
-    scene.globalFn = result.globalFn;
-    scene.globalFs = result.globalFs;
-    scene.globalFa = result.globalFa;
+
+    // $fn/$fs/$fa: every assignment (literal or not) is pushed onto
+    // result.assignments in file order, same as any other variable, and
+    // loadAssignments() (called by callers before reaching this function)
+    // has already evaluated them in order into interp's env — so reading it
+    // back here gives correct "last assignment wins" semantics even when a
+    // script mixes literal and non-literal reassignments of the same
+    // special var (e.g. `$fn = quality*4; $fn = 8;`). result.globalFn is
+    // only a fallback for the (common) case where the var was never
+    // assigned at all, or only Parser-visible cross-include merging
+    // (SourceLoader::mergeGlobalQuality) applies.
+    auto resolveGlobal = [&](const char* name, double parsedVal) {
+        Value v = interp.getVar(name);
+        return v.isNumber() ? v.asNumber() : parsedVal;
+    };
+    scene.globalFn = resolveGlobal("$fn", result.globalFn);
+    scene.globalFs = resolveGlobal("$fs", result.globalFs);
+    scene.globalFa = resolveGlobal("$fa", result.globalFa);
 
     // Make special variables readable in expression context
-    interp.setVar("$fn", Value::fromNumber(result.globalFn));
-    interp.setVar("$fs", Value::fromNumber(result.globalFs));
-    interp.setVar("$fa", Value::fromNumber(result.globalFa));
+    interp.setVar("$fn", Value::fromNumber(scene.globalFn));
+    interp.setVar("$fs", Value::fromNumber(scene.globalFs));
+    interp.setVar("$fa", Value::fromNumber(scene.globalFa));
 
     const glm::mat4 identity{1.0f};
     const ColorAttr  noColor{};
@@ -73,6 +89,12 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
 // Node dispatch
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, const ColorAttr& color) {
+    // A failed assert() aborts the rest of the script (OpenSCAD semantics):
+    // every remaining statement anywhere in the tree — siblings, later
+    // module-body statements, later for-loop iterations, etc. — funnels
+    // through this function, so bailing out here halts all of them without
+    // needing a check in each individual loop.
+    if (m_aborted) return nullptr;
     return std::visit([&](const auto& n) -> CsgNodePtr {
         using T = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<T, PrimitiveNode>)
@@ -549,6 +571,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
                     d.message = "assert failed";
                 }
                 m_scene->evalDiags.push_back(std::move(d));
+                m_aborted = true;
             }
         }
         return nullptr;

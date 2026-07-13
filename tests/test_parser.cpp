@@ -55,6 +55,16 @@ TEST_CASE("Parser:global $fn", "[parser]") {
     REQUIRE(r.roots.empty());
 }
 
+TEST_CASE("Parser:non-literal $fn is deferred as a regular assignment, not discarded", "[parser]") {
+    auto r = parse("$fn = 16*2;");
+    // Not resolved at parse time (no variable environment available here)...
+    REQUIRE_FALSE(r.globalFnSet);
+    // ...but also not silently dropped: it's recorded for the Interpreter,
+    // same as any other variable assignment.
+    REQUIRE(r.assignments.size() == 1);
+    REQUIRE(r.assignments[0].name == "$fn");
+}
+
 TEST_CASE("Parser:global $fs and $fa", "[parser]") {
     auto r = parse("$fs = 1.0; $fa = 6.0;");
     REQUIRE(r.globalFs == Approx(1.0));

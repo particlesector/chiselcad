@@ -176,8 +176,17 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
 
     // ------------------------------------------------------------------
     // Mesh (import()/surface()) — already-resolved triangle mesh from
-    // CsgEvaluator (may or may not be vertex-welded — see CsgNode.h); hand
-    // it straight to Manifold's MeshGL constructor either way.
+    // CsgEvaluator (may or may not be vertex-welded — see CsgNode.h).
+    // import()/StlLoader in particular hands back triangle-soup data: a
+    // duplicated position per triangle vertex, since STL itself has no
+    // shared-vertex indexing. Manifold's boolean/transform ops need genuine
+    // manifold topology (shared indices along every interior edge), so
+    // MeshGL::Merge() is called below to weld coincident vertices before
+    // construction — without it, an imported soup mesh almost always fails
+    // Manifold's manifoldness check and every op on it silently propagates
+    // empty/garbage geometry (see MeshEvaluator::checkStatus for the other
+    // half of this fix: surfacing that failure as a Diagnostic instead of
+    // leaving it silent).
     // ------------------------------------------------------------------
     case CsgLeaf::Kind::Mesh: {
         static_assert(sizeof(glm::vec3) == 3 * sizeof(float),
@@ -217,6 +226,15 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
         if (droppedTris > 0)
             spdlog::debug("[mesh] dropped {} triangle(s) referencing an out-of-range "
                           "vertex index (mesh has {} vertices)", droppedTris, numVerts);
+
+        // Best-effort weld: merges vertices that are coincident (within
+        // tolerance) along open edges, populating mergeFromVert/mergeToVert
+        // so the Manifold constructor below builds real shared-vertex
+        // topology instead of treating every triangle as disconnected.
+        // A harmless no-op if the mesh is already indexed/shared (e.g.
+        // SurfaceLoader's output).
+        mesh.Merge();
+
         return manifold::Manifold(mesh);
     }
     }

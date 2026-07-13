@@ -39,10 +39,23 @@ static std::string fmtHash(std::size_t h) {
 
 // Serialize a leaf into a deterministic string key.
 // The key encodes kind, all params (sorted), center, and the 16 matrix
-// elements so that any change to geometry or placement is detected.
-static std::string leafKey(const CsgLeaf& leaf) {
+// elements so that any change to geometry or placement is detected. It also
+// folds in every input from `gen` that generate()/generateCrossSection()
+// can consult besides the leaf itself (global $fn/$fs/$fa, which affect
+// resolveSegments() for Sphere/Cylinder when no per-leaf override is given,
+// and useManifoldSphere, which picks between two different sphere
+// tessellators) — required now that MeshCache is hoisted to persist across
+// rebuilds (see MeshBuilder): a leaf with identical params can legitimately
+// need a different mesh across two builds if one of these globals changed,
+// and without them in the key a persistent cache would return a stale mesh.
+static std::string leafKey(const CsgLeaf& leaf, const PrimitiveGen& gen) {
     std::string k;
     k.reserve(256);
+
+    k += gen.useManifoldSphere ? "ms1:" : "ms0:";
+    k += fmtFloat(gen.globalFn); k += ':';
+    k += fmtFloat(gen.globalFs); k += ':';
+    k += fmtFloat(gen.globalFa); k += ':';
 
     switch (leaf.kind) {
     case CsgLeaf::Kind::Cube:      k += "cube:";      break;
@@ -132,11 +145,67 @@ static manifold::CrossSection apply2DTransform(manifold::CrossSection cs,
     return cs.Transform(m2);
 }
 
+// Human-readable name for a Manifold::Error status, used in diagnostics.
+static const char* manifoldErrorName(manifold::Manifold::Error e) {
+    using E = manifold::Manifold::Error;
+    switch (e) {
+    case E::NoError:                      return "NoError";
+    case E::NonFiniteVertex:              return "NonFiniteVertex";
+    case E::NotManifold:                  return "NotManifold";
+    case E::VertexOutOfBounds:            return "VertexOutOfBounds";
+    case E::PropertiesWrongLength:        return "PropertiesWrongLength";
+    case E::MissingPositionProperties:    return "MissingPositionProperties";
+    case E::MergeVectorsDifferentLengths: return "MergeVectorsDifferentLengths";
+    case E::MergeIndexOutOfBounds:        return "MergeIndexOutOfBounds";
+    case E::TransformWrongLength:         return "TransformWrongLength";
+    case E::RunIndexWrongLength:          return "RunIndexWrongLength";
+    case E::FaceIDWrongLength:            return "FaceIDWrongLength";
+    case E::InvalidConstruction:          return "InvalidConstruction";
+    default:                              return "unknown error";
+    }
+}
+
+static const char* leafKindName(CsgLeaf::Kind k) {
+    switch (k) {
+    case CsgLeaf::Kind::Cube:      return "cube()";
+    case CsgLeaf::Kind::Sphere:    return "sphere()";
+    case CsgLeaf::Kind::Cylinder:  return "cylinder()";
+    case CsgLeaf::Kind::Square2D:  return "square()";
+    case CsgLeaf::Kind::Circle2D:  return "circle()";
+    case CsgLeaf::Kind::Polygon2D: return "polygon()";
+    case CsgLeaf::Kind::Mesh:      return "import()/surface()";
+    }
+    return "leaf";
+}
+
+static const char* booleanOpName(CsgBoolean::Op op) {
+    switch (op) {
+    case CsgBoolean::Op::Union:        return "union()";
+    case CsgBoolean::Op::Difference:   return "difference()";
+    case CsgBoolean::Op::Intersection: return "intersection()";
+    case CsgBoolean::Op::Hull:         return "hull()";
+    case CsgBoolean::Op::Minkowski:    return "minkowski()";
+    }
+    return "boolean op";
+}
+
 // ---------------------------------------------------------------------------
 // MeshEvaluator
 // ---------------------------------------------------------------------------
 MeshEvaluator::MeshEvaluator(MeshCache& cache)
     : m_cache(cache) {}
+
+manifold::Manifold MeshEvaluator::checkStatus(manifold::Manifold m, const std::string& context) {
+    auto status = m.Status();
+    if (status != manifold::Manifold::Error::NoError) {
+        chisel::lang::Diagnostic d;
+        d.level   = chisel::lang::DiagLevel::Error;
+        d.message = context + ": invalid geometry (" + manifoldErrorName(status) +
+                    "); result may be empty or degenerate";
+        m_diags.push_back(std::move(d));
+    }
+    return m;
+}
 
 std::vector<manifold::Manifold> MeshEvaluator::evaluate(const CsgScene& scene) {
     PrimitiveGen gen;
@@ -167,14 +236,18 @@ manifold::Manifold MeshEvaluator::evalNode(const CsgNode& node, const PrimitiveG
 }
 
 manifold::Manifold MeshEvaluator::evalLeaf(const CsgLeaf& leaf, const PrimitiveGen& gen) {
-    const std::string key = leafKey(leaf);
-    return m_cache.getOrCompute(key, [&]() {
+    const std::string key = leafKey(leaf, gen);
+    manifold::Manifold mesh = m_cache.getOrCompute(key, [&]() {
         manifold::Manifold mesh = gen.generate(leaf);
         // Apply the accumulated transform (mat4 → mat4x3 affine)
         if (leaf.transform != glm::mat4{1.0f})
             mesh = mesh.Transform(toAffine(leaf.transform));
         return mesh;
     });
+    // Checked on every call (not just on a cache miss) so a status problem
+    // is reported for every build that includes this leaf, not just the
+    // first one that happened to compute it.
+    return checkStatus(std::move(mesh), leafKindName(leaf.kind));
 }
 
 manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const PrimitiveGen& gen) {
@@ -188,7 +261,7 @@ manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const Primiti
         for (const auto& child : b.children)
             meshes.push_back(evalNode(*child, gen));
         auto result = manifold::Manifold::Hull(meshes);
-        return result.Transform(toAffine(b.transform));
+        return checkStatus(result.Transform(toAffine(b.transform)), booleanOpName(b.op));
     }
 
     manifold::Manifold result = evalNode(*b.children[0], gen);
@@ -208,7 +281,7 @@ manifold::Manifold MeshEvaluator::evalBoolean(const CsgBoolean& b, const Primiti
     if (b.op == CsgBoolean::Op::Minkowski)
         result = result.Transform(toAffine(b.transform));
 
-    return result;
+    return checkStatus(std::move(result), booleanOpName(b.op));
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +349,17 @@ manifold::CrossSection MeshEvaluator::getChildCrossSection(const CsgNode& node,
                                     : manifold::CrossSection(polys, manifold::CrossSection::FillRule::EvenOdd);
             return apply2DTransform(cs, n.transform);
         } else {
-            return {}; // nested extrusion — not supported
+            // Nested extrusion (e.g. linear_extrude() rotate_extrude() ...)
+            // is not currently supported. Flag it explicitly rather than
+            // silently returning empty geometry, so the caller sees a
+            // Diagnostic instead of unexplained missing output.
+            chisel::lang::Diagnostic d;
+            d.level   = chisel::lang::DiagLevel::Error;
+            d.message = "nested extrusion (a linear_extrude()/rotate_extrude() "
+                        "inside another extrude) is not supported; its geometry "
+                        "was skipped";
+            m_diags.push_back(std::move(d));
+            return {};
         }
     }, node);
 }
@@ -329,8 +412,33 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
         double fnOvr = getP("$fn", 0.0);
         int    segs  = gen.resolveSegments(10.0, fnOvr); // 10 = proxy radius
 
+        manifold::Polygons polys = cs.ToPolygons();
+
+        // OpenSCAD requires the 2-D profile not cross the Y axis (Manifold's
+        // X axis here) — revolving a profile that straddles the rotation
+        // axis produces self-intersecting/degenerate geometry. Check before
+        // handing off to Revolve() rather than passing bad input through
+        // silently.
+        constexpr double kAxisEps = 1e-4;
+        bool crossesAxis = false;
+        for (const auto& poly : polys) {
+            for (const auto& pt : poly) {
+                if (pt.x < -kAxisEps) { crossesAxis = true; break; }
+            }
+            if (crossesAxis) break;
+        }
+
+        if (crossesAxis) {
+            chisel::lang::Diagnostic d;
+            d.level   = chisel::lang::DiagLevel::Error;
+            d.message = "rotate_extrude(): profile crosses the rotation axis "
+                        "(all points must satisfy x >= 0); geometry skipped";
+            m_diags.push_back(std::move(d));
+            return {};
+        }
+
         result = manifold::Manifold::Revolve(
-            cs.ToPolygons(),
+            polys,
             segs,
             static_cast<float>(angle));
     }
@@ -339,7 +447,8 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
     if (e.transform != glm::mat4{1.0f})
         result = result.Transform(toAffine(e.transform));
 
-    return result;
+    return checkStatus(std::move(result),
+                        e.kind == CsgExtrusion::Kind::Linear ? "linear_extrude()" : "rotate_extrude()");
 }
 
 } // namespace chisel::csg

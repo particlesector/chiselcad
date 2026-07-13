@@ -76,6 +76,16 @@ private:
     static constexpr int kMaxModuleDepth = 100;
     int m_moduleDepth = 0;
 
+    // Set by a failed assert() and checked at the top of evalNode(): matches
+    // OpenSCAD's fatal "assert failure aborts the script" semantics by
+    // short-circuiting every subsequent evalNode() call for the rest of the
+    // evaluation (root loop, module bodies, for-loop bodies, boolean/
+    // transform/offset/projection children, children() — all funnel through
+    // evalNode, so a single guard there covers every nesting level).
+    // Geometry already produced by statements before the failing assert()
+    // is kept, matching in-order script execution up to the abort point.
+    bool m_aborted = false;
+
     CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform, const ColorAttr& color);
     CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform, const ColorAttr& color);

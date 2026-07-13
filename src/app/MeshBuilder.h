@@ -1,4 +1,5 @@
 #pragma once
+#include "csg/MeshCache.h"
 #include "lang/Diagnostic.h"
 #include "render/GpuMesh.h"
 #include <atomic>
@@ -73,6 +74,15 @@ public:
 private:
     void workerLoop();
     void buildOne(std::filesystem::path path, int gen);
+
+    // Owned by and only ever touched from the worker thread (workerLoop()/
+    // buildOne() below) — never accessed from the main thread, so it needs
+    // no locking of its own despite outliving any single build. Persisting
+    // it here (rather than a local inside buildOne(), as before) is the
+    // whole point: it lets unchanged subtrees across successive file saves
+    // reuse their previously-tessellated mesh instead of every leaf being
+    // recomputed on every edit.
+    csg::MeshCache           m_meshCache;
 
     std::thread             m_thread;
     std::mutex              m_workMutex;

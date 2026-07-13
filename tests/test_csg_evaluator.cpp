@@ -63,6 +63,29 @@ TEST_CASE("CsgEval:global $fn forwarded to scene", "[csg]") {
     REQUIRE(s.roots.size() == 1);
 }
 
+TEST_CASE("CsgEval:non-literal global $fn is evaluated, not discarded", "[csg]") {
+    auto s = evaluate("$fn = 16*2; cube([1,1,1]);");
+    REQUIRE(s.globalFn == Approx(32.0));
+}
+
+TEST_CASE("CsgEval:non-literal global $fn can reference an earlier variable", "[csg]") {
+    auto s = evaluate("quality = 4; $fn = quality * 8; cube([1,1,1]);");
+    REQUIRE(s.globalFn == Approx(32.0));
+}
+
+// A later literal reassignment must win over an earlier non-literal one —
+// and vice versa — matching plain last-assignment-wins variable semantics
+// regardless of which form (literal vs. expression) each assignment takes.
+TEST_CASE("CsgEval:a later literal $fn reassignment wins over an earlier non-literal one", "[csg][bugfix]") {
+    auto s = evaluate("quality = 1; $fn = quality * 4; $fn = 8;");
+    REQUIRE(s.globalFn == Approx(8.0));
+}
+
+TEST_CASE("CsgEval:a later non-literal $fn reassignment wins over an earlier literal one", "[csg][bugfix]") {
+    auto s = evaluate("quality = 1; $fn = 8; $fn = quality * 4;");
+    REQUIRE(s.globalFn == Approx(4.0));
+}
+
 // ---------------------------------------------------------------------------
 // Primitives produce CsgLeaf nodes
 // ---------------------------------------------------------------------------
@@ -878,6 +901,25 @@ TEST_CASE("CsgEval:assert fail inside module", "[csg][tier-c]") {
     );
     REQUIRE(!s.evalDiags.empty());
     REQUIRE(s.evalDiags[0].message.find("n must be positive") != std::string::npos);
+}
+
+// A failed assert() must abort evaluation of its enclosing block (and the
+// rest of the script), not just record a diagnostic while every sibling
+// statement keeps evaluating and landing in the output geometry (#46).
+TEST_CASE("CsgEval:assert fail inside module suppresses later statements in that module", "[csg][bugfix]") {
+    auto s = evaluate(
+        "module sc(n) { assert(n > 0, \"n must be positive\"); cube([n, n, n]); }"
+        "sc(-1);"
+    );
+    REQUIRE(!s.evalDiags.empty());
+    REQUIRE(s.roots.empty()); // cube([-1,-1,-1]) must not appear in output
+}
+
+TEST_CASE("CsgEval:assert fail aborts the rest of the script but keeps earlier geometry", "[csg][bugfix]") {
+    auto s = evaluate("cube([1,1,1]); assert(false); cube([2,2,2]);");
+    REQUIRE(!s.evalDiags.empty());
+    REQUIRE(s.roots.size() == 1); // only the cube before the failing assert()
+    REQUIRE(asLeaf(s.roots[0]).params.at("x") == Approx(1.0));
 }
 
 // ---------------------------------------------------------------------------
