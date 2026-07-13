@@ -45,6 +45,9 @@ static const TransformNode& asTrans(const AstNodePtr& n) {
 static const ColorNode& asColor(const AstNodePtr& n) {
     return std::get<ColorNode>(*n);
 }
+static const AssignStmt& asAssign(const AstNodePtr& n) {
+    return std::get<AssignStmt>(*n);
+}
 
 // ---------------------------------------------------------------------------
 // Global special variables
@@ -466,6 +469,26 @@ TEST_CASE("Parser:module definition stored in moduleDefs", "[parser]") {
     REQUIRE(r.moduleDefs[0].params[0].name == "w");
     REQUIRE(r.moduleDefs[0].params[1].name == "h");
     REQUIRE(r.moduleDefs[0].body.size() == 1);
+}
+
+TEST_CASE("Parser:module-local variable assignment is kept, not discarded", "[parser][bugfix]") {
+    auto r = parse("module box(r) { d = r * 2; cube(d); }");
+    REQUIRE(r.moduleDefs.size() == 1);
+    const auto& body = r.moduleDefs[0].body;
+    REQUIRE(body.size() == 2);
+    REQUIRE(asAssign(body[0]).name == "d");
+    Interpreter interp;
+    interp.setVar("r", Value::fromNumber(3.0));
+    REQUIRE(interp.evalNumber(*asAssign(body[0]).value) == Approx(6.0));
+    REQUIRE(asPrim(body[1]).kind == PrimitiveNode::Kind::Cube);
+}
+
+TEST_CASE("Parser:local variable assignment inside a for-body is kept", "[parser][bugfix]") {
+    auto r = parse("for (i = [0:2]) { x = i * 2; cube(x); }");
+    REQUIRE(r.roots.size() == 1);
+    const auto& forBody = std::get<ForNode>(*r.roots[0]).children;
+    REQUIRE(forBody.size() == 2);
+    REQUIRE(asAssign(forBody[0]).name == "x");
 }
 
 TEST_CASE("Parser:module param with default value", "[parser]") {

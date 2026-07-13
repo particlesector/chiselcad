@@ -157,6 +157,20 @@ void Parser::parseAssignment(ParseResult& result) {
 }
 
 // ---------------------------------------------------------------------------
+// Local variable assignment inside a block: name = expr;
+// Reached via parseNode(), so it's usable anywhere a geometry statement is —
+// module/for/if/boolean/transform/... bodies — not just at file scope. Like
+// the other parseNode() cases, the trailing ';' is left for the caller's
+// body-parsing loop to consume (see parseBraceBlock()/parseBody()).
+// ---------------------------------------------------------------------------
+AstNodePtr Parser::parseAssignNode() {
+    const Token& name_tok = advance(); // identifier
+    advance();                         // consume '='
+    auto value = parseExpr();
+    return makeAssign(AssignStmt{name_tok.text, std::move(value), name_tok.loc});
+}
+
+// ---------------------------------------------------------------------------
 // include <path>; / use <path>; — no file I/O here (Parser is file-agnostic);
 // this just records the directive for SourceLoader to resolve recursively.
 // ---------------------------------------------------------------------------
@@ -243,6 +257,10 @@ AstNodePtr Parser::parseNode() {
         // Could be a module call: name(args) { ... }
         if (peek(1).kind == TokenKind::LParen)
             return parseModuleCall();
+        // Local variable assignment: name = expr; — valid as a statement in
+        // any block (module/for/if/... body), not just at file scope.
+        if (peek(1).kind == TokenKind::Equals)
+            return parseAssignNode();
         return nullptr;
 
     case TokenKind::Include:
@@ -798,22 +816,7 @@ void Parser::parseModuleDef(ParseResult& result) {
 
     // Body must be a brace block for module definitions
     expect(TokenKind::LBrace, "expected '{' for module body");
-    while (!check(TokenKind::RBrace) && !atEnd()) {
-        auto child = parseNode();
-        if (child) {
-            def.body.push_back(std::move(child));
-        } else if (check(TokenKind::Semicolon)) {
-            advance();
-        } else if (!check(TokenKind::RBrace)) {
-            // Handle assignments inside module body
-            if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
-                // Variable assignment in module body — ignore for now (not scope-captured)
-                advance(); advance(); parseExpr(); match(TokenKind::Semicolon);
-            } else {
-                synchronize();
-            }
-        }
-    }
+    def.body = parseBraceBlock();
     expect(TokenKind::RBrace, "expected '}' to close module body");
 
     result.moduleDefs.push_back(std::move(def));
@@ -1009,22 +1012,33 @@ AstNodePtr Parser::parseProjection() {
 }
 
 // ---------------------------------------------------------------------------
+// parseBraceBlock: statements up to (not including) the closing '}' — each
+// is either a geometry node or a local assignment (both come back from
+// parseNode(), which now handles `name = expr;` as well as geometry).
+// ---------------------------------------------------------------------------
+std::vector<AstNodePtr> Parser::parseBraceBlock() {
+    std::vector<AstNodePtr> children;
+    while (!check(TokenKind::RBrace) && !atEnd()) {
+        auto child = parseNode();
+        if (child) {
+            children.push_back(std::move(child));
+        } else if (check(TokenKind::Semicolon)) {
+            advance();
+        } else if (!check(TokenKind::RBrace)) {
+            synchronize();
+        }
+    }
+    return children;
+}
+
+// ---------------------------------------------------------------------------
 // parseBody: { children* } or single child node
 // ---------------------------------------------------------------------------
 std::vector<AstNodePtr> Parser::parseBody() {
     std::vector<AstNodePtr> children;
 
     if (match(TokenKind::LBrace)) {
-        while (!check(TokenKind::RBrace) && !atEnd()) {
-            auto child = parseNode();
-            if (child) {
-                children.push_back(std::move(child));
-            } else if (check(TokenKind::Semicolon)) {
-                advance();
-            } else if (!check(TokenKind::RBrace)) {
-                synchronize();
-            }
-        }
+        children = parseBraceBlock();
         expect(TokenKind::RBrace, "expected '}' to close block");
         match(TokenKind::Semicolon);
     } else {

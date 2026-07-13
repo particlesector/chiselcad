@@ -45,6 +45,7 @@ private:
     AstNodePtr parseExtrusion(TokenKind k);
     AstNodePtr parseOffset();
     AstNodePtr parseProjection();
+    AstNodePtr parseAssignNode(); // local assignment inside any block: name = expr;
 
     // ---- module / function definitions ------------------------------------
     void parseModuleDef(ParseResult& result);
@@ -68,6 +69,9 @@ private:
 
     // ---- child body ------------------------------------------------------
     std::vector<AstNodePtr> parseBody();
+    // Statements up to (not including) the closing '}' — shared by parseBody's
+    // brace form and parseModuleDef, which also requires a brace block.
+    std::vector<AstNodePtr> parseBraceBlock();
 
     // ---- error recovery --------------------------------------------------
     void synchronize();
