@@ -38,7 +38,7 @@
 - [x] Geometry ops: `multmatrix()`, `render()`, `color()`, `offset()`, `projection()`
 - [x] File I/O: `include`/`use` (with circular-include detection), `import()` (STL), `surface()` (text `.dat`), `text()` (Latin/Western, via vendored stb_truetype)
 
-## v3 — OpenSCAD Language Completeness (final gaps)
+## v3 — OpenSCAD Language Completeness (final gaps) ✓
 
 All 33 issues from the July 2026 correctness audit are closed. The items
 below are sequenced into four phases: fix the one known correctness bug
@@ -62,10 +62,10 @@ else.
 - [x] `resize(newsize, ...)`
 - [x] Nested extrusion (extrude wrapping extrude) — currently a silent no-op
 
-### Phase 4 — Import/export breadth
-- [ ] Per-file diagnostics for code reached via `include`/`use`
-- [ ] PNG heightmap support for `surface()`
-- [ ] Additional `import()` formats: OFF, 3MF, AMF, DXF, SVG
+### Phase 4 — Import/export breadth ✓
+- [x] Per-file diagnostics for code reached via `include`/`use`
+- [x] PNG heightmap support for `surface()`
+- [x] Additional `import()` formats: OFF, 3MF, AMF, DXF, SVG
 
 ## v4 — Tooling & Visual Quality
 

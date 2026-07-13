@@ -78,7 +78,7 @@ chiselcad/
 ├── resources/
 │   └── fonts/                 # Bundled default font for text() (Roboto)
 ├── third_party/
-│   └── stb/                   # Vendored stb_truetype.h (public domain)
+│   └── stb/                   # Vendored stb_truetype.h + stb_image.h (public domain)
 │
 └── src/
     ├── main.cpp
@@ -112,7 +112,14 @@ chiselcad/
     ├── import/
     │   ├── StlLoader.h/cpp    # Render-independent binary/ASCII STL parsing
     │   ├── StlImporter.h/cpp  # render::Vertex wrapper around StlLoader
-    │   ├── SurfaceLoader.h/cpp # surface() .dat heightmap parsing
+    │   ├── OffLoader.h/cpp    # import() OFF mesh parsing
+    │   ├── DxfLoader.h/cpp    # import() DXF closed-entity 2-D outline parsing
+    │   ├── SvgLoader.h/cpp    # import() SVG closed-shape 2-D outline parsing
+    │   ├── MiniXml.h/cpp      # Minimal flat XML tokenizer shared by 3MF/AMF
+    │   ├── ZipReader.h/cpp    # Minimal ZIP (stored/deflate) entry extraction, for 3MF
+    │   ├── ThreeMfLoader.h/cpp # import() 3MF mesh parsing (ZipReader + MiniXml)
+    │   ├── AmfLoader.h/cpp    # import() AMF mesh parsing (MiniXml)
+    │   ├── SurfaceLoader.h/cpp # surface() .dat/.png heightmap parsing
     │   ├── StbFontBackend.h/cpp # stb_truetype glyph outline/metric extraction
     │   ├── NaiveLtrShaper.h/cpp # Simple left-to-right text layout
     │   └── TextLoader.h/cpp   # Orchestrates the two into 2-D contours for text()
@@ -136,6 +143,8 @@ chiselcad/
         ├── ThreadPool.h       # Unimplemented stub — not used by MeshBuilder
         ├── Debouncer.h        # Unimplemented stub — not used today
         ├── RingBuffer.h       # Lock-free SPSC — defined but currently unused (§7.3)
+        ├── PathUtf8.h         # UTF-8-correct string -> std::filesystem::path
+        ├── PathSuffix.h       # Case-insensitive filename-suffix matching (import()/surface() format dispatch)
         └── Log.h              # spdlog wrapper
 ```
 
@@ -155,17 +164,22 @@ Resolved via vcpkg (`vcpkg.json`):
     "manifold",
     "spdlog",
     "nlohmann-json",
-    "catch2"
+    "catch2",
+    "zlib"
   ]
 }
 ```
 
 Vulkan itself is located via `find_package(Vulkan REQUIRED)` against the
-system Vulkan SDK, not vcpkg. Two more dependencies are vendored directly in
-the source tree rather than pulled via vcpkg: `third_party/stb/stb_truetype.h`
-(public domain, used by `text()`'s glyph extraction) and
-`resources/fonts/Roboto-Regular.ttf` (Apache 2.0, the default font when
-`text()`'s `font=` is omitted).
+system Vulkan SDK, not vcpkg. `zlib` (raw DEFLATE decompression, via
+`find_package(ZLIB REQUIRED)`) backs `import()`'s `.3mf` support — 3MF is a
+ZIP archive and `src/import/ZipReader.h/cpp` needs an inflate implementation,
+not a dependency any other subsystem uses. Three more dependencies are
+vendored directly in the source tree rather than pulled via vcpkg:
+`third_party/stb/stb_truetype.h` (public domain, used by `text()`'s glyph
+extraction), `third_party/stb/stb_image.h` (public domain, used by
+`surface()`'s PNG heightmap decoding), and `resources/fonts/Roboto-Regular.ttf`
+(Apache 2.0, the default font when `text()`'s `font=` is omitted).
 
 **Embree is not currently a dependency.** It was previously planned as a
 future BVH-accelerated spatial-query backend / custom-boolean research path
@@ -188,15 +202,11 @@ uses it — it isn't in `vcpkg.json` and there's no `find_package(embree3)` in
 - Functions & modules: user-defined `function`/`module`, `children()`/`$children`, named + default args, recursion
 - Built-ins: full math set, string/vector helpers (`concat`, `str`, `chr`, `ord`, `len`, `lookup`, `rands`, `norm`, `cross`, ...)
 - 2D → 3D: `linear_extrude`, `rotate_extrude` (including nested extrusion — extrude wrapping extrude), `offset()`, `projection()`
-- File I/O: `include <>`, `use <>` (via `SourceLoader`, with circular-include detection), `import()` (STL), `surface()` (text `.dat`)
+- File I/O: `include <>`, `use <>` (via `SourceLoader`, with circular-include detection and per-file diagnostics for eval-time errors reached through either — `SourceLoc::fileId`, see §5.3/§5.4), `import()` (STL, OFF, 3MF, AMF as 3-D meshes; DXF, SVG as 2-D `Polygon2D` outlines — `layer=` for DXF), `surface()` (`.dat` text heightmaps or `.png` grayscale-luminance heightmaps)
 - Diagnostics: `echo()`, `assert()`
 - Quality: `$fn`, `$fs`, `$fa` — both global (file-scope) and per-node overrides
 - Literals: numbers, strings, vectors `[x,y,z]`, `true`/`false`, `undef`
 - Comments: `//` and `/* */`
-
-Known gaps (tracked in `docs/roadmap.md`, v3 Phase 4): per-file diagnostics
-for code reached via `include`/`use`, PNG heightmap support for `surface()`,
-and import/export formats beyond STL (OFF/3MF/AMF/DXF/SVG).
 
 ### 5.2 AST Design
 
@@ -251,6 +261,34 @@ struct Diagnostic {
     std::string filePath;
 };
 ```
+
+**Per-file diagnostics across `include`/`use` (v3 Phase 4):** `SourceLoc`
+(`src/lang/Token.h`) carries a `fileId` alongside `line`/`col`/`offset` — the
+`Lexer` stamps its constructor-supplied `fileId` onto every token it emits,
+and the `Parser` copies `token.loc` verbatim into every AST/`Expr` node it
+builds, so `fileId` propagates through parsing for free. `SourceLoader`
+(`loadSource()`) assigns each file a `fileId` in open order (root file is
+always 0, matching `SourceLoc`'s own "0 is a sensible default" convention)
+and returns the `fileId -> path` table as `LoadedSource::files`.
+
+This matters because `include`/`use` don't concatenate source text — each
+file is lexed/parsed independently and `SourceLoader` splices already-parsed
+AST *nodes* from included files into the root's `ParseResult` — so once
+`Lexer`/`Parser` are done, `filePath` string on lex/parse-time diagnostics
+is all a *file's own* diagnostics need, but **eval-time** diagnostics
+(`assert()`, `import()`/`surface()`/`text()`/`polyhedron()` errors, module
+recursion limit — all produced later, by `CsgEvaluator` walking the already-
+merged tree) have no such string to copy from; they only have the AST node's
+`SourceLoc`. `MeshBuilder` threads `LoadedSource::files` into
+`CsgEvaluator::fileTable` before evaluation, and `CsgEvaluator` resolves
+`loc.fileId -> filePath` itself at each diagnostic-construction site
+(`resolveFilePath()`), so these diagnostics carry the correct file even when
+the failing `assert()`/`import()`/etc. call is reached through `include`/
+`use`. The same `fileTable` also fixes `import()`/`surface()`/`text()`'s
+relative-path resolution: a relative path resolves against the directory of
+the file that actually contains the call (via `resolveFilePath(call.loc.fileId)`),
+not always the root file's directory (`CsgEvaluator::baseDir`, which is now
+only the fallback when `fileTable` is unset or the id is out of range).
 
 ---
 

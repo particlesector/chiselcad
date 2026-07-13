@@ -1,0 +1,8 @@
+# COFF: each vertex line has trailing r g b a color values that must be
+# ignored (not misread as the next vertex's x/y/z).
+COFF
+3 1 0
+0 0 0 255 0 0 255
+1 0 0 0 255 0 255
+0 1 0 0 0 255 255
+3 0 1 2 255 255 0

@@ -1,4 +1,5 @@
 #include "Lexer.h"
+
 #include <cassert>
 #include <cctype>
 #include <unordered_map>
@@ -10,47 +11,47 @@ namespace chisel::lang {
 // Keyword table — maps source text to TokenKind
 // ---------------------------------------------------------------------------
 static const std::unordered_map<std::string_view, TokenKind> kKeywords = {
-    {"true",         TokenKind::True},
-    {"false",        TokenKind::False},
-    {"cube",         TokenKind::Cube},
-    {"sphere",       TokenKind::Sphere},
-    {"cylinder",     TokenKind::Cylinder},
-    {"union",        TokenKind::Union},
-    {"difference",   TokenKind::Difference},
+    {"true", TokenKind::True},
+    {"false", TokenKind::False},
+    {"cube", TokenKind::Cube},
+    {"sphere", TokenKind::Sphere},
+    {"cylinder", TokenKind::Cylinder},
+    {"union", TokenKind::Union},
+    {"difference", TokenKind::Difference},
     {"intersection", TokenKind::Intersection},
-    {"hull",         TokenKind::Hull},
-    {"minkowski",    TokenKind::Minkowski},
-    {"translate",    TokenKind::Translate},
-    {"rotate",       TokenKind::Rotate},
-    {"scale",        TokenKind::Scale},
-    {"mirror",       TokenKind::Mirror},
-    {"multmatrix",   TokenKind::Multmatrix},
-    {"render",       TokenKind::Render},
-    {"color",        TokenKind::Color},
-    {"if",             TokenKind::If},
-    {"else",           TokenKind::Else},
-    {"for",            TokenKind::For},
-    {"each",           TokenKind::Each},
-    {"module",         TokenKind::Module},
-    {"square",         TokenKind::Square},
-    {"circle",         TokenKind::Circle},
-    {"polygon",        TokenKind::Polygon},
+    {"hull", TokenKind::Hull},
+    {"minkowski", TokenKind::Minkowski},
+    {"translate", TokenKind::Translate},
+    {"rotate", TokenKind::Rotate},
+    {"scale", TokenKind::Scale},
+    {"mirror", TokenKind::Mirror},
+    {"multmatrix", TokenKind::Multmatrix},
+    {"render", TokenKind::Render},
+    {"color", TokenKind::Color},
+    {"if", TokenKind::If},
+    {"else", TokenKind::Else},
+    {"for", TokenKind::For},
+    {"each", TokenKind::Each},
+    {"module", TokenKind::Module},
+    {"square", TokenKind::Square},
+    {"circle", TokenKind::Circle},
+    {"polygon", TokenKind::Polygon},
     {"linear_extrude", TokenKind::LinearExtrude},
     {"rotate_extrude", TokenKind::RotateExtrude},
-    {"offset",         TokenKind::Offset},
-    {"projection",     TokenKind::Projection},
-    {"undef",          TokenKind::Undef},
-    {"function",       TokenKind::Function},
-    {"let",            TokenKind::Let},
-    {"include",        TokenKind::Include},
-    {"use",            TokenKind::Use},
+    {"offset", TokenKind::Offset},
+    {"projection", TokenKind::Projection},
+    {"undef", TokenKind::Undef},
+    {"function", TokenKind::Function},
+    {"let", TokenKind::Let},
+    {"include", TokenKind::Include},
+    {"use", TokenKind::Use},
 };
 
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
-Lexer::Lexer(std::string_view source, std::string filePath)
-    : m_source(source), m_filePath(std::move(filePath)) {}
+Lexer::Lexer(std::string_view source, std::string filePath, uint32_t fileId)
+    : m_source(source), m_filePath(std::move(filePath)), m_fileId(fileId) {}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -136,45 +137,89 @@ std::vector<Token> Lexer::tokenize() {
         // Punctuation and operators
         advance();
         switch (c) {
-        case '(':  tokens.push_back(makeToken(TokenKind::LParen,    startOffset)); break;
-        case ')':  tokens.push_back(makeToken(TokenKind::RParen,    startOffset)); break;
-        case '{':  tokens.push_back(makeToken(TokenKind::LBrace,    startOffset)); break;
-        case '}':  tokens.push_back(makeToken(TokenKind::RBrace,    startOffset)); break;
-        case '[':  tokens.push_back(makeToken(TokenKind::LBracket,  startOffset)); break;
-        case ']':  tokens.push_back(makeToken(TokenKind::RBracket,  startOffset)); break;
-        case ',':  tokens.push_back(makeToken(TokenKind::Comma,     startOffset)); break;
-        case ';':  tokens.push_back(makeToken(TokenKind::Semicolon, startOffset)); break;
-        case ':':  tokens.push_back(makeToken(TokenKind::Colon,     startOffset)); break;
-        case '+':  tokens.push_back(makeToken(TokenKind::Plus,      startOffset)); break;
-        case '-':  tokens.push_back(makeToken(TokenKind::Minus,     startOffset)); break;
-        case '*':  tokens.push_back(makeToken(TokenKind::Star,      startOffset)); break;
-        case '/':  tokens.push_back(makeToken(TokenKind::Slash,     startOffset)); break;
-        case '%':  tokens.push_back(makeToken(TokenKind::Percent,   startOffset)); break;
-        case '#':  tokens.push_back(makeToken(TokenKind::Hash,      startOffset)); break;
+        case '(':
+            tokens.push_back(makeToken(TokenKind::LParen, startOffset));
+            break;
+        case ')':
+            tokens.push_back(makeToken(TokenKind::RParen, startOffset));
+            break;
+        case '{':
+            tokens.push_back(makeToken(TokenKind::LBrace, startOffset));
+            break;
+        case '}':
+            tokens.push_back(makeToken(TokenKind::RBrace, startOffset));
+            break;
+        case '[':
+            tokens.push_back(makeToken(TokenKind::LBracket, startOffset));
+            break;
+        case ']':
+            tokens.push_back(makeToken(TokenKind::RBracket, startOffset));
+            break;
+        case ',':
+            tokens.push_back(makeToken(TokenKind::Comma, startOffset));
+            break;
+        case ';':
+            tokens.push_back(makeToken(TokenKind::Semicolon, startOffset));
+            break;
+        case ':':
+            tokens.push_back(makeToken(TokenKind::Colon, startOffset));
+            break;
+        case '+':
+            tokens.push_back(makeToken(TokenKind::Plus, startOffset));
+            break;
+        case '-':
+            tokens.push_back(makeToken(TokenKind::Minus, startOffset));
+            break;
+        case '*':
+            tokens.push_back(makeToken(TokenKind::Star, startOffset));
+            break;
+        case '/':
+            tokens.push_back(makeToken(TokenKind::Slash, startOffset));
+            break;
+        case '%':
+            tokens.push_back(makeToken(TokenKind::Percent, startOffset));
+            break;
+        case '#':
+            tokens.push_back(makeToken(TokenKind::Hash, startOffset));
+            break;
         case '!':
-            if (match('=')) tokens.push_back(makeToken(TokenKind::BangEqual,    startOffset));
-            else            tokens.push_back(makeToken(TokenKind::Bang,         startOffset));
+            if (match('='))
+                tokens.push_back(makeToken(TokenKind::BangEqual, startOffset));
+            else
+                tokens.push_back(makeToken(TokenKind::Bang, startOffset));
             break;
         case '<':
-            if (match('=')) tokens.push_back(makeToken(TokenKind::LessEqual,    startOffset));
-            else            tokens.push_back(makeToken(TokenKind::Less,         startOffset));
+            if (match('='))
+                tokens.push_back(makeToken(TokenKind::LessEqual, startOffset));
+            else
+                tokens.push_back(makeToken(TokenKind::Less, startOffset));
             break;
         case '>':
-            if (match('=')) tokens.push_back(makeToken(TokenKind::GreaterEqual, startOffset));
-            else            tokens.push_back(makeToken(TokenKind::Greater,      startOffset));
+            if (match('='))
+                tokens.push_back(makeToken(TokenKind::GreaterEqual, startOffset));
+            else
+                tokens.push_back(makeToken(TokenKind::Greater, startOffset));
             break;
         case '=':
-            if (match('=')) tokens.push_back(makeToken(TokenKind::EqualEqual,   startOffset));
-            else            tokens.push_back(makeToken(TokenKind::Equals,       startOffset));
+            if (match('='))
+                tokens.push_back(makeToken(TokenKind::EqualEqual, startOffset));
+            else
+                tokens.push_back(makeToken(TokenKind::Equals, startOffset));
             break;
-        case '?':  tokens.push_back(makeToken(TokenKind::Question, startOffset)); break;
+        case '?':
+            tokens.push_back(makeToken(TokenKind::Question, startOffset));
+            break;
         case '&':
-            if (match('&')) tokens.push_back(makeToken(TokenKind::AmpAmp,      startOffset));
-            else addError("expected '&&'", makeToken(TokenKind::Eof, startOffset).loc);
+            if (match('&'))
+                tokens.push_back(makeToken(TokenKind::AmpAmp, startOffset));
+            else
+                addError("expected '&&'", makeToken(TokenKind::Eof, startOffset).loc);
             break;
         case '|':
-            if (match('|')) tokens.push_back(makeToken(TokenKind::PipePipe,    startOffset));
-            else addError("expected '||'", makeToken(TokenKind::Eof, startOffset).loc);
+            if (match('|'))
+                tokens.push_back(makeToken(TokenKind::PipePipe, startOffset));
+            else
+                addError("expected '||'", makeToken(TokenKind::Eof, startOffset).loc);
             break;
         default:
             addError(std::string("unexpected character '") + c + "'",
@@ -189,7 +234,8 @@ std::vector<Token> Lexer::tokenize() {
 
 bool Lexer::hasErrors() const {
     for (const auto& d : m_diags)
-        if (d.level == DiagLevel::Error) return true;
+        if (d.level == DiagLevel::Error)
+            return true;
     return false;
 }
 
@@ -198,19 +244,25 @@ bool Lexer::hasErrors() const {
 // ---------------------------------------------------------------------------
 char Lexer::peek(int offset) const {
     size_t idx = m_pos + static_cast<size_t>(offset);
-    if (idx >= m_source.size()) return '\0';
+    if (idx >= m_source.size())
+        return '\0';
     return m_source[idx];
 }
 
 char Lexer::advance() {
     char c = m_source[m_pos++];
-    if (c == '\n') { ++m_line; m_col = 0; }
-    else           { ++m_col; }
+    if (c == '\n') {
+        ++m_line;
+        m_col = 0;
+    } else {
+        ++m_col;
+    }
     return c;
 }
 
 bool Lexer::match(char expected) {
-    if (atEnd() || m_source[m_pos] != expected) return false;
+    if (atEnd() || m_source[m_pos] != expected)
+        return false;
     advance();
     return true;
 }
@@ -224,6 +276,7 @@ Token Lexer::makeToken(TokenKind kind, uint32_t startOffset) const {
     Token t;
     t.kind = kind;
     t.loc.offset = startOffset;
+    t.loc.fileId = m_fileId;
     // Line and col at startOffset: we track current position; for start we
     // need to account for chars consumed since startOffset.
     // We store current line/col which reflects the state *after* consuming.
@@ -232,13 +285,14 @@ Token Lexer::makeToken(TokenKind kind, uint32_t startOffset) const {
     // Here we use a best-effort: the loc reflects where the token begins,
     // captured before advancing in each scan path.
     t.loc.line = m_line;
-    t.loc.col  = (m_col >= (m_pos - startOffset)) ? m_col - static_cast<uint32_t>(m_pos - startOffset) : 0;
+    t.loc.col =
+        (m_col >= (m_pos - startOffset)) ? m_col - static_cast<uint32_t>(m_pos - startOffset) : 0;
     return t;
 }
 
 Token Lexer::makeToken(TokenKind kind, uint32_t startOffset, std::string text) const {
     Token t = makeToken(kind, startOffset);
-    t.text  = std::move(text);
+    t.text = std::move(text);
     return t;
 }
 
@@ -248,118 +302,140 @@ Token Lexer::makeToken(TokenKind kind, uint32_t startOffset, std::string text) c
 Token Lexer::scanNumber(uint32_t startOffset) {
     // Capture line/col at start
     uint32_t startLine = m_line;
-    uint32_t startCol  = m_col;
+    uint32_t startCol = m_col;
 
     // Integer part
-    while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+    while (std::isdigit(static_cast<unsigned char>(peek())))
+        advance();
 
     // Fractional part — OpenSCAD allows a trailing dot with no digits after
     // it (e.g. `3.`), so only require a leading digit before the dot.
     if (peek() == '.') {
         advance(); // consume '.'
-        while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+        while (std::isdigit(static_cast<unsigned char>(peek())))
+            advance();
     }
 
     // Exponent — only consume 'e'/'E' (and an optional sign) if at least one
     // digit follows; otherwise leave them unconsumed so a bare 'e'/'-'/'+'
     // isn't silently swallowed into a truncated number.
-    if ((peek() == 'e' || peek() == 'E') &&
-        (std::isdigit(static_cast<unsigned char>(peek(1))) ||
-         ((peek(1) == '+' || peek(1) == '-') && std::isdigit(static_cast<unsigned char>(peek(2)))))) {
+    if ((peek() == 'e' || peek() == 'E') && (std::isdigit(static_cast<unsigned char>(peek(1))) ||
+                                             ((peek(1) == '+' || peek(1) == '-') &&
+                                              std::isdigit(static_cast<unsigned char>(peek(2)))))) {
         advance();
-        if (peek() == '+' || peek() == '-') advance();
-        while (std::isdigit(static_cast<unsigned char>(peek()))) advance();
+        if (peek() == '+' || peek() == '-')
+            advance();
+        while (std::isdigit(static_cast<unsigned char>(peek())))
+            advance();
     }
 
     Token t;
-    t.kind       = TokenKind::Number;
+    t.kind = TokenKind::Number;
     t.loc.offset = startOffset;
-    t.loc.line   = startLine;
-    t.loc.col    = startCol;
-    t.text       = std::string(m_source.substr(startOffset, m_pos - startOffset));
+    t.loc.line = startLine;
+    t.loc.col = startCol;
+    t.loc.fileId = m_fileId;
+    t.text = std::string(m_source.substr(startOffset, m_pos - startOffset));
     return t;
 }
 
 Token Lexer::scanIdentOrKeyword(uint32_t startOffset) {
     uint32_t startLine = m_line;
-    uint32_t startCol  = m_col;
+    uint32_t startCol = m_col;
 
-    while (!atEnd() &&
-           (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_'))
+    while (!atEnd() && (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_'))
         advance();
 
     std::string_view word = m_source.substr(startOffset, m_pos - startOffset);
 
     TokenKind kind = TokenKind::Ident;
     auto it = kKeywords.find(word);
-    if (it != kKeywords.end()) kind = it->second;
+    if (it != kKeywords.end())
+        kind = it->second;
 
     Token t;
-    t.kind       = kind;
+    t.kind = kind;
     t.loc.offset = startOffset;
-    t.loc.line   = startLine;
-    t.loc.col    = startCol;
+    t.loc.line = startLine;
+    t.loc.col = startCol;
+    t.loc.fileId = m_fileId;
     // Store text for identifiers; keywords don't need it but it's harmless
-    t.text       = std::string(word);
+    t.text = std::string(word);
     return t;
 }
 
 Token Lexer::scanSpecialVar(uint32_t startOffset) {
     uint32_t startLine = m_line;
-    uint32_t startCol  = m_col;
+    uint32_t startCol = m_col;
 
     advance(); // consume '$'
-    while (!atEnd() &&
-           (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_'))
+    while (!atEnd() && (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_'))
         advance();
 
     Token t;
-    t.kind       = TokenKind::SpecialVar;
+    t.kind = TokenKind::SpecialVar;
     t.loc.offset = startOffset;
-    t.loc.line   = startLine;
-    t.loc.col    = startCol;
-    t.text       = std::string(m_source.substr(startOffset, m_pos - startOffset));
+    t.loc.line = startLine;
+    t.loc.col = startCol;
+    t.loc.fileId = m_fileId;
+    t.text = std::string(m_source.substr(startOffset, m_pos - startOffset));
     return t;
 }
 
 Token Lexer::scanString(uint32_t startOffset) {
     uint32_t startLine = m_line;
-    uint32_t startCol  = m_col;
+    uint32_t startCol = m_col;
 
     advance(); // consume opening '"'
     std::string value;
     while (!atEnd() && peek() != '"') {
         char ch = advance();
         if (ch == '\\') {
-            if (atEnd()) break;
+            if (atEnd())
+                break;
             char esc = advance();
             switch (esc) {
-            case '"':  value += '"';  break;
-            case '\\': value += '\\'; break;
-            case 'n':  value += '\n'; break;
-            case 't':  value += '\t'; break;
-            case 'r':  value += '\r'; break;
-            default:   value += esc;  break;
+            case '"':
+                value += '"';
+                break;
+            case '\\':
+                value += '\\';
+                break;
+            case 'n':
+                value += '\n';
+                break;
+            case 't':
+                value += '\t';
+                break;
+            case 'r':
+                value += '\r';
+                break;
+            default:
+                value += esc;
+                break;
             }
         } else {
             value += ch;
         }
     }
-    if (!atEnd()) advance(); // consume closing '"'
-    else addError("unterminated string literal", {startLine, startCol, startOffset});
+    if (!atEnd())
+        advance(); // consume closing '"'
+    else
+        addError("unterminated string literal", {startLine, startCol, startOffset, m_fileId});
 
     Token t;
-    t.kind       = TokenKind::String;
+    t.kind = TokenKind::String;
     t.loc.offset = startOffset;
-    t.loc.line   = startLine;
-    t.loc.col    = startCol;
-    t.text       = std::move(value);
+    t.loc.line = startLine;
+    t.loc.col = startCol;
+    t.loc.fileId = m_fileId;
+    t.text = std::move(value);
     return t;
 }
 
 Token Lexer::scanAngledPath(uint32_t startOffset) {
     uint32_t startLine = m_line;
-    uint32_t startCol  = m_col;
+    uint32_t startCol = m_col;
 
     advance(); // consume '<'
     std::string path;
@@ -370,39 +446,47 @@ Token Lexer::scanAngledPath(uint32_t startOffset) {
         advance();
         if (path.empty())
             addError("empty include/use path — expected a filename between '<' and '>'",
-                     {startLine, startCol, startOffset});
+                     {startLine, startCol, startOffset, m_fileId});
     } else {
-        addError("unterminated include/use path — expected '>'", {startLine, startCol, startOffset});
+        addError("unterminated include/use path — expected '>'",
+                 {startLine, startCol, startOffset, m_fileId});
     }
 
     Token t;
-    t.kind       = TokenKind::AngledPath;
+    t.kind = TokenKind::AngledPath;
     t.loc.offset = startOffset;
-    t.loc.line   = startLine;
-    t.loc.col    = startCol;
-    t.text       = std::move(path);
+    t.loc.line = startLine;
+    t.loc.col = startCol;
+    t.loc.fileId = m_fileId;
+    t.text = std::move(path);
     return t;
 }
 
 void Lexer::skipLineComment() {
     // consume '//'
-    advance(); advance();
-    while (!atEnd() && peek() != '\n') advance();
+    advance();
+    advance();
+    while (!atEnd() && peek() != '\n')
+        advance();
 }
 
 void Lexer::skipBlockComment() {
     // consume '/*'
-    advance(); advance();
+    advance();
+    advance();
     while (!atEnd()) {
         if (peek() == '*' && peek(1) == '/') {
-            advance(); advance();
+            advance();
+            advance();
             return;
         }
         advance();
     }
     // Unterminated block comment — not a fatal error, just note it
     SourceLoc loc;
-    loc.line = m_line; loc.col = m_col; loc.offset = static_cast<uint32_t>(m_pos);
+    loc.line = m_line;
+    loc.col = m_col;
+    loc.offset = static_cast<uint32_t>(m_pos);
     addWarning("unterminated block comment", loc);
 }
 

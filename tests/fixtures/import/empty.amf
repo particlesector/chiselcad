@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<amf unit="millimeter">
+  <object id="0">
+    <mesh>
+      <vertices>
+      </vertices>
+      <volume>
+      </volume>
+    </mesh>
+  </object>
+</amf>

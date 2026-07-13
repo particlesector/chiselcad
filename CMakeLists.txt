@@ -31,6 +31,7 @@ find_package(manifold CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(ZLIB REQUIRED) # raw DEFLATE decompression for import()'s .3mf (ZIP) support
 
 # ============================================================
 # Shader compilation (GLSL → SPIR-V)
@@ -122,8 +123,16 @@ set(CHISELCAD_SOURCES
     src/export/StlExporter.cpp
     src/import/StlLoader.cpp
     src/import/StlImporter.cpp
+    src/import/OffLoader.cpp
+    src/import/DxfLoader.cpp
+    src/import/SvgLoader.cpp
+    src/import/MiniXml.cpp
+    src/import/ZipReader.cpp
+    src/import/ThreeMfLoader.cpp
+    src/import/AmfLoader.cpp
     src/import/SurfaceLoader.cpp
     src/import/stb_truetype_impl.cpp
+    src/import/stb_image_impl.cpp
     src/import/StbFontBackend.cpp
     src/import/NaiveLtrShaper.cpp
     src/import/TextLoader.cpp
@@ -149,6 +158,7 @@ target_link_libraries(chiselcad PRIVATE
     manifold::manifold
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    ZLIB::ZLIB
 )
 
 # ============================================================
@@ -170,13 +180,13 @@ target_compile_definitions(chiselcad PRIVATE
     GLM_FORCE_DEPTH_ZERO_TO_ONE   # Vulkan depth range [0,1] not [-1,1]
 )
 
-# stb_truetype's implementation TU triggers warnings under -Wall -Wextra
-# -Wpedantic (vendored code, not ours to fix) — silenced for this one file
-# only rather than loosened project-wide.
+# stb_truetype's/stb_image's implementation TUs trigger warnings under
+# -Wall -Wextra -Wpedantic (vendored code, not ours to fix) — silenced for
+# these two files only rather than loosened project-wide.
 if(MSVC)
-    set_source_files_properties(src/import/stb_truetype_impl.cpp PROPERTIES COMPILE_OPTIONS "/W0")
+    set_source_files_properties(src/import/stb_truetype_impl.cpp src/import/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "/W0")
 else()
-    set_source_files_properties(src/import/stb_truetype_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+    set_source_files_properties(src/import/stb_truetype_impl.cpp src/import/stb_image_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
 # ============================================================
@@ -194,6 +204,11 @@ set(CHISELCAD_TEST_SOURCES
     tests/test_interpreter.cpp
     tests/test_source_loader.cpp
     tests/test_stl_loader.cpp
+    tests/test_off_loader.cpp
+    tests/test_dxf_loader.cpp
+    tests/test_svg_loader.cpp
+    tests/test_3mf_loader.cpp
+    tests/test_amf_loader.cpp
     tests/test_surface_loader.cpp
     tests/test_text_loader.cpp
 
@@ -204,8 +219,16 @@ set(CHISELCAD_TEST_SOURCES
     src/lang/SourceLoader.cpp
     src/csg/CsgEvaluator.cpp
     src/import/StlLoader.cpp
+    src/import/OffLoader.cpp
+    src/import/DxfLoader.cpp
+    src/import/SvgLoader.cpp
+    src/import/MiniXml.cpp
+    src/import/ZipReader.cpp
+    src/import/ThreeMfLoader.cpp
+    src/import/AmfLoader.cpp
     src/import/SurfaceLoader.cpp
     src/import/stb_truetype_impl.cpp
+    src/import/stb_image_impl.cpp
     src/import/StbFontBackend.cpp
     src/import/NaiveLtrShaper.cpp
     src/import/TextLoader.cpp
@@ -224,6 +247,7 @@ target_link_libraries(chiselcad_tests PRIVATE
     Catch2::Catch2WithMain
     glm::glm
     spdlog::spdlog
+    ZLIB::ZLIB
 )
 
 if(MSVC)

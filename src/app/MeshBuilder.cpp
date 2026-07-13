@@ -1,12 +1,14 @@
 #include "MeshBuilder.h"
+
 #include "csg/CsgEvaluator.h"
 #include "csg/MeshCache.h"
 #include "csg/MeshEvaluator.h"
 #include "lang/SourceLoader.h"
+
+#include <chrono>
+#include <glm/glm.hpp>
 #include <manifold/manifold.h>
 #include <spdlog/spdlog.h>
-#include <glm/glm.hpp>
-#include <chrono>
 
 namespace chisel::app {
 
@@ -18,11 +20,8 @@ namespace chisel::app {
 // nodeColor() in CsgNode.h — since Manifold's boolean ops merge geometry
 // from a subtree's children into one mesh with no per-part identity left).
 // ---------------------------------------------------------------------------
-static void manifoldToMesh(const manifold::Manifold& m,
-                            const glm::vec3& tint,
-                            std::vector<render::Vertex>& verts,
-                            std::vector<uint32_t>& indices)
-{
+static void manifoldToMesh(const manifold::Manifold& m, const glm::vec3& tint,
+                           std::vector<render::Vertex>& verts, std::vector<uint32_t>& indices) {
     verts.clear();
     indices.clear();
 
@@ -37,14 +36,13 @@ static void manifoldToMesh(const manifold::Manifold& m,
         uint32_t i2 = mesh.triVerts[t * 3 + 2];
 
         auto vp = [&](uint32_t i) {
-            return glm::vec3(
-                mesh.vertProperties[i * mesh.numProp + 0],
-                mesh.vertProperties[i * mesh.numProp + 1],
-                mesh.vertProperties[i * mesh.numProp + 2]);
+            return glm::vec3(mesh.vertProperties[i * mesh.numProp + 0],
+                             mesh.vertProperties[i * mesh.numProp + 1],
+                             mesh.vertProperties[i * mesh.numProp + 2]);
         };
 
         glm::vec3 p0 = vp(i0), p1 = vp(i1), p2 = vp(i2);
-        glm::vec3 n  = glm::normalize(glm::cross(p1 - p0, p2 - p0));
+        glm::vec3 n = glm::normalize(glm::cross(p1 - p0, p2 - p0));
 
         uint32_t base = static_cast<uint32_t>(verts.size());
         verts.push_back({p0, n, tint});
@@ -59,9 +57,7 @@ static void manifoldToMesh(const manifold::Manifold& m,
 // ---------------------------------------------------------------------------
 // MeshBuilder
 // ---------------------------------------------------------------------------
-MeshBuilder::MeshBuilder()
-    : m_thread([this] { workerLoop(); })
-{}
+MeshBuilder::MeshBuilder() : m_thread([this] { workerLoop(); }) {}
 
 MeshBuilder::~MeshBuilder() {
     {
@@ -76,18 +72,19 @@ void MeshBuilder::requestBuild(std::filesystem::path path) {
     int gen = ++m_currentGen;
     {
         std::lock_guard<std::mutex> lk(m_workMutex);
-        m_hasWork  = true;
+        m_hasWork = true;
         m_workPath = std::move(path);
-        m_workGen  = gen;
+        m_workGen = gen;
     }
     m_workCv.notify_one();
 }
 
 std::unique_ptr<BuildResult> MeshBuilder::poll() {
     std::lock_guard<std::mutex> lk(m_resultMutex);
-    if (!m_pendingResult) return nullptr;
+    if (!m_pendingResult)
+        return nullptr;
     if (m_pendingGen != m_currentGen.load()) {
-        m_pendingResult = nullptr;  // superseded — discard silently
+        m_pendingResult = nullptr; // superseded — discard silently
         return nullptr;
     }
     return std::move(m_pendingResult);
@@ -103,10 +100,11 @@ void MeshBuilder::workerLoop() {
         {
             std::unique_lock<std::mutex> lk(m_workMutex);
             m_workCv.wait(lk, [this] { return m_stop || m_hasWork; });
-            if (m_stop) return;
+            if (m_stop)
+                return;
             m_hasWork = false;
             path = m_workPath;
-            gen  = m_workGen;
+            gen = m_workGen;
         }
         buildOne(std::move(path), gen);
     }
@@ -123,7 +121,7 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
         m_phase = BuildPhase::Error;
         std::lock_guard<std::mutex> lk(m_resultMutex);
         m_pendingResult = std::move(r);
-        m_pendingGen    = gen;
+        m_pendingGen = gen;
     };
 
     // ---- Phase: Parsing ----
@@ -134,36 +132,45 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
 
     // Reads the root file, lexes/parses it, and recursively resolves any
     // include<>/use<> directives (in it or its includes) into one merged
-    // ParseResult — see SourceLoader.h. Diagnostics from every file visited
-    // already carry their own filePath, so DiagnosticsPanel's jump-to-file
-    // works across files without further changes here.
+    // ParseResult — see SourceLoader.h. Lex/parse-time diagnostics from every
+    // file visited already carry their own filePath directly; loaded.files
+    // (below, threaded into csgEval.fileTable) additionally lets eval-time
+    // diagnostics (assert()/import()/surface()/text() errors) resolve their
+    // AST node's SourceLoc::fileId back to a filePath the same way, so
+    // DiagnosticsPanel's jump-to-file works across files for both.
     lang::LoadedSource loaded = lang::loadSource(path);
     auto& ast = loaded.result;
 
     bool hasError = false;
     for (const auto& d : loaded.diagnostics)
-        if (d.level == lang::DiagLevel::Error) { hasError = true; break; }
+        if (d.level == lang::DiagLevel::Error) {
+            hasError = true;
+            break;
+        }
 
     if (hasError) {
-        result->diags    = loaded.diagnostics;
+        result->diags = loaded.diagnostics;
         result->errorMsg = "Parse errors";
         storeError(std::move(result));
         return;
     }
 
     // Bail early if a newer request arrived
-    if (gen != m_currentGen.load()) return;
+    if (gen != m_currentGen.load())
+        return;
 
     // ---- Phase: Evaluating CSG ----
     m_phase = BuildPhase::Evaluating;
     csg::CsgEvaluator csgEval;
     csgEval.baseDir = path.parent_path(); // for import()'s relative paths
+    csgEval.fileTable =
+        &loaded.files; // per-file diagnostics + relative-path resolution across include/use
     auto scene = csgEval.evaluate(ast);
 
     // Forward echo() output as Info diagnostics
     for (const auto& msg : scene.echoMessages) {
         lang::Diagnostic d;
-        d.level   = lang::DiagLevel::Info;
+        d.level = lang::DiagLevel::Info;
         d.message = msg;
         result->diags.push_back(std::move(d));
     }
@@ -171,7 +178,8 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     for (auto& d : scene.evalDiags)
         result->diags.push_back(std::move(d));
 
-    if (gen != m_currentGen.load()) return;
+    if (gen != m_currentGen.load())
+        return;
 
     // ---- Phase: Meshing (Manifold — the slow part) ----
     m_phase = BuildPhase::Meshing;
@@ -191,7 +199,8 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     for (auto& d : meshEval.diagnostics())
         result->diags.push_back(d);
 
-    if (gen != m_currentGen.load()) return;
+    if (gen != m_currentGen.load())
+        return;
 
     // ---- Phase: Converting to vertex buffers ----
     m_phase = BuildPhase::Converting;
@@ -212,28 +221,29 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
         rootVertStart.push_back(static_cast<uint32_t>(result->verts.size()));
 
         if (!isBackground) {
-            result->volume      += m.Volume();
+            result->volume += m.Volume();
             result->surfaceArea += m.SurfaceArea();
 
             auto rawMesh = m.GetMeshGL();
-            result->triCount  += static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
+            result->triCount += static_cast<uint32_t>(rawMesh.triVerts.size() / 3);
             result->vertCount += static_cast<uint32_t>(
                 rawMesh.numProp > 0 ? rawMesh.vertProperties.size() / rawMesh.numProp : 0);
         }
 
-        const csg::CsgNode& srcNode = isBackground
-            ? *scene.backgroundRoots[ri - scene.roots.size()]
-            : *scene.roots[ri];
+        const csg::CsgNode& srcNode =
+            isBackground ? *scene.backgroundRoots[ri - scene.roots.size()] : *scene.roots[ri];
         const csg::ColorAttr& rootColor = csg::nodeColor(srcNode);
-        const glm::vec3 tint = rootColor.has ? glm::vec3(rootColor.value) : render::kDefaultVertexColor;
+        const glm::vec3 tint =
+            rootColor.has ? glm::vec3(rootColor.value) : render::kDefaultVertexColor;
 
-        std::vector<render::Vertex>  verts;
-        std::vector<uint32_t>        indices;
+        std::vector<render::Vertex> verts;
+        std::vector<uint32_t> indices;
         manifoldToMesh(m, tint, verts, indices);
 
         // Offset indices by the current vertex count before appending
         const auto base = static_cast<uint32_t>(result->verts.size());
-        for (auto& idx : indices) idx += base;
+        for (auto& idx : indices)
+            idx += base;
 
         result->verts.insert(result->verts.end(), verts.begin(), verts.end());
         result->indices.insert(result->indices.end(), indices.begin(), indices.end());
@@ -253,9 +263,8 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
         const auto totalVerts = static_cast<uint32_t>(result->verts.size());
         auto rootAABB = [&](std::size_t ri) -> std::pair<glm::vec3, glm::vec3> {
             uint32_t start = rootVertStart[ri];
-            uint32_t end   = (ri + 1 < rootVertStart.size())
-                             ? rootVertStart[ri + 1] : totalVerts;
-            glm::vec3 bmin{ 1e30f,  1e30f,  1e30f};
+            uint32_t end = (ri + 1 < rootVertStart.size()) ? rootVertStart[ri + 1] : totalVerts;
+            glm::vec3 bmin{1e30f, 1e30f, 1e30f};
             glm::vec3 bmax{-1e30f, -1e30f, -1e30f};
             for (uint32_t vi = start; vi < end; ++vi) {
                 bmin = glm::min(bmin, result->verts[vi].pos);
@@ -264,27 +273,27 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
             return {bmin, bmax};
         };
 
-        auto aabbOverlap = [](glm::vec3 mn1, glm::vec3 mx1,
-                               glm::vec3 mn2, glm::vec3 mx2) {
-            return (mn1.x <= mx2.x && mx1.x >= mn2.x) &&
-                   (mn1.y <= mx2.y && mx1.y >= mn2.y) &&
+        auto aabbOverlap = [](glm::vec3 mn1, glm::vec3 mx1, glm::vec3 mn2, glm::vec3 mx2) {
+            return (mn1.x <= mx2.x && mx1.x >= mn2.x) && (mn1.y <= mx2.y && mx1.y >= mn2.y) &&
                    (mn1.z <= mx2.z && mx1.z >= mn2.z);
         };
 
         for (std::size_t i = 0; i < scene.roots.size(); ++i) {
-            if (gen != m_currentGen.load()) return; // newer build queued — abort
+            if (gen != m_currentGen.load())
+                return; // newer build queued — abort
             auto [mn1, mx1] = rootAABB(i);
             for (std::size_t j = i + 1; j < scene.roots.size(); ++j) {
                 auto [mn2, mx2] = rootAABB(j);
-                if (!aabbOverlap(mn1, mx1, mn2, mx2)) continue;
+                if (!aabbOverlap(mn1, mx1, mn2, mx2))
+                    continue;
 
                 // AABBs overlap — run exact Manifold intersection
                 manifold::Manifold sect = rootMeshes[i] ^ rootMeshes[j];
                 if (std::abs(sect.Volume()) > 1e-6) {
                     lang::Diagnostic warn;
-                    warn.level   = lang::DiagLevel::Warning;
-                    warn.message = "Objects " + std::to_string(i + 1) +
-                                   " and " + std::to_string(j + 1) +
+                    warn.level = lang::DiagLevel::Warning;
+                    warn.message = "Objects " + std::to_string(i + 1) + " and " +
+                                   std::to_string(j + 1) +
                                    " overlap — wrap in union() or difference() if intentional";
                     result->diags.push_back(std::move(warn));
                 }
@@ -300,28 +309,32 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen) {
     // geometry itself doesn't need a check here: poll() already discards
     // m_pendingResult when m_pendingGen != m_currentGen.
     if (gen == m_currentGen.load()) {
-        m_elapsedMs        = result->elapsedMs;
-        m_lastVolume       = result->volume;
-        m_lastSurfaceArea  = result->surfaceArea;
-        m_lastTriCount     = result->triCount;
-        m_lastVertCount    = result->vertCount;
-        m_phase            = BuildPhase::Done;
+        m_elapsedMs = result->elapsedMs;
+        m_lastVolume = result->volume;
+        m_lastSurfaceArea = result->surfaceArea;
+        m_lastTriCount = result->triCount;
+        m_lastVertCount = result->vertCount;
+        m_phase = BuildPhase::Done;
     }
 
     auto fmtN = [](uint32_t n) {
         std::string s = std::to_string(n);
         int i = static_cast<int>(s.size()) - 3;
-        while (i > 0) { s.insert(static_cast<size_t>(i), ","); i -= 3; }
+        while (i > 0) {
+            s.insert(static_cast<size_t>(i), ",");
+            i -= 3;
+        }
         return s;
     };
-    spdlog::info("[mesh] Render: {:.3f}s  |  {} facets  |  {} vertices  |  volume: {:.4f}  |  area: {:.4f}",
-        result->elapsedMs / 1000.0, fmtN(result->triCount), fmtN(result->vertCount),
-        result->volume, result->surfaceArea);
+    spdlog::info(
+        "[mesh] Render: {:.3f}s  |  {} facets  |  {} vertices  |  volume: {:.4f}  |  area: {:.4f}",
+        result->elapsedMs / 1000.0, fmtN(result->triCount), fmtN(result->vertCount), result->volume,
+        result->surfaceArea);
 
     {
         std::lock_guard<std::mutex> lk(m_resultMutex);
         m_pendingResult = std::move(result);
-        m_pendingGen    = gen;
+        m_pendingGen = gen;
     }
 }
 

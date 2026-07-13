@@ -1,7 +1,10 @@
 #pragma once
 #include "AST.h"
 #include "Diagnostic.h"
+
 #include <filesystem>
+#include <string>
+#include <vector>
 
 namespace chisel::lang {
 
@@ -11,8 +14,19 @@ namespace chisel::lang {
 // ---------------------------------------------------------------------------
 struct LoadedSource {
     ParseResult result;
-    DiagList    diagnostics; // lex/parse errors from every file visited, plus
-                              // "cannot open" / "circular include" errors
+    DiagList diagnostics; // lex/parse errors from every file visited, plus
+                          // "cannot open" / "circular include" errors
+
+    // fileId -> path table (SourceLoc::fileId indexes into this), in the
+    // order each file was first opened. Index 0 is always rootPath, since
+    // it's the first file loadSource() opens — matching SourceLoc's own
+    // "0 is the sensible default" convention. Callers that produce
+    // diagnostics from AST nodes after loadSource() returns (CsgEvaluator's
+    // eval-time errors — assert()/import()/surface()/text()/polyhedron(),
+    // which can't run until parsing succeeds) use this to resolve
+    // SourceLoc::fileId back to a path, the same way lex/parse diagnostics
+    // already carry filePath directly.
+    std::vector<std::string> files;
 };
 
 // Reads, lexes, and parses `rootPath`, then recursively resolves every

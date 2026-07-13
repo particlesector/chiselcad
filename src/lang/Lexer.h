@@ -1,6 +1,7 @@
 #pragma once
 #include "Diagnostic.h"
 #include "Token.h"
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -11,8 +12,8 @@ namespace chisel::lang {
 // All tokens are returned in one pass; diagnostics are accumulated and
 // available after tokenize() returns. Lex errors do not throw.
 class Lexer {
-public:
-    explicit Lexer(std::string_view source, std::string filePath = "");
+  public:
+    explicit Lexer(std::string_view source, std::string filePath = "", uint32_t fileId = 0);
 
     // Run the lexer; returns the full token stream including a final Eof token.
     std::vector<Token> tokenize();
@@ -20,7 +21,7 @@ public:
     const DiagList& diagnostics() const { return m_diags; }
     bool hasErrors() const;
 
-private:
+  private:
     // ---- source navigation ------------------------------------------------
     char peek(int offset = 0) const;
     char advance();
@@ -37,19 +38,20 @@ private:
     Token scanSpecialVar(uint32_t startOffset);
     Token scanString(uint32_t startOffset);
     Token scanAngledPath(uint32_t startOffset);
-    void  skipLineComment();
-    void  skipBlockComment();
+    void skipLineComment();
+    void skipBlockComment();
 
     void addError(const std::string& msg, SourceLoc loc);
     void addWarning(const std::string& msg, SourceLoc loc);
 
     // ---- state ------------------------------------------------------------
     std::string_view m_source;
-    std::string      m_filePath;
-    size_t           m_pos  = 0;
-    uint32_t         m_line = 0;
-    uint32_t         m_col  = 0;
-    DiagList         m_diags;
+    std::string m_filePath;
+    uint32_t m_fileId = 0;
+    size_t m_pos = 0;
+    uint32_t m_line = 0;
+    uint32_t m_col = 0;
+    DiagList m_diags;
 };
 
 } // namespace chisel::lang

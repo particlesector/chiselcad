@@ -2,11 +2,14 @@
 #include "CsgNode.h"
 #include "lang/AST.h"
 #include "lang/Interpreter.h"
+
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace chisel::csg {
 
@@ -18,26 +21,35 @@ namespace chisel::csg {
 // nodes are folded the same way into each node's ColorAttr.
 // ---------------------------------------------------------------------------
 class CsgEvaluator {
-public:
-    // Base directory for resolving relative import()/surface() paths. Set by
-    // the caller (MeshBuilder) to the root .scad file's directory before
-    // calling evaluate(); defaults to the process's current directory.
-    // Caveat: since include<>/use<> flatten a multi-file ParseResult into
-    // one before CsgEvaluator ever sees it (SourceLoader.h), an import()
-    // written inside a used/included file also resolves against the ROOT
-    // file's directory, not its own — the AST carries no per-node file
-    // identity to do otherwise (same root cause as assert()/echo()
-    // diagnostics not carrying a filePath from such files).
+  public:
+    // Base directory for resolving relative import()/surface() paths when
+    // the calling node's own file can't be determined (fileTable unset, or
+    // the node's fileId is out of range). Set by the caller (MeshBuilder) to
+    // the root .scad file's directory before calling evaluate(); defaults to
+    // the process's current directory. When fileTable IS set, import()/
+    // surface() instead resolve relative to the directory of the file that
+    // actually contains the call — see resolveFilePathArg().
     std::filesystem::path baseDir;
+
+    // fileId -> path table (SourceLoc::fileId indexes into this), as
+    // produced by SourceLoader::loadSource()'s LoadedSource::files. Set by
+    // the caller (MeshBuilder) before evaluate() so that: (1) eval-time
+    // diagnostics (assert()/import()/surface()/text()/polyhedron() errors,
+    // module recursion limit) carry the correct filePath for code reached
+    // via include/use, matching lex/parse-time diagnostics, and (2) import()/
+    // surface() resolve a relative path against the directory of the file
+    // that actually contains the call, not always the root file's directory.
+    // Left null (default), both fall back to their pre-existing behavior
+    // (empty filePath / baseDir-relative resolution).
+    const std::vector<std::string>* fileTable = nullptr;
 
     // Convenience overload: creates a default Interpreter internally.
     CsgScene evaluate(const chisel::lang::ParseResult& result);
 
     // Full overload: uses a pre-populated Interpreter (has assignments loaded).
-    CsgScene evaluate(const chisel::lang::ParseResult& result,
-                      chisel::lang::Interpreter& interp);
+    CsgScene evaluate(const chisel::lang::ParseResult& result, chisel::lang::Interpreter& interp);
 
-private:
+  private:
     chisel::lang::Interpreter* m_interp = nullptr; // non-owning, set during evaluate()
 
     // Module definitions indexed by name — populated at evaluate() entry.
@@ -93,34 +105,56 @@ private:
     // this" semantics for `!`.
     std::vector<CsgNodePtr> m_rootOnlyNodes;
 
-    CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalTransform(const chisel::lang::TransformNode& t, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalIf(const chisel::lang::IfNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalFor(const chisel::lang::ForNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalModuleCall(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalChildren(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalExtrusion(const chisel::lang::ExtrusionNode& e, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalLet(const chisel::lang::LetNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalColor(const chisel::lang::ColorNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalOffset(const chisel::lang::OffsetNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalProjection(const chisel::lang::ProjectionNode& n, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalImport(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalSurface(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalText(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalPolyhedron(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
-    CsgNodePtr evalResize(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color);
+    CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform,
+                        const ColorAttr& color);
+    CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform,
+                             const ColorAttr& color);
+    CsgNodePtr evalBoolean(const chisel::lang::BooleanNode& b, const glm::mat4& xform,
+                           const ColorAttr& color);
+    CsgNodePtr evalTransform(const chisel::lang::TransformNode& t, const glm::mat4& xform,
+                             const ColorAttr& color);
+    CsgNodePtr evalIf(const chisel::lang::IfNode& n, const glm::mat4& xform,
+                      const ColorAttr& color);
+    CsgNodePtr evalFor(const chisel::lang::ForNode& n, const glm::mat4& xform,
+                       const ColorAttr& color);
+    CsgNodePtr evalModuleCall(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform,
+                              const ColorAttr& color);
+    CsgNodePtr evalChildren(const chisel::lang::ModuleCallNode& n, const glm::mat4& xform,
+                            const ColorAttr& color);
+    CsgNodePtr evalExtrusion(const chisel::lang::ExtrusionNode& e, const glm::mat4& xform,
+                             const ColorAttr& color);
+    CsgNodePtr evalLet(const chisel::lang::LetNode& n, const glm::mat4& xform,
+                       const ColorAttr& color);
+    CsgNodePtr evalColor(const chisel::lang::ColorNode& n, const glm::mat4& xform,
+                         const ColorAttr& color);
+    CsgNodePtr evalOffset(const chisel::lang::OffsetNode& n, const glm::mat4& xform,
+                          const ColorAttr& color);
+    CsgNodePtr evalProjection(const chisel::lang::ProjectionNode& n, const glm::mat4& xform,
+                              const ColorAttr& color);
+    CsgNodePtr evalImport(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform,
+                          const ColorAttr& color);
+    CsgNodePtr evalSurface(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform,
+                           const ColorAttr& color);
+    CsgNodePtr evalText(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform,
+                        const ColorAttr& color);
+    CsgNodePtr evalPolyhedron(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform,
+                              const ColorAttr& color);
+    CsgNodePtr evalResize(const chisel::lang::ModuleCallNode& call, const glm::mat4& xform,
+                          const ColorAttr& color);
 
     // Shared by evalImport()/evalSurface(): pushes an error Diagnostic (if a
     // scene is being built) at the given source location.
     void reportEvalError(const chisel::lang::SourceLoc& loc, std::string msg);
 
+    // Resolves a SourceLoc::fileId to a path via fileTable; "" if fileTable
+    // is unset or fileId is out of range (e.g. a default-constructed loc).
+    std::string resolveFilePath(uint32_t fileId) const;
+
     // Shared by evalImport()/evalSurface(): resolves and validates the
     // file-path argument common to both builtins. See definition for the
     // positional-vs-named precedence rule.
-    std::optional<std::filesystem::path> resolveFilePathArg(
-        const chisel::lang::ModuleCallNode& call, std::string_view builtinName);
+    std::optional<std::filesystem::path>
+    resolveFilePathArg(const chisel::lang::ModuleCallNode& call, std::string_view builtinName);
 
     glm::mat4 makeMatrix(const chisel::lang::TransformNode& t) const;
     bool resolveColor(const chisel::lang::Value& c, glm::vec4& out) const;

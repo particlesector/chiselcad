@@ -1,7 +1,8 @@
-#include <catch2/catch_approx.hpp>
-#include <catch2/catch_test_macros.hpp>
 #include "lang/Lexer.h"
 #include "lang/Token.h"
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 using Catch::Approx;
 
@@ -23,7 +24,8 @@ static std::vector<TokenKind> kinds(std::string_view src) {
     auto tokens = lex(src);
     std::vector<TokenKind> ks;
     ks.reserve(tokens.size());
-    for (auto& t : tokens) ks.push_back(t.kind);
+    for (auto& t : tokens)
+        ks.push_back(t.kind);
     return ks;
 }
 
@@ -31,8 +33,8 @@ static std::vector<TokenKind> kinds(std::string_view src) {
 // Primitives
 // ---------------------------------------------------------------------------
 TEST_CASE("Lexer:primitive keywords", "[lexer]") {
-    REQUIRE(kinds("cube")     == std::vector{TokenKind::Cube});
-    REQUIRE(kinds("sphere")   == std::vector{TokenKind::Sphere});
+    REQUIRE(kinds("cube") == std::vector{TokenKind::Cube});
+    REQUIRE(kinds("sphere") == std::vector{TokenKind::Sphere});
     REQUIRE(kinds("cylinder") == std::vector{TokenKind::Cylinder});
 }
 
@@ -40,24 +42,24 @@ TEST_CASE("Lexer:primitive keywords", "[lexer]") {
 // Boolean keywords
 // ---------------------------------------------------------------------------
 TEST_CASE("Lexer:boolean keywords", "[lexer]") {
-    REQUIRE(kinds("union")        == std::vector{TokenKind::Union});
-    REQUIRE(kinds("difference")   == std::vector{TokenKind::Difference});
+    REQUIRE(kinds("union") == std::vector{TokenKind::Union});
+    REQUIRE(kinds("difference") == std::vector{TokenKind::Difference});
     REQUIRE(kinds("intersection") == std::vector{TokenKind::Intersection});
 }
 
 TEST_CASE("Lexer:hull and minkowski keywords", "[lexer]") {
-    REQUIRE(kinds("hull")      == std::vector{TokenKind::Hull});
+    REQUIRE(kinds("hull") == std::vector{TokenKind::Hull});
     REQUIRE(kinds("minkowski") == std::vector{TokenKind::Minkowski});
 }
 
 TEST_CASE("Lexer:if and else keywords", "[lexer]") {
-    REQUIRE(kinds("if")   == std::vector{TokenKind::If});
+    REQUIRE(kinds("if") == std::vector{TokenKind::If});
     REQUIRE(kinds("else") == std::vector{TokenKind::Else});
 }
 
 TEST_CASE("Lexer:for keyword and colon", "[lexer]") {
     REQUIRE(kinds("for") == std::vector{TokenKind::For});
-    REQUIRE(kinds(":")   == std::vector{TokenKind::Colon});
+    REQUIRE(kinds(":") == std::vector{TokenKind::Colon});
 }
 
 TEST_CASE("Lexer:module keyword", "[lexer]") {
@@ -90,16 +92,16 @@ TEST_CASE("Lexer:for range tokens", "[lexer]") {
 // ---------------------------------------------------------------------------
 TEST_CASE("Lexer:transform keywords", "[lexer]") {
     REQUIRE(kinds("translate") == std::vector{TokenKind::Translate});
-    REQUIRE(kinds("rotate")    == std::vector{TokenKind::Rotate});
-    REQUIRE(kinds("scale")     == std::vector{TokenKind::Scale});
-    REQUIRE(kinds("mirror")    == std::vector{TokenKind::Mirror});
+    REQUIRE(kinds("rotate") == std::vector{TokenKind::Rotate});
+    REQUIRE(kinds("scale") == std::vector{TokenKind::Scale});
+    REQUIRE(kinds("mirror") == std::vector{TokenKind::Mirror});
 }
 
 // ---------------------------------------------------------------------------
 // Boolean literals
 // ---------------------------------------------------------------------------
 TEST_CASE("Lexer:boolean literals", "[lexer]") {
-    REQUIRE(kinds("true")  == std::vector{TokenKind::True});
+    REQUIRE(kinds("true") == std::vector{TokenKind::True});
     REQUIRE(kinds("false") == std::vector{TokenKind::False});
 }
 
@@ -135,8 +137,8 @@ TEST_CASE("Lexer:trailing dot float", "[lexer]") {
 TEST_CASE("Lexer:trailing dot float followed by comma", "[lexer]") {
     auto t = kinds("[3., 1, 1]");
     REQUIRE(t == std::vector{TokenKind::LBracket, TokenKind::Number, TokenKind::Comma,
-                              TokenKind::Number, TokenKind::Comma, TokenKind::Number,
-                              TokenKind::RBracket});
+                             TokenKind::Number, TokenKind::Comma, TokenKind::Number,
+                             TokenKind::RBracket});
 }
 
 TEST_CASE("Lexer:exponent with digits", "[lexer]") {
@@ -164,7 +166,8 @@ TEST_CASE("Lexer:exponent sign without digits does not eat a following operator"
     // silently dropping the intended binary minus. It must now tokenize as
     // Number(2) Ident(e) Minus Ident(h).
     auto t = kinds("2e-h");
-    REQUIRE(t == std::vector{TokenKind::Number, TokenKind::Ident, TokenKind::Minus, TokenKind::Ident});
+    REQUIRE(t ==
+            std::vector{TokenKind::Number, TokenKind::Ident, TokenKind::Minus, TokenKind::Ident});
 }
 
 TEST_CASE("Lexer:negative number", "[lexer]") {
@@ -290,18 +293,18 @@ TEST_CASE("Lexer:translate + cube call", "[lexer]") {
 TEST_CASE("Lexer:difference block header", "[lexer]") {
     // difference() {
     REQUIRE(kinds("difference() {") == std::vector{
-        TokenKind::Difference,
-        TokenKind::LParen,
-        TokenKind::RParen,
-        TokenKind::LBrace,
-    });
+                                           TokenKind::Difference,
+                                           TokenKind::LParen,
+                                           TokenKind::RParen,
+                                           TokenKind::LBrace,
+                                       });
 }
 
 TEST_CASE("Lexer:cylinder with named params", "[lexer]") {
     // cylinder(h = 10, r = 5, center = true)
     auto t = lex("cylinder(h = 10, r = 5, center = true)");
     REQUIRE(t[0].kind == TokenKind::Cylinder);
-    REQUIRE(t[2].kind == TokenKind::Ident);   // h
+    REQUIRE(t[2].kind == TokenKind::Ident); // h
     REQUIRE(t[2].text == "h");
     REQUIRE(t[3].kind == TokenKind::Equals);
     REQUIRE(t[4].kind == TokenKind::Number);
@@ -321,13 +324,13 @@ TEST_CASE("Lexer:$fn per-primitive override", "[lexer]") {
 TEST_CASE("Lexer:empty union (edge case from test file)", "[lexer]") {
     // union() {};
     REQUIRE(kinds("union() {};") == std::vector{
-        TokenKind::Union,
-        TokenKind::LParen,
-        TokenKind::RParen,
-        TokenKind::LBrace,
-        TokenKind::RBrace,
-        TokenKind::Semicolon,
-    });
+                                        TokenKind::Union,
+                                        TokenKind::LParen,
+                                        TokenKind::RParen,
+                                        TokenKind::LBrace,
+                                        TokenKind::RBrace,
+                                        TokenKind::Semicolon,
+                                    });
 }
 
 TEST_CASE("Lexer:Eof token is always last", "[lexer]") {
@@ -340,8 +343,8 @@ TEST_CASE("Lexer:Eof token is always last", "[lexer]") {
 // 2-D primitives and extrusion keywords (Tier 4)
 // ---------------------------------------------------------------------------
 TEST_CASE("Lexer:2D primitive keywords", "[lexer]") {
-    REQUIRE(kinds("square")  == std::vector{TokenKind::Square});
-    REQUIRE(kinds("circle")  == std::vector{TokenKind::Circle});
+    REQUIRE(kinds("square") == std::vector{TokenKind::Square});
+    REQUIRE(kinds("circle") == std::vector{TokenKind::Circle});
     REQUIRE(kinds("polygon") == std::vector{TokenKind::Polygon});
 }
 
@@ -453,31 +456,73 @@ TEST_CASE("Lexer:block comment between use and path is skipped", "[lexer][tier-e
 TEST_CASE("Lexer:hash tokenizes as its own kind", "[lexer]") {
     REQUIRE(kinds("#") == std::vector{TokenKind::Hash});
     REQUIRE(kinds("#cube();") == std::vector{
-        TokenKind::Hash, TokenKind::Cube, TokenKind::LParen,
-        TokenKind::RParen, TokenKind::Semicolon,
-    });
+                                     TokenKind::Hash,
+                                     TokenKind::Cube,
+                                     TokenKind::LParen,
+                                     TokenKind::RParen,
+                                     TokenKind::Semicolon,
+                                 });
 }
 
 TEST_CASE("Lexer:percent/star/bang keep their existing operator token kinds", "[lexer]") {
     // These aren't new tokens — the Parser reinterprets Percent/Star/Bang as
     // modifiers only when found in statement-start position.
     REQUIRE(kinds("%cube();") == std::vector{
-        TokenKind::Percent, TokenKind::Cube, TokenKind::LParen,
-        TokenKind::RParen, TokenKind::Semicolon,
-    });
+                                     TokenKind::Percent,
+                                     TokenKind::Cube,
+                                     TokenKind::LParen,
+                                     TokenKind::RParen,
+                                     TokenKind::Semicolon,
+                                 });
     REQUIRE(kinds("*cube();") == std::vector{
-        TokenKind::Star, TokenKind::Cube, TokenKind::LParen,
-        TokenKind::RParen, TokenKind::Semicolon,
-    });
+                                     TokenKind::Star,
+                                     TokenKind::Cube,
+                                     TokenKind::LParen,
+                                     TokenKind::RParen,
+                                     TokenKind::Semicolon,
+                                 });
     REQUIRE(kinds("!cube();") == std::vector{
-        TokenKind::Bang, TokenKind::Cube, TokenKind::LParen,
-        TokenKind::RParen, TokenKind::Semicolon,
-    });
+                                     TokenKind::Bang,
+                                     TokenKind::Cube,
+                                     TokenKind::LParen,
+                                     TokenKind::RParen,
+                                     TokenKind::Semicolon,
+                                 });
 }
 
 TEST_CASE("Lexer:stacked modifier characters", "[lexer]") {
     REQUIRE(kinds("#!cube();") == std::vector{
-        TokenKind::Hash, TokenKind::Bang, TokenKind::Cube, TokenKind::LParen,
-        TokenKind::RParen, TokenKind::Semicolon,
-    });
+                                      TokenKind::Hash,
+                                      TokenKind::Bang,
+                                      TokenKind::Cube,
+                                      TokenKind::LParen,
+                                      TokenKind::RParen,
+                                      TokenKind::Semicolon,
+                                  });
+}
+
+// ---------------------------------------------------------------------------
+// fileId — every token, regardless of which scanner produced it, must carry
+// the fileId the Lexer was constructed with (v3 Phase 4: per-file
+// diagnostics for code reached via include/use rely on this). scanNumber,
+// scanIdentOrKeyword, scanSpecialVar, scanString, and scanAngledPath each
+// build their own Token rather than going through makeToken(), so this
+// exercises all five directly — a regression here previously left the
+// fileId at 0 (single-char-punctuation tokens, built via makeToken(), were
+// unaffected, which is why it only showed up on identifiers/keywords/
+// numbers/strings/special-vars/angled-paths).
+// ---------------------------------------------------------------------------
+TEST_CASE("Lexer:every token kind carries the constructor-supplied fileId", "[lexer]") {
+    Lexer lexer(R"(include <lib.scad>
+x = 3.14;
+$fn = 8;
+s = "hi";
+cube(x);)",
+                "whatever.scad", /*fileId=*/7);
+    auto tokens = lexer.tokenize();
+    REQUIRE_FALSE(lexer.hasErrors());
+    for (const auto& t : tokens) {
+        INFO("token text='" << t.text << "' kind=" << static_cast<int>(t.kind));
+        REQUIRE(t.loc.fileId == 7);
+    }
 }

@@ -1,16 +1,24 @@
 #include "CsgEvaluator.h"
+
+#include "import/AmfLoader.h"
+#include "import/DxfLoader.h"
+#include "import/OffLoader.h"
 #include "import/StlLoader.h"
 #include "import/SurfaceLoader.h"
+#include "import/SvgLoader.h"
 #include "import/TextLoader.h"
+#include "import/ThreeMfLoader.h"
+#include "util/PathSuffix.h"
 #include "util/PathUtf8.h"
-#include <glm/gtc/matrix_transform.hpp>
+
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <glm/gtc/matrix_transform.hpp>
 
 #ifndef CHISELCAD_RESOURCE_DIR
-#  error "CHISELCAD_RESOURCE_DIR must be defined by the build (see CMakeLists.txt)"
+#error "CHISELCAD_RESOURCE_DIR must be defined by the build (see CMakeLists.txt)"
 #endif
 
 namespace chisel::csg {
@@ -72,7 +80,7 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
     interp.setVar("$fa", Value::fromNumber(scene.globalFa));
 
     const glm::mat4 identity{1.0f};
-    const ColorAttr  noColor{};
+    const ColorAttr noColor{};
     for (const auto& root : result.roots) {
         if (auto node = evalNode(*root, identity, noColor))
             scene.roots.push_back(std::move(node));
@@ -89,7 +97,7 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
     }
 
     m_interp = nullptr;
-    m_scene  = nullptr;
+    m_scene = nullptr;
     m_moduleDefs.clear();
     m_childrenStack.clear();
     m_rootOnlyNodes.clear();
@@ -99,56 +107,62 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
 // ---------------------------------------------------------------------------
 // Node dispatch
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform,
+                                  const ColorAttr& color) {
     // A failed assert() aborts the rest of the script (OpenSCAD semantics):
     // every remaining statement anywhere in the tree — siblings, later
     // module-body statements, later for-loop iterations, etc. — funnels
     // through this function, so bailing out here halts all of them without
     // needing a check in each individual loop.
-    if (m_aborted) return nullptr;
+    if (m_aborted)
+        return nullptr;
 
     // '*' (disable): the subtree is skipped entirely — not evaluated at all,
     // so nested echo()/assert() or expensive module calls inside it never
     // run, matching OpenSCAD's "as if this statement wasn't here" semantics.
     const uint8_t mods = astModifiers(node);
-    if (mods & ModDisable) return nullptr;
-
-    CsgNodePtr result = std::visit([&](const auto& n) -> CsgNodePtr {
-        using T = std::decay_t<decltype(n)>;
-        if constexpr (std::is_same_v<T, PrimitiveNode>)
-            return evalPrimitive(n, xform, color);
-        else if constexpr (std::is_same_v<T, BooleanNode>)
-            return evalBoolean(n, xform, color);
-        else if constexpr (std::is_same_v<T, TransformNode>)
-            return evalTransform(n, xform, color);
-        else if constexpr (std::is_same_v<T, IfNode>)
-            return evalIf(n, xform, color);
-        else if constexpr (std::is_same_v<T, ForNode>)
-            return evalFor(n, xform, color);
-        else if constexpr (std::is_same_v<T, ModuleCallNode>)
-            return evalModuleCall(n, xform, color);
-        else if constexpr (std::is_same_v<T, ExtrusionNode>)
-            return evalExtrusion(n, xform, color);
-        else if constexpr (std::is_same_v<T, LetNode>)
-            return evalLet(n, xform, color);
-        else if constexpr (std::is_same_v<T, ColorNode>)
-            return evalColor(n, xform, color);
-        else if constexpr (std::is_same_v<T, OffsetNode>)
-            return evalOffset(n, xform, color);
-        else if constexpr (std::is_same_v<T, ProjectionNode>)
-            return evalProjection(n, xform, color);
-        else if constexpr (std::is_same_v<T, AssignStmt>) {
-            // Local assignment as a block statement: mutates the current
-            // scope in place (the enclosing evalXxx call is responsible for
-            // snapshot/restore around its whole child list, so this doesn't
-            // leak past the block it's written in). Produces no geometry.
-            m_interp->setVar(n.name, m_interp->evaluate(*n.value));
-            return nullptr;
-        }
+    if (mods & ModDisable)
         return nullptr;
-    }, node);
 
-    if (!result || mods == ModNone) return result;
+    CsgNodePtr result = std::visit(
+        [&](const auto& n) -> CsgNodePtr {
+            using T = std::decay_t<decltype(n)>;
+            if constexpr (std::is_same_v<T, PrimitiveNode>)
+                return evalPrimitive(n, xform, color);
+            else if constexpr (std::is_same_v<T, BooleanNode>)
+                return evalBoolean(n, xform, color);
+            else if constexpr (std::is_same_v<T, TransformNode>)
+                return evalTransform(n, xform, color);
+            else if constexpr (std::is_same_v<T, IfNode>)
+                return evalIf(n, xform, color);
+            else if constexpr (std::is_same_v<T, ForNode>)
+                return evalFor(n, xform, color);
+            else if constexpr (std::is_same_v<T, ModuleCallNode>)
+                return evalModuleCall(n, xform, color);
+            else if constexpr (std::is_same_v<T, ExtrusionNode>)
+                return evalExtrusion(n, xform, color);
+            else if constexpr (std::is_same_v<T, LetNode>)
+                return evalLet(n, xform, color);
+            else if constexpr (std::is_same_v<T, ColorNode>)
+                return evalColor(n, xform, color);
+            else if constexpr (std::is_same_v<T, OffsetNode>)
+                return evalOffset(n, xform, color);
+            else if constexpr (std::is_same_v<T, ProjectionNode>)
+                return evalProjection(n, xform, color);
+            else if constexpr (std::is_same_v<T, AssignStmt>) {
+                // Local assignment as a block statement: mutates the current
+                // scope in place (the enclosing evalXxx call is responsible for
+                // snapshot/restore around its whole child list, so this doesn't
+                // leak past the block it's written in). Produces no geometry.
+                m_interp->setVar(n.name, m_interp->evaluate(*n.value));
+                return nullptr;
+            }
+            return nullptr;
+        },
+        node);
+
+    if (!result || mods == ModNone)
+        return result;
 
     // '#' (highlight/debug): force a highlight tint on this node's own
     // subtree, exactly like an implicit color() wrapper — and like a nested
@@ -169,7 +183,8 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, c
     // independent, tinted reference root.
     if (mods & ModBackground) {
         std::visit([](auto& n) { n.color = ColorAttr{true, kBackgroundColor}; }, *result);
-        if (m_scene) m_scene->backgroundRoots.push_back(result);
+        if (m_scene)
+            m_scene->backgroundRoots.push_back(result);
         return nullptr;
     }
 
@@ -179,11 +194,12 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform, c
 // ---------------------------------------------------------------------------
 // Primitive — resolve ExprPtr params, bake the transform into the leaf
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& xform,
+                                       const ColorAttr& color) {
     CsgLeaf leaf;
-    leaf.center    = p.center;
+    leaf.center = p.center;
     leaf.transform = xform;
-    leaf.color     = color;
+    leaf.color = color;
 
     switch (p.kind) {
     // ---- cube([w,h,d]) / cube(s) / cube(size=[w,h,d]) / cube(size=s) ------
@@ -192,23 +208,27 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         // Resolve scalar params ($fn, etc.) — skip "size"/"_pos0", which may
         // be vectors, so they aren't coerced to 0 by the blanket evalNumber.
         for (const auto& [name, exprPtr] : p.params) {
-            if (name == "size" || name == "_pos0") continue;
+            if (name == "size" || name == "_pos0")
+                continue;
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
         }
         // Named "size=" takes priority; otherwise a bare positional arg
         // (cube(5) or cube(v) where v is a vector variable) is "size".
-        const ExprNode* sizeExpr = p.params.count("size") ? p.params.at("size").get()
-                                  : p.params.count("_pos0") ? p.params.at("_pos0").get()
-                                  : nullptr;
+        const ExprNode* sizeExpr = p.params.count("size")    ? p.params.at("size").get()
+                                   : p.params.count("_pos0") ? p.params.at("_pos0").get()
+                                                             : nullptr;
         if (sizeExpr) {
             Value sv = m_interp->evaluate(*sizeExpr);
             if (sv.isNumber()) {
                 leaf.params["x"] = leaf.params["y"] = leaf.params["z"] = sv.asNumber();
             } else if (sv.isVector()) {
                 const auto& vec = sv.asVec();
-                if (vec.size() >= 1 && vec[0].isNumber()) leaf.params["x"] = vec[0].asNumber();
-                if (vec.size() >= 2 && vec[1].isNumber()) leaf.params["y"] = vec[1].asNumber();
-                if (vec.size() >= 3 && vec[2].isNumber()) leaf.params["z"] = vec[2].asNumber();
+                if (vec.size() >= 1 && vec[0].isNumber())
+                    leaf.params["x"] = vec[0].asNumber();
+                if (vec.size() >= 2 && vec[1].isNumber())
+                    leaf.params["y"] = vec[1].asNumber();
+                if (vec.size() >= 3 && vec[2].isNumber())
+                    leaf.params["z"] = vec[2].asNumber();
             }
         }
         break;
@@ -235,8 +255,8 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         if (!leaf.params.count("r") && leaf.params.count("_pos1"))
             leaf.params["r"] = leaf.params["_pos1"];
         // diameter → radius conversions
-        if (!leaf.params.count("r")  && leaf.params.count("d"))
-            leaf.params["r"]  = leaf.params["d"]  * 0.5;
+        if (!leaf.params.count("r") && leaf.params.count("d"))
+            leaf.params["r"] = leaf.params["d"] * 0.5;
         if (!leaf.params.count("r1") && leaf.params.count("d1"))
             leaf.params["r1"] = leaf.params["d1"] * 0.5;
         if (!leaf.params.count("r2") && leaf.params.count("d2"))
@@ -248,7 +268,8 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         leaf.kind = CsgLeaf::Kind::Square2D;
         // Resolve scalar params ($fn, etc.) — skip "size" which may be a vector
         for (const auto& [name, exprPtr] : p.params) {
-            if (name == "size") continue;
+            if (name == "size")
+                continue;
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
         }
         // "size" overrides x/y if present
@@ -295,10 +316,8 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
                 leaf.polyPoints.reserve(pts.asVec().size());
                 for (const auto& pt : pts.asVec()) {
                     if (pt.isVector() && pt.asVec().size() >= 2) {
-                        leaf.polyPoints.push_back({
-                            static_cast<float>(pt.asVec()[0].asNumber()),
-                            static_cast<float>(pt.asVec()[1].asNumber())
-                        });
+                        leaf.polyPoints.push_back({static_cast<float>(pt.asVec()[0].asNumber()),
+                                                   static_cast<float>(pt.asVec()[1].asNumber())});
                     }
                 }
             }
@@ -327,21 +346,33 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
 // ---------------------------------------------------------------------------
 // Boolean — preserve the tree structure, pass xform down to children
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xform,
+                                     const ColorAttr& color) {
     CsgBoolean bnode;
     bnode.color = color;
     switch (b.op) {
-    case BooleanNode::Op::Union:        bnode.op = CsgBoolean::Op::Union;        break;
-    case BooleanNode::Op::Difference:   bnode.op = CsgBoolean::Op::Difference;   break;
-    case BooleanNode::Op::Intersection: bnode.op = CsgBoolean::Op::Intersection; break;
-    case BooleanNode::Op::Hull:         bnode.op = CsgBoolean::Op::Hull;         break;
-    case BooleanNode::Op::Minkowski:    bnode.op = CsgBoolean::Op::Minkowski;    break;
+    case BooleanNode::Op::Union:
+        bnode.op = CsgBoolean::Op::Union;
+        break;
+    case BooleanNode::Op::Difference:
+        bnode.op = CsgBoolean::Op::Difference;
+        break;
+    case BooleanNode::Op::Intersection:
+        bnode.op = CsgBoolean::Op::Intersection;
+        break;
+    case BooleanNode::Op::Hull:
+        bnode.op = CsgBoolean::Op::Hull;
+        break;
+    case BooleanNode::Op::Minkowski:
+        bnode.op = CsgBoolean::Op::Minkowski;
+        break;
     }
 
-    const bool isLocalSpaceOp = (bnode.op == CsgBoolean::Op::Hull ||
-                                  bnode.op == CsgBoolean::Op::Minkowski);
+    const bool isLocalSpaceOp =
+        (bnode.op == CsgBoolean::Op::Hull || bnode.op == CsgBoolean::Op::Minkowski);
     const glm::mat4 childXform = isLocalSpaceOp ? glm::mat4{1.0f} : xform;
-    if (isLocalSpaceOp) bnode.transform = xform;
+    if (isLocalSpaceOp)
+        bnode.transform = xform;
 
     // Local assignments among the children (see AssignStmt in evalNode) are
     // scoped to this block: save/restore around the whole child list so they
@@ -358,7 +389,8 @@ CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xfor
 // ---------------------------------------------------------------------------
 // Transform — resolve the vec expression, multiply into the accumulated matrix
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& xform,
+                                       const ColorAttr& color) {
     const glm::mat4 combined = xform * makeMatrix(t);
 
     std::vector<CsgNodePtr> children;
@@ -370,12 +402,14 @@ CsgNodePtr CsgEvaluator::evalTransform(const TransformNode& t, const glm::mat4& 
     }
     m_interp->restoreEnv(std::move(savedEnv));
 
-    if (children.empty())     return nullptr;
-    if (children.size() == 1) return children[0];
+    if (children.empty())
+        return nullptr;
+    if (children.size() == 1)
+        return children[0];
 
     CsgBoolean u;
-    u.op       = CsgBoolean::Op::Union;
-    u.color    = color;
+    u.op = CsgBoolean::Op::Union;
+    u.color = color;
     u.children = std::move(children);
     return makeBoolean(std::move(u));
 }
@@ -400,11 +434,13 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
         if (matVal.isVector()) {
             const auto& rows = matVal.asVec();
             for (std::size_t row = 0; row < 4 && row < rows.size(); ++row) {
-                if (!rows[row].isVector()) continue;
+                if (!rows[row].isVector())
+                    continue;
                 const auto& cols = rows[row].asVec();
                 for (std::size_t col = 0; col < 4 && col < cols.size(); ++col)
                     if (cols[col].isNumber())
-                        m[static_cast<int>(col)][static_cast<int>(row)] = static_cast<float>(cols[col].asNumber());
+                        m[static_cast<int>(col)][static_cast<int>(row)] =
+                            static_cast<float>(cols[col].asNumber());
             }
         }
         return m;
@@ -415,7 +451,8 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
         if (rotVal.isVector()) {
             std::array<double, 3> r = {0.0, 0.0, 0.0};
             for (std::size_t i = 0; i < 3 && i < rotVal.asVec().size(); ++i)
-                if (rotVal.asVec()[i].isNumber()) r[i] = rotVal.asVec()[i].asNumber();
+                if (rotVal.asVec()[i].isNumber())
+                    r[i] = rotVal.asVec()[i].asNumber();
             return r;
         }
         if (rotVal.isNumber())
@@ -428,10 +465,8 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
     switch (t.kind) {
 
     case TransformNode::Kind::Translate:
-        m = glm::translate(m, glm::vec3(
-            static_cast<float>(vx),
-            static_cast<float>(vy),
-            static_cast<float>(vz)));
+        m = glm::translate(
+            m, glm::vec3(static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(vz)));
         break;
 
     case TransformNode::Kind::Rotate: {
@@ -446,27 +481,23 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
     }
 
     case TransformNode::Kind::Scale:
-        m = glm::scale(m, glm::vec3(
-            static_cast<float>(vx),
-            static_cast<float>(vy),
-            static_cast<float>(vz)));
+        m = glm::scale(
+            m, glm::vec3(static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(vz)));
         break;
 
     case TransformNode::Kind::Mirror: {
-        glm::vec3 n(static_cast<float>(vx),
-                    static_cast<float>(vy),
-                    static_cast<float>(vz));
+        glm::vec3 n(static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(vz));
         float len2 = glm::dot(n, n);
         if (len2 > 1e-12f) {
             n /= std::sqrt(len2);
             m[0][0] = 1.0f - 2.0f * n.x * n.x;
-            m[1][0] =       -2.0f * n.x * n.y;
-            m[2][0] =       -2.0f * n.x * n.z;
-            m[0][1] =       -2.0f * n.y * n.x;
+            m[1][0] = -2.0f * n.x * n.y;
+            m[2][0] = -2.0f * n.x * n.z;
+            m[0][1] = -2.0f * n.y * n.x;
             m[1][1] = 1.0f - 2.0f * n.y * n.y;
-            m[2][1] =       -2.0f * n.y * n.z;
-            m[0][2] =       -2.0f * n.z * n.x;
-            m[1][2] =       -2.0f * n.z * n.y;
+            m[2][1] = -2.0f * n.y * n.z;
+            m[0][2] = -2.0f * n.z * n.x;
+            m[1][2] = -2.0f * n.z * n.y;
             m[2][2] = 1.0f - 2.0f * n.z * n.z;
         }
         break;
@@ -482,7 +513,8 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
 // ---------------------------------------------------------------------------
 // if/else — evaluate condition, walk the live branch
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform,
+                                const ColorAttr& color) {
     const bool cond = bool(m_interp->evaluate(*node.condition));
     const auto& branch = cond ? node.thenChildren : node.elseChildren;
 
@@ -495,12 +527,14 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform, cons
     }
     m_interp->restoreEnv(std::move(savedEnv));
 
-    if (children.empty())     return nullptr;
-    if (children.size() == 1) return children[0];
+    if (children.empty())
+        return nullptr;
+    if (children.size() == 1)
+        return children[0];
 
     CsgBoolean u;
-    u.op       = CsgBoolean::Op::Union;
-    u.color    = color;
+    u.op = CsgBoolean::Op::Union;
+    u.color = color;
     u.children = std::move(children);
     return makeBoolean(std::move(u));
 }
@@ -508,16 +542,15 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform, cons
 // ---------------------------------------------------------------------------
 // for — iterate range or list, union all child geometry
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform,
+                                 const ColorAttr& color) {
     // Build the sequence of iteration values
     std::vector<Value> values;
 
     if (node.range.isRange) {
         double start = m_interp->evalNumber(*node.range.start);
-        double end   = m_interp->evalNumber(*node.range.end);
-        double step  = node.range.step
-                       ? m_interp->evalNumber(*node.range.step)
-                       : 1.0;
+        double end = m_interp->evalNumber(*node.range.end);
+        double step = node.range.step ? m_interp->evalNumber(*node.range.step) : 1.0;
         values = m_interp->expandRange(start, step, end);
     } else if (node.range.isBracketedList) {
         // Bracketed list literal `[a, b, c]` — each element is its own loop
@@ -533,7 +566,8 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, co
         // `for (pt = pts)` iterates over pts' elements.
         for (const auto& e : node.range.list) {
             Value v = m_interp->evaluate(*e);
-            for (auto& elem : m_interp->iterationValues(v)) values.push_back(std::move(elem));
+            for (auto& elem : m_interp->iterationValues(v))
+                values.push_back(std::move(elem));
         }
     }
 
@@ -554,12 +588,14 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, co
     }
     m_interp->restoreEnv(std::move(savedEnv));
 
-    if (all.empty())     return nullptr;
-    if (all.size() == 1) return all[0];
+    if (all.empty())
+        return nullptr;
+    if (all.size() == 1)
+        return all[0];
 
     CsgBoolean u;
-    u.op       = CsgBoolean::Op::Union;
-    u.color    = color;
+    u.op = CsgBoolean::Op::Union;
+    u.color = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
@@ -577,13 +613,17 @@ std::string CsgEvaluator::formatValue(const Value& v) {
             std::snprintf(buf, sizeof(buf), "%g", n);
         return buf;
     }
-    if (v.isBool())   return v.asBool() ? "true" : "false";
-    if (v.isString()) return "\"" + v.asString() + "\"";
-    if (v.isUndef())  return "undef";
+    if (v.isBool())
+        return v.asBool() ? "true" : "false";
+    if (v.isString())
+        return "\"" + v.asString() + "\"";
+    if (v.isUndef())
+        return "undef";
     if (v.isVector()) {
         std::string s = "[";
         for (std::size_t i = 0; i < v.asVec().size(); ++i) {
-            if (i > 0) s += ", ";
+            if (i > 0)
+                s += ", ";
             s += formatValue(v.asVec()[i]);
         }
         s += "]";
@@ -591,8 +631,8 @@ std::string CsgEvaluator::formatValue(const Value& v) {
     }
     if (v.isRange()) {
         return "[" + formatValue(Value::fromNumber(v.rangeStart)) + ":" +
-                     formatValue(Value::fromNumber(v.rangeStep))  + ":" +
-                     formatValue(Value::fromNumber(v.rangeEnd))   + "]";
+               formatValue(Value::fromNumber(v.rangeStep)) + ":" +
+               formatValue(Value::fromNumber(v.rangeEnd)) + "]";
     }
     return "undef";
 }
@@ -600,9 +640,11 @@ std::string CsgEvaluator::formatValue(const Value& v) {
 // ---------------------------------------------------------------------------
 // Module call — bind args, evaluate body, restore environment
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::mat4& xform,
+                                        const ColorAttr& color) {
     // ---- Built-in: children() ----
-    if (call.name == "children") return evalChildren(call, xform, color);
+    if (call.name == "children")
+        return evalChildren(call, xform, color);
 
     // ---- Built-in: echo(...) ----
     if (call.name == "echo") {
@@ -627,7 +669,8 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
             if (!bool(cond)) {
                 lang::Diagnostic d;
                 d.level = lang::DiagLevel::Error;
-                d.loc   = call.loc;
+                d.loc = call.loc;
+                d.filePath = resolveFilePath(call.loc.fileId);
                 if (call.args.size() >= 2) {
                     Value msgVal = m_interp->evaluate(*call.args[1].value);
                     d.message = "assert failed: " + formatValue(msgVal);
@@ -642,28 +685,35 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     }
 
     // ---- Built-in: import(file) ----
-    if (call.name == "import") return evalImport(call, xform, color);
+    if (call.name == "import")
+        return evalImport(call, xform, color);
 
     // ---- Built-in: surface(file, center=, invert=, convexity=) ----
-    if (call.name == "surface") return evalSurface(call, xform, color);
+    if (call.name == "surface")
+        return evalSurface(call, xform, color);
 
     // ---- Built-in: text(t, size=, font=, halign=, valign=, spacing=, $fn=) ----
-    if (call.name == "text") return evalText(call, xform, color);
+    if (call.name == "text")
+        return evalText(call, xform, color);
 
     // ---- Built-in: polyhedron(points=, faces=) ----
-    if (call.name == "polyhedron") return evalPolyhedron(call, xform, color);
+    if (call.name == "polyhedron")
+        return evalPolyhedron(call, xform, color);
 
     // ---- Built-in: resize(newsize=, auto=) { children } ----
-    if (call.name == "resize") return evalResize(call, xform, color);
+    if (call.name == "resize")
+        return evalResize(call, xform, color);
 
     auto it = m_moduleDefs.find(call.name);
-    if (it == m_moduleDefs.end()) return nullptr; // undefined module
+    if (it == m_moduleDefs.end())
+        return nullptr; // undefined module
 
     if (m_moduleDepth >= kMaxModuleDepth) {
         if (m_scene) {
             lang::Diagnostic d;
-            d.level   = lang::DiagLevel::Error;
-            d.loc     = call.loc;
+            d.level = lang::DiagLevel::Error;
+            d.loc = call.loc;
+            d.filePath = resolveFilePath(call.loc.fileId);
             d.message = "module recursion limit exceeded calling '" + call.name + "'";
             m_scene->evalDiags.push_back(std::move(d));
         }
@@ -680,8 +730,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     for (const auto& arg : call.args) {
         if (arg.name.empty()) {
             if (posIdx < def.params.size())
-                m_interp->setVar(def.params[posIdx].name,
-                                 m_interp->evaluate(*arg.value));
+                m_interp->setVar(def.params[posIdx].name, m_interp->evaluate(*arg.value));
             ++posIdx;
         } else {
             m_interp->setVar(arg.name, m_interp->evaluate(*arg.value));
@@ -696,7 +745,10 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
         bool alreadyBound = (i < posIdx);
         if (!alreadyBound) {
             for (const auto& arg : call.args)
-                if (arg.name == param.name) { alreadyBound = true; break; }
+                if (arg.name == param.name) {
+                    alreadyBound = true;
+                    break;
+                }
         }
         if (!alreadyBound) {
             if (param.defaultVal)
@@ -723,12 +775,14 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     // Restore the caller's environment
     m_interp->restoreEnv(std::move(savedEnv));
 
-    if (all.empty())     return nullptr;
-    if (all.size() == 1) return all[0];
+    if (all.empty())
+        return nullptr;
+    if (all.size() == 1)
+        return all[0];
 
     CsgBoolean u;
-    u.op       = CsgBoolean::Op::Union;
-    u.color    = color;
+    u.op = CsgBoolean::Op::Union;
+    u.color = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
@@ -738,12 +792,15 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
 // Pops the stack before evaluating so any children() calls *inside* a child
 // node see the grandparent module's children (correct OpenSCAD semantics).
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
-    if (m_childrenStack.empty()) return nullptr;
+CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat4& xform,
+                                      const ColorAttr& color) {
+    if (m_childrenStack.empty())
+        return nullptr;
 
     ChildrenFrame frame = m_childrenStack.back();
     const auto* activeChildren = frame.children;
-    if (!activeChildren || activeChildren->empty()) return nullptr;
+    if (!activeChildren || activeChildren->empty())
+        return nullptr;
 
     // Pop current frame so nested children() calls see the parent context
     m_childrenStack.pop_back();
@@ -754,7 +811,8 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
     std::optional<int> idx;
     if (!call.args.empty()) {
         Value idxVal = m_interp->evaluate(*call.args[0].value);
-        if (idxVal.isNumber()) idx = static_cast<int>(idxVal.asNumber());
+        if (idxVal.isNumber())
+            idx = static_cast<int>(idxVal.asNumber());
     }
 
     // Children AST nodes were written at the call site and must be evaluated
@@ -784,12 +842,14 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
     // Restore the frame
     m_childrenStack.push_back(std::move(frame));
 
-    if (all.empty())     return nullptr;
-    if (all.size() == 1) return std::move(all[0]);
+    if (all.empty())
+        return nullptr;
+    if (all.size() == 1)
+        return std::move(all[0]);
 
     CsgBoolean u;
-    u.op       = CsgBoolean::Op::Union;
-    u.color    = color;
+    u.op = CsgBoolean::Op::Union;
+    u.color = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
@@ -797,12 +857,13 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
 // ---------------------------------------------------------------------------
 // Extrusion — build a CsgExtrusion from an ExtrusionNode
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& xform,
+                                       const ColorAttr& color) {
     CsgExtrusion ext;
-    ext.kind      = (e.kind == ExtrusionNode::Kind::Linear) ? CsgExtrusion::Kind::Linear
-                                                             : CsgExtrusion::Kind::Rotate;
+    ext.kind = (e.kind == ExtrusionNode::Kind::Linear) ? CsgExtrusion::Kind::Linear
+                                                       : CsgExtrusion::Kind::Rotate;
     ext.transform = xform;
-    ext.color     = color;
+    ext.color = color;
 
     // Resolve numeric params; treat "scale" and "center" specially
     for (const auto& [name, exprPtr] : e.params) {
@@ -841,10 +902,11 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
 // in local space (like extrusion/hull/minkowski) since offsetting isn't
 // equivariant under arbitrary per-child transforms.
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalOffset(const OffsetNode& o, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalOffset(const OffsetNode& o, const glm::mat4& xform,
+                                    const ColorAttr& color) {
     CsgOffset off;
     off.transform = xform;
-    off.color     = color;
+    off.color = color;
 
     for (const auto& [name, exprPtr] : o.params) {
         if (name == "chamfer") {
@@ -873,10 +935,11 @@ CsgNodePtr CsgEvaluator::evalOffset(const OffsetNode& o, const glm::mat4& xform,
 // transform is stored on the node and applied to the 2-D result instead,
 // same treatment as offset()/extrusion).
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalProjection(const ProjectionNode& p, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalProjection(const ProjectionNode& p, const glm::mat4& xform,
+                                        const ColorAttr& color) {
     CsgProjection proj;
     proj.transform = xform;
-    proj.color     = color;
+    proj.color = color;
 
     if (auto it = p.params.find("cut"); it != p.params.end())
         proj.cut = bool(m_interp->evaluate(*it->second));
@@ -902,11 +965,18 @@ CsgNodePtr CsgEvaluator::evalProjection(const ProjectionNode& p, const glm::mat4
 void CsgEvaluator::reportEvalError(const lang::SourceLoc& loc, std::string msg) {
     if (m_scene) {
         lang::Diagnostic d;
-        d.level   = lang::DiagLevel::Error;
-        d.loc     = loc;
+        d.level = lang::DiagLevel::Error;
+        d.loc = loc;
+        d.filePath = resolveFilePath(loc.fileId);
         d.message = std::move(msg);
         m_scene->evalDiags.push_back(std::move(d));
     }
+}
+
+std::string CsgEvaluator::resolveFilePath(uint32_t fileId) const {
+    if (fileTable && fileId < fileTable->size())
+        return (*fileTable)[fileId];
+    return {};
 }
 
 // Shared by import()/surface(): resolves the file-path argument (first
@@ -916,15 +986,19 @@ void CsgEvaluator::reportEvalError(const lang::SourceLoc& loc, std::string msg) 
 // precedence, since "whichever of a positional/named pair happens to come
 // first in the source" would silently pick a different file depending on
 // argument order alone), evaluates it, checks it's a string, and resolves
-// it against baseDir if relative. Reports a Diagnostic and returns
-// std::nullopt on any failure.
-std::optional<std::filesystem::path> CsgEvaluator::resolveFilePathArg(
-        const ModuleCallNode& call, std::string_view builtinName) {
+// it (if relative) against the directory of the file containing the call,
+// falling back to baseDir. Reports a Diagnostic and returns std::nullopt on
+// any failure.
+std::optional<std::filesystem::path>
+CsgEvaluator::resolveFilePathArg(const ModuleCallNode& call, std::string_view builtinName) {
     const lang::ExprNode* positional = nullptr;
-    const lang::ExprNode* named      = nullptr;
+    const lang::ExprNode* named = nullptr;
     for (const auto& arg : call.args) {
-        if (arg.name.empty()) { if (!positional) positional = arg.value.get(); }
-        else if (arg.name == "file" || arg.name == "filename") named = arg.value.get();
+        if (arg.name.empty()) {
+            if (!positional)
+                positional = arg.value.get();
+        } else if (arg.name == "file" || arg.name == "filename")
+            named = arg.value.get();
     }
     const lang::ExprNode* pathNode = positional ? positional : named;
     if (!pathNode) {
@@ -939,43 +1013,113 @@ std::optional<std::filesystem::path> CsgEvaluator::resolveFilePathArg(
     }
 
     std::filesystem::path filePath = chisel::util::utf8ToPath(pathVal.asString());
-    if (filePath.is_relative())
-        filePath = baseDir / filePath;
+    if (filePath.is_relative()) {
+        // Prefer the directory of the file that actually contains this call
+        // (via fileTable) over baseDir (always the root file's directory) —
+        // matters when the call is reached through include/use, since
+        // OpenSCAD resolves a relative import()/surface() path relative to
+        // the file it's written in, not the root file being built.
+        std::string callerFile = resolveFilePath(call.loc.fileId);
+        std::filesystem::path dir =
+            callerFile.empty() ? baseDir : std::filesystem::path(callerFile).parent_path();
+        filePath = dir / filePath;
+    }
     return filePath;
 }
 
-// import(file) / import(file="...") — loads external geometry into a Mesh leaf.
-CsgNodePtr CsgEvaluator::evalImport(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+// import(file) / import(file="...") [, layer="..."] — loads external
+// geometry into a Mesh or Polygon2D leaf. Dispatched by filename suffix
+// (case-insensitive, via chisel::util::hasSuffixCI — not
+// std::filesystem::path::extension(), which treats a file literally named
+// e.g. ".stl" as having *no* extension per the standard's "dotfile" rule).
+// .stl/.off/.3mf/.amf are 3-D triangle-soup formats -> Mesh; .dxf/.svg are
+// 2-D outline formats -> Polygon2D, matching OpenSCAD's own format-determines-dimension
+// behavior for import(). `layer=` is DXF-specific (see DxfLoader.h) and
+// ignored for every other format, matching OpenSCAD (SVG import() has no
+// layer concept).
+CsgNodePtr CsgEvaluator::evalImport(const ModuleCallNode& call, const glm::mat4& xform,
+                                    const ColorAttr& color) {
     auto filePath = resolveFilePathArg(call, "import");
-    if (!filePath) return nullptr;
-
-    // Match by filename suffix rather than std::filesystem::path::extension()
-    // — the latter treats a file literally named ".stl" (leading dot, no
-    // other dot) as having *no* extension, per the standard's "dotfile" rule.
-    std::string filename = filePath->filename().string();
-    for (char& c : filename) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    const std::string kStlSuffix = ".stl";
-    bool isStl = filename.size() >= kStlSuffix.size() &&
-                 filename.compare(filename.size() - kStlSuffix.size(), kStlSuffix.size(), kStlSuffix) == 0;
-
-    if (!isStl) {
-        reportEvalError(call.loc, "import(): unsupported file format '" + filePath->extension().string() +
-                                   "' — only .stl is currently supported");
+    if (!filePath)
         return nullptr;
+
+    if (chisel::util::hasSuffixCI(*filePath, ".dxf") ||
+        chisel::util::hasSuffixCI(*filePath, ".svg")) {
+        std::string layer;
+        for (const auto& arg : call.args) {
+            if (arg.name == "layer") {
+                Value v = m_interp->evaluate(*arg.value);
+                if (v.isString())
+                    layer = v.asString();
+            }
+        }
+
+        chisel::io::RawPolygon2D poly = chisel::util::hasSuffixCI(*filePath, ".dxf")
+                                            ? chisel::io::loadDxfPaths(*filePath, layer)
+                                            : chisel::io::loadSvgPaths(*filePath);
+        if (!poly.error.empty()) {
+            reportEvalError(call.loc, "import(): " + poly.error);
+            return nullptr;
+        }
+
+        CsgLeaf leaf;
+        leaf.kind = CsgLeaf::Kind::Polygon2D;
+        leaf.transform = xform;
+        leaf.color = color;
+        leaf.polyPoints = std::move(poly.points);
+        leaf.polyPaths = std::move(poly.paths);
+        return makeLeaf(std::move(leaf));
     }
 
-    chisel::io::RawStlMesh mesh = chisel::io::loadStlRaw(*filePath);
-    if (!mesh.error.empty()) {
-        reportEvalError(call.loc, "import(): " + mesh.error);
+    std::vector<glm::vec3> positions;
+    std::vector<uint32_t> indices;
+
+    if (chisel::util::hasSuffixCI(*filePath, ".stl")) {
+        chisel::io::RawStlMesh mesh = chisel::io::loadStlRaw(*filePath);
+        if (!mesh.error.empty()) {
+            reportEvalError(call.loc, "import(): " + mesh.error);
+            return nullptr;
+        }
+        positions = std::move(mesh.positions);
+        indices = std::move(mesh.indices);
+    } else if (chisel::util::hasSuffixCI(*filePath, ".off")) {
+        chisel::io::RawOffMesh mesh = chisel::io::loadOffMesh(*filePath);
+        if (!mesh.error.empty()) {
+            reportEvalError(call.loc, "import(): " + mesh.error);
+            return nullptr;
+        }
+        positions = std::move(mesh.positions);
+        indices = std::move(mesh.indices);
+    } else if (chisel::util::hasSuffixCI(*filePath, ".3mf")) {
+        chisel::io::RawThreeMfMesh mesh = chisel::io::loadThreeMfMesh(*filePath);
+        if (!mesh.error.empty()) {
+            reportEvalError(call.loc, "import(): " + mesh.error);
+            return nullptr;
+        }
+        positions = std::move(mesh.positions);
+        indices = std::move(mesh.indices);
+    } else if (chisel::util::hasSuffixCI(*filePath, ".amf")) {
+        chisel::io::RawAmfMesh mesh = chisel::io::loadAmfMesh(*filePath);
+        if (!mesh.error.empty()) {
+            reportEvalError(call.loc, "import(): " + mesh.error);
+            return nullptr;
+        }
+        positions = std::move(mesh.positions);
+        indices = std::move(mesh.indices);
+    } else {
+        reportEvalError(
+            call.loc,
+            "import(): unsupported file format '" + filePath->extension().string() +
+                "' — only .stl, .off, .3mf, .amf, .dxf, and .svg are currently supported");
         return nullptr;
     }
 
     CsgLeaf leaf;
-    leaf.kind          = CsgLeaf::Kind::Mesh;
-    leaf.transform     = xform;
-    leaf.color         = color;
-    leaf.meshPositions = std::move(mesh.positions);
-    leaf.meshIndices   = std::move(mesh.indices);
+    leaf.kind = CsgLeaf::Kind::Mesh;
+    leaf.transform = xform;
+    leaf.color = color;
+    leaf.meshPositions = std::move(positions);
+    leaf.meshIndices = std::move(indices);
     return makeLeaf(std::move(leaf));
 }
 
@@ -992,15 +1136,19 @@ CsgNodePtr CsgEvaluator::evalImport(const ModuleCallNode& call, const glm::mat4&
 // always name them, and adding full positional-parameter-list binding for
 // one builtin isn't worth the complexity.
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalSurface(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalSurface(const ModuleCallNode& call, const glm::mat4& xform,
+                                     const ColorAttr& color) {
     auto filePath = resolveFilePathArg(call, "surface");
-    if (!filePath) return nullptr;
+    if (!filePath)
+        return nullptr;
 
     bool center = false;
     bool invert = false;
     for (const auto& arg : call.args) {
-        if (arg.name == "center")      center = bool(m_interp->evaluate(*arg.value));
-        else if (arg.name == "invert") invert = bool(m_interp->evaluate(*arg.value));
+        if (arg.name == "center")
+            center = bool(m_interp->evaluate(*arg.value));
+        else if (arg.name == "invert")
+            invert = bool(m_interp->evaluate(*arg.value));
         // "file"/"filename" already consumed by resolveFilePathArg() above;
         // "convexity" and any other named arg: ignored.
     }
@@ -1012,11 +1160,11 @@ CsgNodePtr CsgEvaluator::evalSurface(const ModuleCallNode& call, const glm::mat4
     }
 
     CsgLeaf leaf;
-    leaf.kind          = CsgLeaf::Kind::Mesh;
-    leaf.transform     = xform;
-    leaf.color         = color;
+    leaf.kind = CsgLeaf::Kind::Mesh;
+    leaf.transform = xform;
+    leaf.color = color;
     leaf.meshPositions = std::move(mesh.positions);
-    leaf.meshIndices   = std::move(mesh.indices);
+    leaf.meshIndices = std::move(mesh.indices);
     return makeLeaf(std::move(leaf));
 }
 
@@ -1037,14 +1185,20 @@ CsgNodePtr CsgEvaluator::evalSurface(const ModuleCallNode& call, const glm::mat4
 // paths (relative to baseDir). `direction`/`language`/`script` are
 // accepted and discarded, like surface()'s `convexity` — see
 // TextLoader.h for the full scope writeup (no ligatures/bidi/
-// complex-script shaping in this first cut).
+// complex-script shaping in this first cut). `font`, if relative, resolves
+// against the directory of the file containing this text() call (like
+// import()/surface() — see resolveFilePathArg()), falling back to baseDir.
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& xform,
+                                  const ColorAttr& color) {
     const lang::ExprNode* positional = nullptr;
-    const lang::ExprNode* named      = nullptr;
+    const lang::ExprNode* named = nullptr;
     for (const auto& arg : call.args) {
-        if (arg.name.empty()) { if (!positional) positional = arg.value.get(); }
-        else if (arg.name == "text") named = arg.value.get();
+        if (arg.name.empty()) {
+            if (!positional)
+                positional = arg.value.get();
+        } else if (arg.name == "text")
+            named = arg.value.get();
     }
     const lang::ExprNode* textNode = positional ? positional : named;
     if (!textNode) {
@@ -1061,18 +1215,24 @@ CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& x
     double size = 10.0, spacing = 1.0, fnOvr = 0.0;
     std::string font, halign = "left", valign = "baseline";
     for (const auto& arg : call.args) {
-        if (arg.name == "size")         size    = m_interp->evalNumber(*arg.value);
-        else if (arg.name == "spacing") spacing = m_interp->evalNumber(*arg.value);
-        else if (arg.name == "$fn")     fnOvr   = m_interp->evalNumber(*arg.value);
+        if (arg.name == "size")
+            size = m_interp->evalNumber(*arg.value);
+        else if (arg.name == "spacing")
+            spacing = m_interp->evalNumber(*arg.value);
+        else if (arg.name == "$fn")
+            fnOvr = m_interp->evalNumber(*arg.value);
         else if (arg.name == "font") {
             Value v = m_interp->evaluate(*arg.value);
-            if (v.isString()) font = v.asString();
+            if (v.isString())
+                font = v.asString();
         } else if (arg.name == "halign") {
             Value v = m_interp->evaluate(*arg.value);
-            if (v.isString()) halign = v.asString();
+            if (v.isString())
+                halign = v.asString();
         } else if (arg.name == "valign") {
             Value v = m_interp->evaluate(*arg.value);
-            if (v.isString()) valign = v.asString();
+            if (v.isString())
+                valign = v.asString();
         }
         // "text"/positional already consumed above; "direction"/"language"/
         // "script": accepted, discarded (see class comment above).
@@ -1083,7 +1243,12 @@ CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& x
         fontPath = defaultFontPath();
     } else {
         fontPath = chisel::util::utf8ToPath(font);
-        if (fontPath.is_relative()) fontPath = baseDir / fontPath;
+        if (fontPath.is_relative()) {
+            std::string callerFile = resolveFilePath(call.loc.fileId);
+            std::filesystem::path dir =
+                callerFile.empty() ? baseDir : std::filesystem::path(callerFile).parent_path();
+            fontPath = dir / fontPath;
+        }
     }
 
     chisel::io::RawTextOutline outline = chisel::io::loadTextOutline(
@@ -1092,14 +1257,15 @@ CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& x
         reportEvalError(call.loc, "text(): " + outline.error);
         return nullptr;
     }
-    if (outline.points.empty()) return nullptr; // e.g. text("") — no geometry, not an error
+    if (outline.points.empty())
+        return nullptr; // e.g. text("") — no geometry, not an error
 
     CsgLeaf leaf;
-    leaf.kind       = CsgLeaf::Kind::Polygon2D;
-    leaf.transform  = xform;
-    leaf.color      = color;
+    leaf.kind = CsgLeaf::Kind::Polygon2D;
+    leaf.transform = xform;
+    leaf.color = color;
     leaf.polyPoints = std::move(outline.points);
-    leaf.polyPaths  = std::move(outline.paths);
+    leaf.polyPaths = std::move(outline.paths);
     return makeLeaf(std::move(leaf));
 }
 
@@ -1113,15 +1279,20 @@ CsgNodePtr CsgEvaluator::evalText(const ModuleCallNode& call, const glm::mat4& x
 // for the same argument). `convexity=` is accepted and discarded, like
 // surface()'s.
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::mat4& xform,
+                                        const ColorAttr& color) {
     const lang::ExprNode* pointsExpr = nullptr;
-    const lang::ExprNode* facesExpr  = nullptr;
+    const lang::ExprNode* facesExpr = nullptr;
     for (const auto& arg : call.args) {
-        if (arg.name == "points") pointsExpr = arg.value.get();
-        else if (arg.name == "faces" || arg.name == "triangles") facesExpr = arg.value.get();
+        if (arg.name == "points")
+            pointsExpr = arg.value.get();
+        else if (arg.name == "faces" || arg.name == "triangles")
+            facesExpr = arg.value.get();
         else if (arg.name.empty()) {
-            if (!pointsExpr) pointsExpr = arg.value.get();
-            else if (!facesExpr) facesExpr = arg.value.get();
+            if (!pointsExpr)
+                pointsExpr = arg.value.get();
+            else if (!facesExpr)
+                facesExpr = arg.value.get();
         }
     }
     if (!pointsExpr || !facesExpr) {
@@ -1142,11 +1313,9 @@ CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::m
             return nullptr;
         }
         const auto& v = pt.asVec();
-        positions.push_back({
-            static_cast<float>(v[0].asNumber()),
-            static_cast<float>(v[1].asNumber()),
-            static_cast<float>(v[2].asNumber())
-        });
+        positions.push_back({static_cast<float>(v[0].asNumber()),
+                             static_cast<float>(v[1].asNumber()),
+                             static_cast<float>(v[2].asNumber())});
     }
 
     Value facesVal = m_interp->evaluate(*facesExpr);
@@ -1172,7 +1341,8 @@ CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::m
             }
             long long i = static_cast<long long>(idxVal.asNumber());
             if (i < 0 || static_cast<std::size_t>(i) >= numPoints) {
-                reportEvalError(call.loc, "polyhedron(): face references an out-of-range point index");
+                reportEvalError(call.loc,
+                                "polyhedron(): face references an out-of-range point index");
                 return nullptr;
             }
             faceIdx.push_back(static_cast<uint32_t>(i));
@@ -1188,11 +1358,11 @@ CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::m
     }
 
     CsgLeaf leaf;
-    leaf.kind          = CsgLeaf::Kind::Polyhedron;
-    leaf.transform     = xform;
-    leaf.color         = color;
+    leaf.kind = CsgLeaf::Kind::Polyhedron;
+    leaf.transform = xform;
+    leaf.color = color;
     leaf.meshPositions = std::move(positions);
-    leaf.meshIndices   = std::move(indices);
+    leaf.meshIndices = std::move(indices);
     return makeLeaf(std::move(leaf));
 }
 
@@ -1206,19 +1376,24 @@ CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::m
 // outer transform stored separately, same treatment as offset()/
 // projection()/hull()/minkowski().
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalResize(const ModuleCallNode& call, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalResize(const ModuleCallNode& call, const glm::mat4& xform,
+                                    const ColorAttr& color) {
     CsgResize r;
     r.transform = xform;
-    r.color     = color;
+    r.color = color;
 
     const lang::ExprNode* newsizeExpr = nullptr;
-    const lang::ExprNode* autoExpr    = nullptr;
+    const lang::ExprNode* autoExpr = nullptr;
     for (const auto& arg : call.args) {
-        if (arg.name == "newsize") newsizeExpr = arg.value.get();
-        else if (arg.name == "auto") autoExpr = arg.value.get();
+        if (arg.name == "newsize")
+            newsizeExpr = arg.value.get();
+        else if (arg.name == "auto")
+            autoExpr = arg.value.get();
         else if (arg.name.empty()) {
-            if (!newsizeExpr) newsizeExpr = arg.value.get();
-            else if (!autoExpr) autoExpr = arg.value.get();
+            if (!newsizeExpr)
+                newsizeExpr = arg.value.get();
+            else if (!autoExpr)
+                autoExpr = arg.value.get();
         }
     }
 
@@ -1226,18 +1401,24 @@ CsgNodePtr CsgEvaluator::evalResize(const ModuleCallNode& call, const glm::mat4&
         Value nv = m_interp->evaluate(*newsizeExpr);
         if (nv.isVector()) {
             const auto& v = nv.asVec();
-            if (v.size() >= 1 && v[0].isNumber()) r.newX = v[0].asNumber();
-            if (v.size() >= 2 && v[1].isNumber()) r.newY = v[1].asNumber();
-            if (v.size() >= 3 && v[2].isNumber()) r.newZ = v[2].asNumber();
+            if (v.size() >= 1 && v[0].isNumber())
+                r.newX = v[0].asNumber();
+            if (v.size() >= 2 && v[1].isNumber())
+                r.newY = v[1].asNumber();
+            if (v.size() >= 3 && v[2].isNumber())
+                r.newZ = v[2].asNumber();
         }
     }
     if (autoExpr) {
         Value av = m_interp->evaluate(*autoExpr);
         if (av.isVector()) {
             const auto& v = av.asVec();
-            if (v.size() >= 1) r.autoX = bool(v[0]);
-            if (v.size() >= 2) r.autoY = bool(v[1]);
-            if (v.size() >= 3) r.autoZ = bool(v[2]);
+            if (v.size() >= 1)
+                r.autoX = bool(v[0]);
+            if (v.size() >= 2)
+                r.autoY = bool(v[1]);
+            if (v.size() >= 3)
+                r.autoZ = bool(v[2]);
         } else {
             r.autoX = r.autoY = r.autoZ = bool(av);
         }
@@ -1257,7 +1438,8 @@ CsgNodePtr CsgEvaluator::evalResize(const ModuleCallNode& call, const glm::mat4&
 // ---------------------------------------------------------------------------
 // let — bind variables in scope, evaluate children, restore
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform,
+                                 const ColorAttr& color) {
     auto savedEnv = m_interp->snapshotEnv();
     for (const auto& [name, valExpr] : node.bindings)
         m_interp->setVar(name, m_interp->evaluate(*valExpr));
@@ -1269,12 +1451,14 @@ CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform, co
     }
     m_interp->restoreEnv(std::move(savedEnv));
 
-    if (all.empty())     return nullptr;
-    if (all.size() == 1) return std::move(all[0]);
+    if (all.empty())
+        return nullptr;
+    if (all.size() == 1)
+        return std::move(all[0]);
 
     CsgBoolean u;
-    u.op       = CsgBoolean::Op::Union;
-    u.color    = color;
+    u.op = CsgBoolean::Op::Union;
+    u.color = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));
 }
@@ -1284,19 +1468,20 @@ CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform, co
 // that overrides the inherited ColorAttr for this subtree only. A nested
 // color() further inside always wins over this one for its own children.
 // ---------------------------------------------------------------------------
-CsgNodePtr CsgEvaluator::evalColor(const ColorNode& node, const glm::mat4& xform, const ColorAttr& color) {
+CsgNodePtr CsgEvaluator::evalColor(const ColorNode& node, const glm::mat4& xform,
+                                   const ColorAttr& color) {
     ColorAttr cur = color;
 
     if (node.colorExpr) {
         Value cv = m_interp->evaluate(*node.colorExpr);
         glm::vec4 rgba;
         if (resolveColor(cv, rgba)) {
-            cur.has   = true;
+            cur.has = true;
             cur.value = rgba;
         }
     }
     if (node.alphaExpr) {
-        cur.has     = true;
+        cur.has = true;
         cur.value.a = static_cast<float>(m_interp->evalNumber(*node.alphaExpr));
     }
 
@@ -1309,12 +1494,14 @@ CsgNodePtr CsgEvaluator::evalColor(const ColorNode& node, const glm::mat4& xform
     }
     m_interp->restoreEnv(std::move(savedEnv));
 
-    if (children.empty())     return nullptr;
-    if (children.size() == 1) return children[0];
+    if (children.empty())
+        return nullptr;
+    if (children.size() == 1)
+        return children[0];
 
     CsgBoolean u;
-    u.op       = CsgBoolean::Op::Union;
-    u.color    = cur;
+    u.op = CsgBoolean::Op::Union;
+    u.color = cur;
     u.children = std::move(children);
     return makeBoolean(std::move(u));
 }
@@ -1328,58 +1515,63 @@ CsgNodePtr CsgEvaluator::evalColor(const ColorNode& node, const glm::mat4& xform
 bool CsgEvaluator::resolveColor(const Value& c, glm::vec4& out) const {
     if (c.isVector()) {
         const auto& v = c.asVec();
-        if (v.size() < 3) return false;
-        out = glm::vec4(
-            static_cast<float>(v[0].asNumber()),
-            static_cast<float>(v[1].asNumber()),
-            static_cast<float>(v[2].asNumber()),
-            v.size() >= 4 ? static_cast<float>(v[3].asNumber()) : 1.0f);
+        if (v.size() < 3)
+            return false;
+        out = glm::vec4(static_cast<float>(v[0].asNumber()), static_cast<float>(v[1].asNumber()),
+                        static_cast<float>(v[2].asNumber()),
+                        v.size() >= 4 ? static_cast<float>(v[3].asNumber()) : 1.0f);
         return true;
     }
-    if (!c.isString()) return false;
+    if (!c.isString())
+        return false;
     const std::string& s = c.asString();
 
     if (!s.empty() && s[0] == '#') {
         auto hexDigit = [](char ch) -> int {
-            if (ch >= '0' && ch <= '9') return ch - '0';
-            if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
-            if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+            if (ch >= '0' && ch <= '9')
+                return ch - '0';
+            if (ch >= 'a' && ch <= 'f')
+                return ch - 'a' + 10;
+            if (ch >= 'A' && ch <= 'F')
+                return ch - 'A' + 10;
             return -1;
         };
         auto byteAt = [&](std::size_t i) -> int {
             int hi = hexDigit(s[i]), lo = hexDigit(s[i + 1]);
             return (hi < 0 || lo < 0) ? -1 : (hi << 4) | lo;
         };
-        if (s.size() != 7 && s.size() != 9) return false;
+        if (s.size() != 7 && s.size() != 9)
+            return false;
         int r = byteAt(1), g = byteAt(3), b = byteAt(5);
         int a = (s.size() == 9) ? byteAt(7) : 255;
-        if (r < 0 || g < 0 || b < 0 || a < 0) return false;
+        if (r < 0 || g < 0 || b < 0 || a < 0)
+            return false;
         out = glm::vec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
         return true;
     }
 
     static const std::unordered_map<std::string, glm::vec3> kNamedColors = {
-        {"black",      {0.00f, 0.00f, 0.00f}}, {"white",      {1.00f, 1.00f, 1.00f}},
-        {"red",        {1.00f, 0.00f, 0.00f}}, {"lime",       {0.00f, 1.00f, 0.00f}},
-        {"green",      {0.00f, 0.50f, 0.00f}}, {"blue",       {0.00f, 0.00f, 1.00f}},
-        {"yellow",     {1.00f, 1.00f, 0.00f}}, {"cyan",       {0.00f, 1.00f, 1.00f}},
-        {"magenta",    {1.00f, 0.00f, 1.00f}}, {"orange",     {1.00f, 0.65f, 0.00f}},
-        {"purple",     {0.50f, 0.00f, 0.50f}}, {"pink",       {1.00f, 0.75f, 0.80f}},
-        {"gray",       {0.50f, 0.50f, 0.50f}}, {"grey",       {0.50f, 0.50f, 0.50f}},
-        {"silver",     {0.75f, 0.75f, 0.75f}}, {"gold",       {1.00f, 0.84f, 0.00f}},
-        {"brown",      {0.65f, 0.16f, 0.16f}}, {"navy",       {0.00f, 0.00f, 0.50f}},
-        {"teal",       {0.00f, 0.50f, 0.50f}}, {"maroon",     {0.50f, 0.00f, 0.00f}},
-        {"olive",      {0.50f, 0.50f, 0.00f}}, {"indigo",     {0.29f, 0.00f, 0.51f}},
-        {"violet",     {0.93f, 0.51f, 0.93f}}, {"coral",      {1.00f, 0.50f, 0.31f}},
-        {"salmon",     {0.98f, 0.50f, 0.45f}}, {"khaki",      {0.94f, 0.90f, 0.55f}},
-        {"plum",       {0.87f, 0.63f, 0.87f}}, {"orchid",     {0.85f, 0.44f, 0.84f}},
-        {"turquoise",  {0.25f, 0.88f, 0.82f}}, {"tan",        {0.82f, 0.71f, 0.55f}},
-        {"beige",      {0.96f, 0.96f, 0.86f}}, {"ivory",      {1.00f, 1.00f, 0.94f}},
-        {"crimson",    {0.86f, 0.08f, 0.24f}}, {"chocolate",  {0.82f, 0.41f, 0.12f}},
-        {"lavender",   {0.90f, 0.90f, 0.98f}}, {"skyblue",    {0.53f, 0.81f, 0.92f}},
-        {"lightblue",  {0.68f, 0.85f, 0.90f}}, {"darkgray",   {0.66f, 0.66f, 0.66f}},
-        {"darkgrey",   {0.66f, 0.66f, 0.66f}}, {"lightgray",  {0.83f, 0.83f, 0.83f}},
-        {"lightgrey",  {0.83f, 0.83f, 0.83f}},
+        {"black", {0.00f, 0.00f, 0.00f}},     {"white", {1.00f, 1.00f, 1.00f}},
+        {"red", {1.00f, 0.00f, 0.00f}},       {"lime", {0.00f, 1.00f, 0.00f}},
+        {"green", {0.00f, 0.50f, 0.00f}},     {"blue", {0.00f, 0.00f, 1.00f}},
+        {"yellow", {1.00f, 1.00f, 0.00f}},    {"cyan", {0.00f, 1.00f, 1.00f}},
+        {"magenta", {1.00f, 0.00f, 1.00f}},   {"orange", {1.00f, 0.65f, 0.00f}},
+        {"purple", {0.50f, 0.00f, 0.50f}},    {"pink", {1.00f, 0.75f, 0.80f}},
+        {"gray", {0.50f, 0.50f, 0.50f}},      {"grey", {0.50f, 0.50f, 0.50f}},
+        {"silver", {0.75f, 0.75f, 0.75f}},    {"gold", {1.00f, 0.84f, 0.00f}},
+        {"brown", {0.65f, 0.16f, 0.16f}},     {"navy", {0.00f, 0.00f, 0.50f}},
+        {"teal", {0.00f, 0.50f, 0.50f}},      {"maroon", {0.50f, 0.00f, 0.00f}},
+        {"olive", {0.50f, 0.50f, 0.00f}},     {"indigo", {0.29f, 0.00f, 0.51f}},
+        {"violet", {0.93f, 0.51f, 0.93f}},    {"coral", {1.00f, 0.50f, 0.31f}},
+        {"salmon", {0.98f, 0.50f, 0.45f}},    {"khaki", {0.94f, 0.90f, 0.55f}},
+        {"plum", {0.87f, 0.63f, 0.87f}},      {"orchid", {0.85f, 0.44f, 0.84f}},
+        {"turquoise", {0.25f, 0.88f, 0.82f}}, {"tan", {0.82f, 0.71f, 0.55f}},
+        {"beige", {0.96f, 0.96f, 0.86f}},     {"ivory", {1.00f, 1.00f, 0.94f}},
+        {"crimson", {0.86f, 0.08f, 0.24f}},   {"chocolate", {0.82f, 0.41f, 0.12f}},
+        {"lavender", {0.90f, 0.90f, 0.98f}},  {"skyblue", {0.53f, 0.81f, 0.92f}},
+        {"lightblue", {0.68f, 0.85f, 0.90f}}, {"darkgray", {0.66f, 0.66f, 0.66f}},
+        {"darkgrey", {0.66f, 0.66f, 0.66f}},  {"lightgray", {0.83f, 0.83f, 0.83f}},
+        {"lightgrey", {0.83f, 0.83f, 0.83f}},
     };
 
     std::string lower;
@@ -1388,7 +1580,8 @@ bool CsgEvaluator::resolveColor(const Value& c, glm::vec4& out) const {
         lower += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
     auto it = kNamedColors.find(lower);
-    if (it == kNamedColors.end()) return false;
+    if (it == kNamedColors.end())
+        return false;
     out = glm::vec4(it->second, 1.0f);
     return true;
 }

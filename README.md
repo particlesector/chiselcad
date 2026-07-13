@@ -78,15 +78,12 @@ difference() {
 | Functions & modules | user-defined `function`/`module`, `children()`/`$children`, named + default args |
 | Built-ins | full math set, string/vector helpers (`concat`, `str`, `len`, `lookup`, `rands`, ...) |
 | 2D → 3D | `linear_extrude`, `rotate_extrude` (including nested extrusion), `offset()`, `projection()` |
-| File I/O | `include <>`, `use <>`, `import()` (STL), `surface()` (text `.dat`) |
+| File I/O | `include <>`, `use <>` (per-file diagnostics), `import()` (STL, OFF, 3MF, AMF, DXF, SVG), `surface()` (`.dat` or `.png`) |
 | Diagnostics | `echo()`, `assert()` |
 | Quality | `$fn`, `$fs`, `$fa` (global and per-node) |
 | Export | Binary STL |
 
-**Known gaps** (tracked as [docs/roadmap.md](docs/roadmap.md) v3 Phase 4):
-per-file diagnostics for code reached via `include`/`use`, PNG heightmap
-support for `surface()`, and import/export formats beyond STL (OFF, 3MF,
-AMF, DXF, SVG). See the roadmap for details and the
+v3 (see [docs/roadmap.md](docs/roadmap.md)) is complete. See the
 [issue tracker](https://github.com/particlesector/chiselcad/issues) for
 known correctness bugs currently being fixed.
 

@@ -1,9 +1,29 @@
 #include "SurfaceLoader.h"
+
+#include "util/PathSuffix.h"
+
 #include <algorithm>
 #include <fstream>
 #include <limits>
 #include <sstream>
 #include <utility>
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wpedantic"
+#elif defined(_MSC_VER)
+#pragma warning(push, 0)
+#endif
+
+#include <stb/stb_image.h>
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 namespace chisel::io {
 
@@ -21,12 +41,14 @@ HeightGrid parseGrid(std::ifstream& f) {
 
     while (std::getline(f, line)) {
         auto hashPos = line.find('#');
-        if (hashPos != std::string::npos) line.erase(hashPos);
+        if (hashPos != std::string::npos)
+            line.erase(hashPos);
 
         std::istringstream ss(line);
         std::vector<double> row;
         double v;
-        while (ss >> v) row.push_back(v);
+        while (ss >> v)
+            row.push_back(v);
         // A failure that isn't plain end-of-stream means extraction stopped
         // on a non-numeric token partway through the row (e.g. "1 2 abc 4")
         // rather than having cleanly consumed every token — report it
@@ -35,14 +57,16 @@ HeightGrid parseGrid(std::ifstream& f) {
             grid.error = "malformed value in data row " + std::to_string(grid.rows.size() + 1);
             return grid;
         }
-        if (row.empty()) continue; // blank or comment-only line
+        if (row.empty())
+            continue; // blank or comment-only line
 
         if (grid.rows.empty()) {
             expectedCols = row.size();
         } else if (row.size() != expectedCols) {
-            grid.error = "inconsistent row length at data row " + std::to_string(grid.rows.size() + 1) +
-                         ": expected " + std::to_string(expectedCols) +
-                         " values, got " + std::to_string(row.size());
+            grid.error = "inconsistent row length at data row " +
+                         std::to_string(grid.rows.size() + 1) + ": expected " +
+                         std::to_string(expectedCols) + " values, got " +
+                         std::to_string(row.size());
             return grid;
         }
         grid.rows.push_back(std::move(row));
@@ -56,18 +80,64 @@ HeightGrid parseGrid(std::ifstream& f) {
     return grid;
 }
 
+// PNG heightmap: matches OpenSCAD's own surface()-from-PNG behavior — each
+// pixel's height is its linear sRGB luminance (Rec. 709 weights,
+// Y = 0.2126 R + 0.7152 G + 0.0722 B, computed from 8-bit channel values
+// forced to RGB by requesting STBI_rgb regardless of the source PNG's actual
+// channel count, so grayscale/palette/RGBA inputs all take the same path),
+// linearly scaled from [0, 255] to [0, 100] — i.e. black = 0, white = 100.
+// Alpha, if present, is ignored (not requested). Image row 0 (the top row of
+// pixels) maps to grid row 0, matching the .dat format's own "first line is
+// the far/max-Y edge" convention (see loadSurfaceMesh's row/col-to-XY
+// mapping below) so a PNG and an equivalent hand-written .dat produce the
+// same orientation.
+HeightGrid pngToGrid(const std::filesystem::path& path) {
+    HeightGrid grid;
+
+    int width = 0, height = 0, sourceChannels = 0;
+    unsigned char* pixels =
+        stbi_load(path.string().c_str(), &width, &height, &sourceChannels, STBI_rgb);
+    if (!pixels) {
+        grid.error = "cannot decode PNG: " + path.string();
+        return grid;
+    }
+
+    if (width < 2 || height < 2) {
+        stbi_image_free(pixels);
+        grid.error = "surface() requires at least a 2x2 grid of height values";
+        return grid;
+    }
+
+    grid.rows.resize(static_cast<std::size_t>(height));
+    for (int r = 0; r < height; ++r) {
+        std::vector<double>& row = grid.rows[static_cast<std::size_t>(r)];
+        row.resize(static_cast<std::size_t>(width));
+        for (int c = 0; c < width; ++c) {
+            const unsigned char* px = pixels + (static_cast<std::size_t>(r) * width + c) * 3;
+            const double luminance = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+            row[static_cast<std::size_t>(c)] = luminance / 255.0 * 100.0;
+        }
+    }
+    stbi_image_free(pixels);
+    return grid;
+}
+
 } // namespace
 
 RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, bool invert) {
     RawSurfaceMesh out;
 
-    std::ifstream f(path);
-    if (!f) {
-        out.error = "Cannot open file: " + path.string();
-        return out;
+    HeightGrid grid;
+    if (chisel::util::hasSuffixCI(path, ".png")) {
+        grid = pngToGrid(path);
+    } else {
+        std::ifstream f(path);
+        if (!f) {
+            out.error = "Cannot open file: " + path.string();
+            return out;
+        }
+        grid = parseGrid(f);
     }
-
-    HeightGrid grid = parseGrid(f);
     if (!grid.error.empty()) {
         out.error = std::move(grid.error);
         return out;
@@ -93,20 +163,24 @@ RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, b
     // dips below 0, drop the base to match so the solid never folds back
     // through its own top surface.
     const double baseZ = std::min(0.0, effMinH);
-    const double xOff  = center ? -static_cast<double>(numCols - 1) / 2.0 : 0.0;
-    const double yOff  = center ? -static_cast<double>(numRows - 1) / 2.0 : 0.0;
-    const double zOff  = center ? -(baseZ + effMaxH) / 2.0 : 0.0;
+    const double xOff = center ? -static_cast<double>(numCols - 1) / 2.0 : 0.0;
+    const double yOff = center ? -static_cast<double>(numRows - 1) / 2.0 : 0.0;
+    const double zOff = center ? -(baseZ + effMaxH) / 2.0 : 0.0;
     const double bottomZ = baseZ + zOff;
 
     auto heightAt = [&](std::size_t r, std::size_t c) {
         double h = grid.rows[r][c];
         return (invert ? (maxH - h) : h) + zOff;
     };
-    auto xAt = [&](std::size_t c) { return static_cast<double>(c) + xOff; };
-    auto yAt = [&](std::size_t r) { return static_cast<double>(numRows - 1 - r) + yOff; };
+    auto xAt = [&](std::size_t c) {
+        return static_cast<double>(c) + xOff;
+    };
+    auto yAt = [&](std::size_t r) {
+        return static_cast<double>(numRows - 1 - r) + yOff;
+    };
 
-    const std::size_t gridN          = numRows * numCols;
-    const std::size_t numCells       = (numRows - 1) * (numCols - 1);
+    const std::size_t gridN = numRows * numCols;
+    const std::size_t numCells = (numRows - 1) * (numCols - 1);
     const std::size_t numBoundaryEdges = 2 * (numRows + numCols) - 4;
 
     out.positions.reserve(gridN * 2);
@@ -117,18 +191,22 @@ RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, b
     for (std::size_t r = 0; r < numRows; ++r)
         for (std::size_t c = 0; c < numCols; ++c)
             out.positions.emplace_back(static_cast<float>(xAt(c)), static_cast<float>(yAt(r)),
-                                        static_cast<float>(heightAt(r, c)));
+                                       static_cast<float>(heightAt(r, c)));
     // Bottom layer at index gridN + r*numCols+c, flat at bottomZ — same X/Y
     // grid as the top layer (not just 4 corners) so the side walls below
     // meet it with no T-junctions.
     for (std::size_t r = 0; r < numRows; ++r)
         for (std::size_t c = 0; c < numCols; ++c)
             out.positions.emplace_back(static_cast<float>(xAt(c)), static_cast<float>(yAt(r)),
-                                        static_cast<float>(bottomZ));
+                                       static_cast<float>(bottomZ));
 
-    auto topIdx    = [&](std::size_t r, std::size_t c) { return static_cast<uint32_t>(r * numCols + c); };
-    auto bottomIdx = [&](std::size_t r, std::size_t c) { return static_cast<uint32_t>(gridN + r * numCols + c); };
-    auto pushTri   = [&](uint32_t a, uint32_t b, uint32_t c) {
+    auto topIdx = [&](std::size_t r, std::size_t c) {
+        return static_cast<uint32_t>(r * numCols + c);
+    };
+    auto bottomIdx = [&](std::size_t r, std::size_t c) {
+        return static_cast<uint32_t>(gridN + r * numCols + c);
+    };
+    auto pushTri = [&](uint32_t a, uint32_t b, uint32_t c) {
         out.indices.push_back(a);
         out.indices.push_back(b);
         out.indices.push_back(c);
@@ -140,11 +218,11 @@ RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, b
     // topIdx(r+1,c), topIdx(r,c+1)] has an outward (+Z) normal.
     for (std::size_t r = 0; r + 1 < numRows; ++r) {
         for (std::size_t c = 0; c + 1 < numCols; ++c) {
-            pushTri(topIdx(r, c),     topIdx(r + 1, c),     topIdx(r, c + 1));
+            pushTri(topIdx(r, c), topIdx(r + 1, c), topIdx(r, c + 1));
             pushTri(topIdx(r + 1, c), topIdx(r + 1, c + 1), topIdx(r, c + 1));
 
-            pushTri(bottomIdx(r, c),     bottomIdx(r, c + 1),     bottomIdx(r + 1, c));
-            pushTri(bottomIdx(r + 1, c), bottomIdx(r, c + 1),     bottomIdx(r + 1, c + 1));
+            pushTri(bottomIdx(r, c), bottomIdx(r, c + 1), bottomIdx(r + 1, c));
+            pushTri(bottomIdx(r + 1, c), bottomIdx(r, c + 1), bottomIdx(r + 1, c + 1));
         }
     }
 
@@ -158,9 +236,9 @@ RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, b
     boundary.reserve(numBoundaryEdges);
     for (std::size_t c = 0; c < numCols; ++c)
         boundary.emplace_back(numRows - 1, c);
-    for (std::size_t r = numRows - 1; r-- > 0; )
+    for (std::size_t r = numRows - 1; r-- > 0;)
         boundary.emplace_back(r, numCols - 1);
-    for (std::size_t c = numCols - 1; c-- > 0; )
+    for (std::size_t c = numCols - 1; c-- > 0;)
         boundary.emplace_back(0, c);
     for (std::size_t r = 1; r + 1 < numRows; ++r)
         boundary.emplace_back(r, 0);
@@ -168,7 +246,7 @@ RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, b
     for (std::size_t i = 0; i < boundary.size(); ++i) {
         auto [ra, ca] = boundary[i];
         auto [rb, cb] = boundary[(i + 1) % boundary.size()];
-        uint32_t topA = topIdx(ra, ca),    topB = topIdx(rb, cb);
+        uint32_t topA = topIdx(ra, ca), topB = topIdx(rb, cb);
         uint32_t botA = bottomIdx(ra, ca), botB = bottomIdx(rb, cb);
         pushTri(topA, botA, botB);
         pushTri(topA, botB, topB);

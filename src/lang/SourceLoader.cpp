@@ -1,7 +1,9 @@
 #include "SourceLoader.h"
+
 #include "Lexer.h"
 #include "Parser.h"
 #include "util/PathUtf8.h"
+
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -16,16 +18,17 @@ namespace {
 // Loader — recursion state for one loadSource() call.
 // ---------------------------------------------------------------------------
 class Loader {
-public:
+  public:
     DiagList diagnostics;
+    std::vector<std::string> fileTable; // SourceLoc::fileId -> path, in open order
 
     // `isRoot` distinguishes "the file the caller asked to load" from a file
     // reached via include/use, both for the diagnostic wording and so the
     // root-missing diagnostic carries a non-empty filePath (see loadSource —
     // DiagnosticsPanel treats an empty filePath+loc as a silent runtime
     // warning, not a clickable error, which is wrong for "file not found").
-    ParseResult loadFile(const std::filesystem::path& path, bool isRoot,
-                          SourceLoc refLoc = {}, const std::string& refFile = "") {
+    ParseResult loadFile(const std::filesystem::path& path, bool isRoot, SourceLoc refLoc = {},
+                         const std::string& refFile = "") {
         std::error_code ec;
         std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
         std::filesystem::path key = ec ? path : canonical;
@@ -39,23 +42,27 @@ public:
 
         std::ifstream f(path, std::ios::binary);
         if (!f.is_open()) {
-            addError((isRoot ? "cannot open file: " : "cannot open included file: ") + path.string(),
-                      refLoc, refFile);
+            addError((isRoot ? "cannot open file: " : "cannot open included file: ") +
+                         path.string(),
+                     refLoc, refFile);
             return {};
         }
-        std::string src((std::istreambuf_iterator<char>(f)),
-                         std::istreambuf_iterator<char>());
+        std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
 
         const std::string pathStr = path.string();
+        const uint32_t fileId = static_cast<uint32_t>(fileTable.size());
+        fileTable.push_back(pathStr);
 
-        Lexer lexer(src, pathStr);
+        Lexer lexer(src, pathStr, fileId);
         auto tokens = lexer.tokenize();
-        for (const auto& d : lexer.diagnostics()) diagnostics.push_back(d);
+        for (const auto& d : lexer.diagnostics())
+            diagnostics.push_back(d);
 
         Parser parser(std::move(tokens), pathStr);
         ParseResult result = parser.parse();
-        for (const auto& d : parser.diagnostics()) diagnostics.push_back(d);
+        for (const auto& d : parser.diagnostics())
+            diagnostics.push_back(d);
 
         m_activeStack.push_back(std::move(key));
         resolveIncludes(result, path);
@@ -64,14 +71,14 @@ public:
         return result;
     }
 
-private:
+  private:
     std::vector<std::filesystem::path> m_activeStack; // cycle detection
 
     void addError(std::string msg, SourceLoc loc, std::string filePath) {
         Diagnostic d;
-        d.level    = DiagLevel::Error;
-        d.message  = std::move(msg);
-        d.loc      = loc;
+        d.level = DiagLevel::Error;
+        d.message = std::move(msg);
+        d.loc = loc;
         d.filePath = std::move(filePath);
         diagnostics.push_back(std::move(d));
     }
@@ -83,9 +90,18 @@ private:
     // it unset. Parser flattens statement order away within a file (see
     // AST.h), so this can't honor exact textual position beyond that.
     static void mergeGlobalQuality(ParseResult& into, const ParseResult& from) {
-        if (!into.globalFnSet && from.globalFnSet) { into.globalFn = from.globalFn; into.globalFnSet = true; }
-        if (!into.globalFsSet && from.globalFsSet) { into.globalFs = from.globalFs; into.globalFsSet = true; }
-        if (!into.globalFaSet && from.globalFaSet) { into.globalFa = from.globalFa; into.globalFaSet = true; }
+        if (!into.globalFnSet && from.globalFnSet) {
+            into.globalFn = from.globalFn;
+            into.globalFnSet = true;
+        }
+        if (!into.globalFsSet && from.globalFsSet) {
+            into.globalFs = from.globalFs;
+            into.globalFsSet = true;
+        }
+        if (!into.globalFaSet && from.globalFaSet) {
+            into.globalFa = from.globalFa;
+            into.globalFaSet = true;
+        }
     }
 
     // Splices `child`'s vectors into `result`'s at index `pos` (clamped to
@@ -95,8 +111,7 @@ private:
     static void spliceAt(std::vector<T>& dst, std::vector<T>&& src, size_t pos) {
         pos = std::min(pos, dst.size());
         dst.insert(dst.begin() + static_cast<std::ptrdiff_t>(pos),
-                   std::make_move_iterator(src.begin()),
-                   std::make_move_iterator(src.end()));
+                   std::make_move_iterator(src.begin()), std::make_move_iterator(src.end()));
     }
 
     // Resolves every include<>/use<> directive recorded in `result` (which
@@ -124,20 +139,23 @@ private:
 
             // Sizes must be captured before spliceAt moves out of `child` —
             // a moved-from vector's size is unspecified, not guaranteed 0.
-            const size_t nModules   = child.moduleDefs.size();
+            const size_t nModules = child.moduleDefs.size();
             const size_t nFunctions = child.functionDefs.size();
-            const size_t nRoots     = child.roots.size();
-            const size_t nAssigns   = child.assignments.size();
+            const size_t nRoots = child.roots.size();
+            const size_t nAssigns = child.assignments.size();
 
-            spliceAt(result.moduleDefs,   std::move(child.moduleDefs),   inc.moduleIndex   + moduleOffset);
-            spliceAt(result.functionDefs, std::move(child.functionDefs), inc.functionIndex + functionOffset);
-            moduleOffset   += nModules;
+            spliceAt(result.moduleDefs, std::move(child.moduleDefs),
+                     inc.moduleIndex + moduleOffset);
+            spliceAt(result.functionDefs, std::move(child.functionDefs),
+                     inc.functionIndex + functionOffset);
+            moduleOffset += nModules;
             functionOffset += nFunctions;
 
             if (inc.kind == IncludeStmt::Kind::Include) {
-                spliceAt(result.roots,       std::move(child.roots),       inc.rootsIndex  + rootsOffset);
-                spliceAt(result.assignments, std::move(child.assignments), inc.assignIndex + assignOffset);
-                rootsOffset  += nRoots;
+                spliceAt(result.roots, std::move(child.roots), inc.rootsIndex + rootsOffset);
+                spliceAt(result.assignments, std::move(child.assignments),
+                         inc.assignIndex + assignOffset);
+                rootsOffset += nRoots;
                 assignOffset += nAssigns;
 
                 mergeGlobalQuality(result, child);
@@ -153,8 +171,9 @@ private:
 LoadedSource loadSource(const std::filesystem::path& rootPath) {
     Loader loader;
     LoadedSource out;
-    out.result      = loader.loadFile(rootPath, /*isRoot=*/true, {}, rootPath.string());
+    out.result = loader.loadFile(rootPath, /*isRoot=*/true, {}, rootPath.string());
     out.diagnostics = std::move(loader.diagnostics);
+    out.files = std::move(loader.fileTable);
     return out;
 }
 

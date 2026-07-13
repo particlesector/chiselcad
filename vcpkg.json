@@ -17,6 +17,7 @@
     "manifold",
     "spdlog",
     "nlohmann-json",
-    "catch2"
+    "catch2",
+    "zlib"
   ]
 }
