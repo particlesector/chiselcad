@@ -938,6 +938,25 @@ TEST_CASE("CsgEval:echo formats number", "[csg][tier-c]") {
     REQUIRE(s.echoMessages[0].find("3.14") != std::string::npos);
 }
 
+TEST_CASE("CsgEval:echo formats a range literal as [start:step:end], not an expanded list", "[csg][bugfix]") {
+    auto s = evaluate("echo([0:2:10]);");
+    REQUIRE(!s.echoMessages.empty());
+    REQUIRE(s.echoMessages[0].find("[0:2:10]") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:for over a variable holding a range literal expands it", "[csg][bugfix]") {
+    auto s = evaluate(
+        "r = [0:2];"
+        "for (i = r) cube(i + 1);"
+    );
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 3);
+    REQUIRE(asLeaf(b.children[0]).params.at("x") == Approx(1.0));
+    REQUIRE(asLeaf(b.children[1]).params.at("x") == Approx(2.0));
+    REQUIRE(asLeaf(b.children[2]).params.at("x") == Approx(3.0));
+}
+
 TEST_CASE("CsgEval:echo in for loop", "[csg][tier-c]") {
     auto s = evaluate("for (i = [1:3]) echo(i);");
     REQUIRE(s.echoMessages.size() == 3);

@@ -466,7 +466,6 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform, cons
 CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, const ColorAttr& color) {
     // Build the sequence of iteration values
     std::vector<Value> values;
-    static constexpr int kMaxIter = 10000;
 
     if (node.range.isRange) {
         double start = m_interp->evalNumber(*node.range.start);
@@ -474,13 +473,7 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, co
         double step  = node.range.step
                        ? m_interp->evalNumber(*node.range.step)
                        : 1.0;
-        if (step == 0.0) return nullptr;
-        if (step > 0.0)
-            for (double v = start; v <= end + 1e-10 && (int)values.size() < kMaxIter; v += step)
-                values.push_back(Value::fromNumber(v));
-        else
-            for (double v = start; v >= end - 1e-10 && (int)values.size() < kMaxIter; v += step)
-                values.push_back(Value::fromNumber(v));
+        values = m_interp->expandRange(start, step, end);
     } else if (node.range.isBracketedList) {
         // Bracketed list literal `[a, b, c]` — each element is its own loop
         // value, even if it evaluates to a vector (e.g. a point list
@@ -489,12 +482,17 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform, co
         for (const auto& e : node.range.list)
             values.push_back(m_interp->evaluate(*e));
     } else {
-        // Expression form `for (v = expr)` — expr must evaluate to a vector;
-        // expand it so that `for (pt = pts)` iterates over pts' elements.
+        // Expression form `for (v = expr)` — expr must evaluate to a vector
+        // or a range (e.g. a variable holding one, or a general range
+        // literal used directly: `for (i = someRange)`); expand either so
+        // `for (pt = pts)` iterates over pts' elements.
         for (const auto& e : node.range.list) {
             Value v = m_interp->evaluate(*e);
             if (v.isVector())
                 for (const auto& elem : v.asVec()) values.push_back(elem);
+            else if (v.isRange())
+                for (auto& elem : m_interp->expandRange(v.rangeStart, v.rangeStep, v.rangeEnd))
+                    values.push_back(std::move(elem));
             else
                 values.push_back(std::move(v));
         }
@@ -551,6 +549,11 @@ std::string CsgEvaluator::formatValue(const Value& v) {
         }
         s += "]";
         return s;
+    }
+    if (v.isRange()) {
+        return "[" + formatValue(Value::fromNumber(v.rangeStart)) + ":" +
+                     formatValue(Value::fromNumber(v.rangeStep))  + ":" +
+                     formatValue(Value::fromNumber(v.rangeEnd))   + "]";
     }
     return "undef";
 }

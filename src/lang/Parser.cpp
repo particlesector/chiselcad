@@ -749,14 +749,45 @@ ExprPtr Parser::parsePrimary() {
         expect(TokenKind::RParen, "expected ')'");
         return expr;
     }
-    // Vector literal [e0, e1, ...]
+    // Vector literal [e0, e1, ...] or range literal [start:end] / [start:step:end]
     if (check(TokenKind::LBracket)) {
         SourceLoc loc = advance().loc; // consume [
+
+        if (check(TokenKind::RBracket)) { // empty list: []
+            advance();
+            VectorLit vlit;
+            vlit.loc = loc;
+            return makeExpr(std::move(vlit));
+        }
+
+        auto first = parseExpr();
+
+        if (check(TokenKind::Colon)) {
+            // Range literal — same grammar as a `for` header's range form,
+            // but usable as a general expression (see RangeLit in Expr.h).
+            advance(); // consume ':'
+            auto second = parseExpr();
+            RangeLit range;
+            range.loc = loc;
+            if (check(TokenKind::Colon)) {
+                advance(); // consume ':'
+                range.start = std::move(first);
+                range.step  = std::move(second);
+                range.end   = parseExpr();
+            } else {
+                range.start = std::move(first);
+                range.end   = std::move(second);
+            }
+            expect(TokenKind::RBracket, "expected ']' after range");
+            return makeExpr(std::move(range));
+        }
+
         VectorLit vlit;
         vlit.loc = loc;
-        while (!check(TokenKind::RBracket) && !atEnd()) {
+        vlit.elements.push_back(std::move(first));
+        while (match(TokenKind::Comma)) {
+            if (check(TokenKind::RBracket)) break;
             vlit.elements.push_back(parseExpr());
-            if (!match(TokenKind::Comma)) break;
         }
         expect(TokenKind::RBracket, "expected ']'");
         return makeExpr(std::move(vlit));

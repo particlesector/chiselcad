@@ -23,10 +23,11 @@ struct TernaryExpr;
 struct IndexExpr;
 struct LetExpr;
 struct FunctionCall;
+struct RangeLit;
 
 using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, StringLit, VectorLit, VarRef,
                                BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr,
-                               LetExpr, FunctionCall>;
+                               LetExpr, FunctionCall, RangeLit>;
 using ExprPtr  = std::unique_ptr<ExprNode>;
 
 template<typename T>
@@ -121,6 +122,19 @@ struct FunctionCall {
     std::string              name;
     std::vector<FunctionArg> args;
     SourceLoc                loc;
+};
+
+// ---------------------------------------------------------------------------
+// Range literal — [start:end] or [start:step:end], usable as a general
+// expression (assigned to a variable, passed as an argument, echoed, used as
+// the source of a for loop or list comprehension), not just inside a `for`
+// header. step is nullptr when omitted (defaults to 1 at evaluation time).
+// ---------------------------------------------------------------------------
+struct RangeLit {
+    ExprPtr   start;
+    ExprPtr   step; // nullptr means step of 1
+    ExprPtr   end;
+    SourceLoc loc;
 };
 
 } // namespace chisel::lang

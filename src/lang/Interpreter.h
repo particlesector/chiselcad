@@ -33,6 +33,16 @@ public:
     Value       getVar(const std::string& name) const;
     void        setVar(const std::string& name, Value val);
 
+    // Expands a range's [start:step:end] bounds into the concrete sequence
+    // of values it denotes — shared by for-loops (both the `for (v =
+    // [a:b:c])` literal form and `for (v = expr)` when expr is a Range
+    // value) and list comprehensions. Empty if step is 0. Capped at
+    // kMaxRangeCount so a runaway range (e.g. a typo'd step) can't exhaust
+    // memory the way an unbounded for-loop already can't (see ForNode's own
+    // matching cap in CsgEvaluator.cpp).
+    static constexpr int kMaxRangeCount = 10000;
+    std::vector<Value> expandRange(double start, double step, double end) const;
+
     // Environment snapshot/restore for scoping.
     std::unordered_map<std::string, Value> snapshotEnv() const { return m_env; }
     void restoreEnv(std::unordered_map<std::string, Value> env) { m_env = std::move(env); }

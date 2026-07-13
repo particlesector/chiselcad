@@ -189,6 +189,11 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                     return Value::undef();
                 return Value::fromString(std::string(1, target.asString()[static_cast<std::size_t>(i)]));
             }
+            if (target.isRange()) {
+                auto vals = expandRange(target.rangeStart, target.rangeStep, target.rangeEnd);
+                if (static_cast<std::size_t>(i) >= vals.size()) return Value::undef();
+                return vals[static_cast<std::size_t>(i)];
+            }
             return Value::undef();
         }
 
@@ -200,6 +205,14 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             Value result = evaluate(*node.body);
             restoreEnv(std::move(savedEnv));
             return result;
+        }
+
+        // ---- Range literal: [start:end] / [start:step:end] ----
+        else if constexpr (std::is_same_v<T, RangeLit>) {
+            double start = evalNumber(*node.start);
+            double step  = node.step ? evalNumber(*node.step) : 1.0;
+            double end   = evalNumber(*node.end);
+            return Value::fromRange(start, step, end);
         }
 
         // ---- Function call ----
@@ -279,6 +292,26 @@ std::array<double, 3> Interpreter::evalVec3(const ExprNode& expr) {
         if (elem.isNumber()) result[i] = elem.asNumber();
     }
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// expandRange — [start:step:end] -> the concrete sequence of values it
+// denotes. Mirrors OpenSCAD's inclusive-endpoint, direction-aware stepping:
+// step > 0 counts up while v <= end (with a small epsilon so a step that
+// lands numerically just short of end due to float error still includes
+// it); step < 0 counts down while v >= end. A step of exactly 0 denotes an
+// empty range (not an infinite loop).
+// ---------------------------------------------------------------------------
+std::vector<Value> Interpreter::expandRange(double start, double step, double end) const {
+    std::vector<Value> values;
+    if (step == 0.0) return values;
+    if (step > 0.0)
+        for (double v = start; v <= end + 1e-10 && static_cast<int>(values.size()) < kMaxRangeCount; v += step)
+            values.push_back(Value::fromNumber(v));
+    else
+        for (double v = start; v >= end - 1e-10 && static_cast<int>(values.size()) < kMaxRangeCount; v += step)
+            values.push_back(Value::fromNumber(v));
+    return values;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +429,9 @@ Value Interpreter::callBuiltin(const std::string& name,
         if (args.size() >= 1) {
             if (args[0].isVector()) return Value::fromNumber(static_cast<double>(args[0].asVec().size()));
             if (args[0].isString()) return Value::fromNumber(static_cast<double>(args[0].asString().size()));
+            if (args[0].isRange())
+                return Value::fromNumber(static_cast<double>(
+                    expandRange(args[0].rangeStart, args[0].rangeStep, args[0].rangeEnd).size()));
         }
         return Value::undef();
     }

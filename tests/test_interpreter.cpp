@@ -580,3 +580,70 @@ TEST_CASE("Interp:str never leaks nan text with a sign glitch", "[interp]") {
 TEST_CASE("Interp:chr rejects huge/non-finite codepoints", "[interp]") {
     REQUIRE(evalVal("chr(1e20)").isUndef());
 }
+
+// ---------------------------------------------------------------------------
+// General range-literal expressions (usable outside `for`)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:range literal evaluates to a Range value, not a Vector", "[interp][bugfix]") {
+    Value v = evalVal("[0:5]");
+    REQUIRE(v.isRange());
+    REQUIRE_FALSE(v.isVector());
+    REQUIRE(v.rangeStart == Approx(0.0));
+    REQUIRE(v.rangeStep  == Approx(1.0)); // omitted step defaults to 1
+    REQUIRE(v.rangeEnd   == Approx(5.0));
+}
+
+TEST_CASE("Interp:range literal with explicit step", "[interp][bugfix]") {
+    Value v = evalVal("[0:2:10]");
+    REQUIRE(v.isRange());
+    REQUIRE(v.rangeStart == Approx(0.0));
+    REQUIRE(v.rangeStep  == Approx(2.0));
+    REQUIRE(v.rangeEnd   == Approx(10.0));
+}
+
+TEST_CASE("Interp:range bounds can reference variables", "[interp][bugfix]") {
+    Value v = evalVal("let (a = 2, b = 12) [a:2:b]");
+    REQUIRE(v.isRange());
+    REQUIRE(v.rangeStart == Approx(2.0));
+    REQUIRE(v.rangeStep  == Approx(2.0));
+    REQUIRE(v.rangeEnd   == Approx(12.0));
+}
+
+TEST_CASE("Interp:expandRange produces the inclusive stepped sequence", "[interp][bugfix]") {
+    Interpreter interp;
+    auto vals = interp.expandRange(0.0, 2.0, 6.0);
+    REQUIRE(vals.size() == 4);
+    REQUIRE(vals[0].asNumber() == Approx(0.0));
+    REQUIRE(vals[1].asNumber() == Approx(2.0));
+    REQUIRE(vals[2].asNumber() == Approx(4.0));
+    REQUIRE(vals[3].asNumber() == Approx(6.0));
+}
+
+TEST_CASE("Interp:expandRange with negative step counts down", "[interp][bugfix]") {
+    Interpreter interp;
+    auto vals = interp.expandRange(10.0, -5.0, 0.0);
+    REQUIRE(vals.size() == 3);
+    REQUIRE(vals[0].asNumber() == Approx(10.0));
+    REQUIRE(vals[2].asNumber() == Approx(0.0));
+}
+
+TEST_CASE("Interp:expandRange with a zero step is empty, not infinite", "[interp][bugfix]") {
+    Interpreter interp;
+    REQUIRE(interp.expandRange(0.0, 0.0, 10.0).empty());
+}
+
+TEST_CASE("Interp:len() on a range counts its elements", "[interp][bugfix]") {
+    REQUIRE(evalNum("len([0:2:10])") == Approx(6.0));
+}
+
+TEST_CASE("Interp:a range literal is truthy", "[interp][bugfix]") {
+    REQUIRE(bool(evalVal("[0:5]")) == true);
+}
+
+TEST_CASE("Interp:indexing into a range yields the nth expanded value", "[interp][bugfix]") {
+    REQUIRE(evalNum("[0:2:10][3]") == Approx(6.0));
+}
+
+TEST_CASE("Interp:indexing past the end of a range is undef", "[interp][bugfix]") {
+    REQUIRE(evalVal("[0:2:10][100]").isUndef());
+}

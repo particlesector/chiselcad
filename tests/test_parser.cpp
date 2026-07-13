@@ -454,6 +454,51 @@ TEST_CASE("Parser:for with brace body", "[parser]") {
 }
 
 // ---------------------------------------------------------------------------
+// General range-literal expressions (usable outside `for`)
+// ---------------------------------------------------------------------------
+TEST_CASE("Parser:range literal [start:end] outside for is a RangeLit assignment", "[parser][bugfix]") {
+    auto r = parse("x = [0:5];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& range = std::get<RangeLit>(*r.assignments[0].value);
+    REQUIRE(range.step == nullptr);
+    Interpreter interp;
+    REQUIRE(interp.evalNumber(*range.start) == Approx(0.0));
+    REQUIRE(interp.evalNumber(*range.end) == Approx(5.0));
+}
+
+TEST_CASE("Parser:range literal [start:step:end] outside for is a RangeLit assignment", "[parser][bugfix]") {
+    auto r = parse("x = [0:2:10];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& range = std::get<RangeLit>(*r.assignments[0].value);
+    REQUIRE(range.step != nullptr);
+    Interpreter interp;
+    REQUIRE(interp.evalNumber(*range.step) == Approx(2.0));
+    REQUIRE(interp.evalNumber(*range.end) == Approx(10.0));
+}
+
+TEST_CASE("Parser:a plain vector literal is still a VectorLit, not a range", "[parser]") {
+    auto r = parse("x = [1, 2, 3];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& vlit = std::get<VectorLit>(*r.assignments[0].value);
+    REQUIRE(vlit.elements.size() == 3);
+}
+
+TEST_CASE("Parser:an empty vector literal still parses", "[parser]") {
+    auto r = parse("x = [];");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& vlit = std::get<VectorLit>(*r.assignments[0].value);
+    REQUIRE(vlit.elements.empty());
+}
+
+TEST_CASE("Parser:range literal as a function argument", "[parser]") {
+    auto r = parse("echo([0:3]);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& call = std::get<ModuleCallNode>(*r.roots[0]);
+    REQUIRE(call.args.size() == 1);
+    REQUIRE(std::holds_alternative<RangeLit>(*call.args[0].value));
+}
+
+// ---------------------------------------------------------------------------
 // Module definitions and calls
 // ---------------------------------------------------------------------------
 static const ModuleCallNode& asModuleCall(const AstNodePtr& n) {
