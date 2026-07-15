@@ -154,7 +154,7 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform,
                 // scope in place (the enclosing evalXxx call is responsible for
                 // snapshot/restore around its whole child list, so this doesn't
                 // leak past the block it's written in). Produces no geometry.
-                m_interp->setVar(n.name, m_interp->evaluate(*n.value));
+                m_interp->assignVar(n.name, *n.value);
                 return nullptr;
             }
             return nullptr;
@@ -633,6 +633,18 @@ std::string CsgEvaluator::formatValue(const Value& v) {
         return "[" + formatValue(Value::fromNumber(v.rangeStart)) + ":" +
                formatValue(Value::fromNumber(v.rangeStep)) + ":" +
                formatValue(Value::fromNumber(v.rangeEnd)) + "]";
+    }
+    if (v.isFunction()) {
+        std::string s = "function(";
+        if (v.closure && v.closure->def) {
+            const auto& params = v.closure->def->params;
+            for (std::size_t i = 0; i < params.size(); ++i) {
+                if (i > 0) s += ", ";
+                s += params[i].name;
+            }
+        }
+        s += ")";
+        return s;
     }
     return "undef";
 }
@@ -1461,7 +1473,7 @@ CsgNodePtr CsgEvaluator::evalLet(const LetNode& node, const glm::mat4& xform,
                                  const ColorAttr& color) {
     auto savedEnv = m_interp->snapshotEnv();
     for (const auto& [name, valExpr] : node.bindings)
-        m_interp->setVar(name, m_interp->evaluate(*valExpr));
+        m_interp->assignVar(name, *valExpr);
 
     std::vector<CsgNodePtr> all;
     for (const auto& child : node.children) {

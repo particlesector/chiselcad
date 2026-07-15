@@ -797,9 +797,77 @@ TEST_CASE("Interp:is_bool/is_num/is_string/is_list each match only their own typ
     REQUIRE(bool(evalVal("is_list(\"abc\")")) == false);
 }
 
-TEST_CASE("Interp:is_function is always false (no function-literal values exist yet)", "[interp][v35]") {
+TEST_CASE("Interp:is_function matches only function-literal values", "[interp][v35]") {
     REQUIRE(bool(evalVal("is_function(42)")) == false);
     REQUIRE(bool(evalVal("is_function(\"f\")")) == false);
+}
+
+// ---------------------------------------------------------------------------
+// v3.6 — first-class function literals: `f = function(x) expr;`
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:function literal assigned to a variable is callable by name", "[interp][v36]") {
+    auto ctx = loadEnvWithFuncs("f = function(x) x * 2;");
+    REQUIRE(ctx.interp.getVar("f").isFunction());
+    REQUIRE(bool(ctx.interp.getVar("f")) == true); // functions are always truthy
+    ExprNode call = makeCall("f", {21.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(42.0));
+}
+
+TEST_CASE("Interp:is_function recognizes a function-literal value", "[interp][v36]") {
+    auto ctx = loadEnvWithFuncs("f = function(x) x;");
+    REQUIRE(ctx.interp.getVar("f").isFunction());
+    FunctionCall fc;
+    fc.name = "is_function";
+    FunctionArg arg;
+    arg.value = makeExpr(VarRef{"f", {}});
+    fc.args.push_back(std::move(arg));
+    ExprNode isFnCall = std::move(fc);
+    REQUIRE(bool(ctx.interp.evaluate(isFnCall)) == true);
+}
+
+TEST_CASE("Interp:function literal with a default parameter", "[interp][v36]") {
+    auto ctx = loadEnvWithFuncs("f = function(x, y=10) x + y;");
+    ExprNode call1 = makeCall("f", {5.0});
+    REQUIRE(ctx.interp.evalNumber(call1) == Approx(15.0));
+    ExprNode call2 = makeCall("f", {5.0, 1.0});
+    REQUIRE(ctx.interp.evalNumber(call2) == Approx(6.0));
+}
+
+TEST_CASE("Interp:function literal closes over its defining scope", "[interp][v36]") {
+    auto ctx = loadEnvWithFuncs("k = 100; f = function(x) x + k;");
+    ExprNode call = makeCall("f", {5.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(105.0));
+}
+
+TEST_CASE("Interp:function literal passed as a higher-order argument", "[interp][v36]") {
+    auto ctx = loadEnvWithFuncs("function apply(f, x) = f(x); g = function(x) x + 1;");
+    FunctionCall fc;
+    fc.name = "apply";
+    FunctionArg fArg; fArg.value = makeExpr(VarRef{"g", {}});
+    FunctionArg xArg; xArg.value = makeExpr(NumberLit{10.0, {}});
+    fc.args.push_back(std::move(fArg));
+    fc.args.push_back(std::move(xArg));
+    ExprNode call = std::move(fc);
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(11.0));
+}
+
+TEST_CASE("Interp:function literal bound directly to a name can recurse by that name", "[interp][v36]") {
+    // `name = function(...) ... name(...) ...;` seeds the closure's own
+    // captured environment with `name -> itself`, so this doesn't need a
+    // named `function` def to recurse.
+    auto ctx = loadEnvWithFuncs("fact = function(n) n <= 1 ? 1 : n * fact(n - 1);");
+    ExprNode call = makeCall("fact", {6.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(720.0));
+}
+
+TEST_CASE("Interp:copying a function-literal variable does not leak into the original's scope", "[interp][v36]") {
+    // `h = f;` is a plain copy, not a new literal — it must not retroactively
+    // mutate f's captured environment (e.g. by injecting "h" as a self-ref).
+    auto ctx = loadEnvWithFuncs("f = function(x) x + 1; h = f;");
+    ExprNode callF = makeCall("f", {1.0});
+    ExprNode callH = makeCall("h", {2.0});
+    REQUIRE(ctx.interp.evalNumber(callF) == Approx(2.0));
+    REQUIRE(ctx.interp.evalNumber(callH) == Approx(3.0));
 }
 
 // ---------------------------------------------------------------------------

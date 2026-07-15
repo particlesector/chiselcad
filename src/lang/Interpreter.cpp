@@ -27,6 +27,8 @@ static bool valEqRec(const Value& a, const Value& b) {
     }
     if (a.isRange())
         return a.rangeStart == b.rangeStart && a.rangeStep == b.rangeStep && a.rangeEnd == b.rangeEnd;
+    if (a.isFunction())
+        return a.closure == b.closure; // identity: same closure instance
     return a.isUndef(); // both Undef, since tags already matched
 }
 
@@ -35,7 +37,7 @@ static bool valEqRec(const Value& a, const Value& b) {
 // ---------------------------------------------------------------------------
 void Interpreter::loadAssignments(const ParseResult& result) {
     for (const auto& stmt : result.assignments)
-        m_env[stmt.name] = evaluate(*stmt.value);
+        assignVar(stmt.name, *stmt.value);
 }
 
 void Interpreter::loadFunctions(const ParseResult& result) {
@@ -217,7 +219,7 @@ Value Interpreter::evaluate(const ExprNode& expr) {
         else if constexpr (std::is_same_v<T, LetExpr>) {
             auto savedEnv = snapshotEnv();
             for (const auto& [name, valExpr] : node.bindings)
-                setVar(name, evaluate(*valExpr));
+                assignVar(name, *valExpr);
             Value result = evaluate(*node.body);
             restoreEnv(std::move(savedEnv));
             return result;
@@ -258,6 +260,14 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             return Value::fromVec(std::move(out));
         }
 
+        // ---- Function literal: function(params) expr ----
+        else if constexpr (std::is_same_v<T, FunctionLit>) {
+            auto env  = std::make_shared<ClosureEnv>();
+            env->def  = &node;
+            env->vars = m_env; // capture the defining scope by value
+            return Value::fromClosure(std::move(env));
+        }
+
         // ---- Function call ----
         else if constexpr (std::is_same_v<T, FunctionCall>) {
             // Collect positional and named argument values
@@ -270,6 +280,15 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 else
                     namedArgs.push_back({arg.name, std::move(v)});
             }
+
+            // A variable bound to a function-literal value takes priority
+            // over a same-named `function` definition or builtin — mirrors
+            // OpenSCAD: once `f = function(x) x*2;` exists, `f(3)` calls
+            // that closure even if a builtin or `function f(...)` also
+            // exists under that name.
+            auto varIt = m_env.find(node.name);
+            if (varIt != m_env.end() && varIt->second.isFunction())
+                return callClosure(varIt->second, posArgs, namedArgs);
 
             // Try user-defined function first
             auto fit = m_funcDefs.find(node.name);
@@ -413,6 +432,49 @@ Value Interpreter::getVar(const std::string& name) const {
 
 void Interpreter::setVar(const std::string& name, Value val) {
     m_env[name] = std::move(val);
+}
+
+void Interpreter::assignVar(const std::string& name, const ExprNode& valueExpr) {
+    Value v = evaluate(valueExpr);
+    if (v.isFunction() && v.closure && std::holds_alternative<FunctionLit>(valueExpr))
+        v.closure->vars[name] = v; // enable `name(...)` to recurse from within its own body
+    m_env[name] = std::move(v);
+}
+
+// ---------------------------------------------------------------------------
+// callClosure — invoke a Value::Tag::Function closure
+// ---------------------------------------------------------------------------
+Value Interpreter::callClosure(const Value& fnVal,
+                                const std::vector<Value>& posArgs,
+                                const std::vector<std::pair<std::string, Value>>& namedArgs) {
+    if (!fnVal.closure || !fnVal.closure->def || m_callDepth >= kMaxCallDepth)
+        return Value::undef();
+    const FunctionLit& def = *fnVal.closure->def;
+
+    auto savedEnv = snapshotEnv();
+    m_env = fnVal.closure->vars; // lexical scope: where the literal was written, not where it's called
+
+    std::size_t posIdx = 0;
+    for (const auto& param : def.params) {
+        bool bound = false;
+        for (const auto& [n, v] : namedArgs) {
+            if (n == param.name) { setVar(param.name, v); bound = true; break; }
+        }
+        if (!bound) {
+            if (posIdx < posArgs.size())
+                setVar(param.name, posArgs[posIdx++]);
+            else if (param.defaultVal)
+                setVar(param.name, evaluate(*param.defaultVal));
+            else
+                setVar(param.name, Value::undef());
+        }
+    }
+
+    ++m_callDepth;
+    Value result = evaluate(*def.body);
+    --m_callDepth;
+    restoreEnv(std::move(savedEnv));
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -633,10 +695,7 @@ Value Interpreter::callBuiltin(const std::string& name,
     if (name == "is_num")    return args.size() >= 1 ? Value::fromBool(args[0].isNumber()) : Value::undef();
     if (name == "is_string") return args.size() >= 1 ? Value::fromBool(args[0].isString()) : Value::undef();
     if (name == "is_list")   return args.size() >= 1 ? Value::fromBool(args[0].isVector()) : Value::undef();
-    // No first-class function-literal value exists yet (see roadmap v3.5),
-    // so nothing can ever actually be one — always false rather than absent,
-    // which is still correct given today's set of possible Value tags.
-    if (name == "is_function") return args.size() >= 1 ? Value::fromBool(false) : Value::undef();
+    if (name == "is_function") return args.size() >= 1 ? Value::fromBool(args[0].isFunction()) : Value::undef();
 
     // ---- version() / version_num() ----
     // ChiselCAD isn't OpenSCAD, so there's no real "version" to report; this

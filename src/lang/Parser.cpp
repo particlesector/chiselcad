@@ -784,6 +784,14 @@ ExprPtr Parser::parsePrimary() {
     if (check(TokenKind::Let)) {
         return parseLetExpr();
     }
+    // Function literal: function(params) expr — a first-class function value.
+    // Only reachable here (inside expression parsing); a bare `function` at
+    // statement level is instead a named `function foo(...) = expr;`
+    // definition, handled by parseFunctionDef before expression parsing ever
+    // starts.
+    if (check(TokenKind::Function)) {
+        return parseFunctionLit();
+    }
     // Parenthesised expression
     if (match(TokenKind::LParen)) {
         auto expr = parseExpr();
@@ -925,6 +933,32 @@ void Parser::parseFunctionDef(ParseResult& result) {
     match(TokenKind::Semicolon);
 
     result.functionDefs.push_back(std::move(def));
+}
+
+// ---------------------------------------------------------------------------
+// function literal — function(params) expr, usable as a general expression
+// (assigned to a variable, passed as an argument, returned from another
+// function). Same parameter-list grammar as parseFunctionDef, minus the name
+// and the `=`.
+// ---------------------------------------------------------------------------
+ExprPtr Parser::parseFunctionLit() {
+    const Token& kw = advance(); // consume 'function'
+    FunctionLit lit;
+    lit.loc = kw.loc;
+
+    expect(TokenKind::LParen, "expected '(' after 'function'");
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        FunctionLitParam param;
+        param.name = expect(TokenKind::Ident, "expected parameter name").text;
+        if (match(TokenKind::Equals))
+            param.defaultVal = parseExpr();
+        lit.params.push_back(std::move(param));
+        if (!match(TokenKind::Comma)) break;
+    }
+    expect(TokenKind::RParen, "expected ')' after parameter list");
+    lit.body = parseExpr();
+
+    return makeExpr(std::move(lit));
 }
 
 // ---------------------------------------------------------------------------

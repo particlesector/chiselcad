@@ -499,6 +499,45 @@ TEST_CASE("Parser:range literal as a function argument", "[parser]") {
 }
 
 // ---------------------------------------------------------------------------
+// Function literals: function(params) expr
+// ---------------------------------------------------------------------------
+TEST_CASE("Parser:function literal assigned to a variable", "[parser][v36]") {
+    auto r = parse("f = function(x) x * 2;");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& lit = std::get<FunctionLit>(*r.assignments[0].value);
+    REQUIRE(lit.params.size() == 1);
+    REQUIRE(lit.params[0].name == "x");
+    REQUIRE(lit.params[0].defaultVal == nullptr);
+    REQUIRE(std::holds_alternative<BinaryExpr>(*lit.body));
+}
+
+TEST_CASE("Parser:function literal with multiple params and a default value", "[parser][v36]") {
+    auto r = parse("f = function(x, y=10) x + y;");
+    const auto& lit = std::get<FunctionLit>(*r.assignments[0].value);
+    REQUIRE(lit.params.size() == 2);
+    REQUIRE(lit.params[0].name == "x");
+    REQUIRE(lit.params[0].defaultVal == nullptr);
+    REQUIRE(lit.params[1].name == "y");
+    REQUIRE(lit.params[1].defaultVal != nullptr);
+}
+
+TEST_CASE("Parser:function literal passed directly as a call argument", "[parser][v36]") {
+    auto r = parse("y = apply(function(x) x + 1, 10);");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& call = std::get<FunctionCall>(*r.assignments[0].value);
+    REQUIRE(call.args.size() == 2);
+    REQUIRE(std::holds_alternative<FunctionLit>(*call.args[0].value));
+}
+
+TEST_CASE("Parser:named function definition is unaffected by function-literal parsing", "[parser][v36]") {
+    // Statement-level `function name(...) = expr;` must still work exactly
+    // as before now that `function` also starts an expression-level literal.
+    auto r = parse("function double(x) = x * 2;");
+    REQUIRE(r.functionDefs.size() == 1);
+    REQUIRE(r.functionDefs[0].name == "double");
+}
+
+// ---------------------------------------------------------------------------
 // List comprehensions and `each`
 // ---------------------------------------------------------------------------
 TEST_CASE("Parser:basic list comprehension", "[parser]") {

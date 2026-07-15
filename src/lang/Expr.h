@@ -25,10 +25,11 @@ struct LetExpr;
 struct FunctionCall;
 struct RangeLit;
 struct ListCompExpr;
+struct FunctionLit;
 
 using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, StringLit, VectorLit, VarRef,
                                BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr,
-                               LetExpr, FunctionCall, RangeLit, ListCompExpr>;
+                               LetExpr, FunctionCall, RangeLit, ListCompExpr, FunctionLit>;
 using ExprPtr  = std::unique_ptr<ExprNode>;
 
 template<typename T>
@@ -177,6 +178,27 @@ struct ListCompExpr {
     ExprPtr         source; // range or list to iterate
     ListCompBodyPtr body;
     SourceLoc       loc;
+};
+
+// ---------------------------------------------------------------------------
+// Function literal — `function(params) expr`, OpenSCAD 2019.05+.
+//
+// Unlike FunctionDef (AST.h) — a named `function foo(x) = expr;` declaration
+// dispatched by name through FunctionCall — a FunctionLit is itself a
+// first-class expression: it evaluates to a closure Value (see Value::Tag::
+// Function) that can be assigned to a variable, stored in a list, passed as
+// an argument, and returned from another function, then invoked later via
+// ordinary call syntax (`f(...)`) wherever `f` names a variable holding one.
+// ---------------------------------------------------------------------------
+struct FunctionLitParam {
+    std::string name;
+    ExprPtr     defaultVal; // nullptr = no default (required)
+};
+
+struct FunctionLit {
+    std::vector<FunctionLitParam> params;
+    ExprPtr                       body;
+    SourceLoc                     loc;
 };
 
 } // namespace chisel::lang

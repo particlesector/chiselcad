@@ -87,12 +87,6 @@ cover. Fixed:
 
 **Explicitly deferred, not done in this pass** (tracked here so they aren't
 lost, not because they don't matter):
-- First-class function literals (`f = function(x) x*2;`, OpenSCAD 2019.05+)
-  as values assignable to variables/passable as arguments — the language
-  has named `function foo(x) = expr;` defs but no closure value type; adding
-  one touches the `Value` variant, the parser grammar, and call dispatch
-  broadly enough that it deserves its own pass rather than riding along with
-  smaller fixes.
 - `$vpr`/`$vpt`/`$vpd` viewport special variables — would need the render
   layer's camera state plumbed into the interpreter, a cross-subsystem wire
   that doesn't exist today; rarely load-bearing in real `.scad` files.
@@ -101,6 +95,19 @@ lost, not because they don't matter):
   those names as a variable. Real-world impact is low, but it's a genuine
   parser-level deviation and any fix is a grammar-level change, not a
   point fix — out of scope here.
+
+## v3.6 — First-class function literals ✓
+
+- [x] Function literals (`f = function(x) x*2;`, OpenSCAD 2019.05+) as
+  values: assignable to variables, storable in lists, passable as
+  arguments to (and returnable from) other functions, and callable later
+  via ordinary `f(...)` syntax wherever `f` names a variable holding one.
+  Adds a `Value::Tag::Function` closure (AST pointer + captured defining
+  scope) alongside the existing named `function foo(x) = expr;` form.
+  Direct self-binding (`fact = function(n) n<=1 ? 1 : n*fact(n-1);`)
+  recurses by name without needing a named `function` def.
+- [x] `is_function()` now recognizes actual function values (was a
+  stubbed-`false` placeholder pending this work).
 
 ## v4 — Tooling & Visual Quality
 

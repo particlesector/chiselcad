@@ -34,6 +34,23 @@ public:
     Value       getVar(const std::string& name) const;
     void        setVar(const std::string& name, Value val);
 
+    // Binds `name` in the current scope to the evaluated result of valueExpr
+    // — used everywhere a real assignment happens (global `x = expr;`, local
+    // block assignments, `let(x = expr, ...)` bindings), as opposed to
+    // setVar's other callers (module/function parameter binding, for-loop
+    // variables) which must NOT get the special case below. When valueExpr
+    // is directly a function literal (`f = function(n) ... f(n-1) ...;`),
+    // this also seeds the closure's own captured environment with
+    // `name -> itself`, so the literal's body can call itself by that name —
+    // mirroring OpenSCAD's function-literal recursion. Restricting this to a
+    // literal directly on the right-hand side (checked via the AST node
+    // type, not the runtime Value) keeps it safe: the closure was just
+    // constructed by this same evaluate() call, so nothing else can be
+    // aliasing its captured-environment map yet. A plain copy (`g = f;`)
+    // does not re-trigger this — mutating a closure that's already shared
+    // with other bindings would leak `name` into their scope too.
+    void assignVar(const std::string& name, const ExprNode& valueExpr);
+
     // Expands a range's [start:step:end] bounds into the concrete sequence
     // of values it denotes — shared by for-loops (both the `for (v =
     // [a:b:c])` literal form and `for (v = expr)` when expr is a Range
@@ -97,6 +114,15 @@ private:
 
     Value callBuiltin(const std::string& name,
                       const std::vector<Value>& args) const;
+
+    // Invokes a closure Value (see Value::Tag::Function): binds fnVal's
+    // params against posArgs/namedArgs the same way a named FunctionDef call
+    // does, but starting from the closure's *captured* environment rather
+    // than the caller's — a function literal sees the scope where
+    // `function(...) ...` was written, not the scope it's called from.
+    Value callClosure(const Value& fnVal,
+                       const std::vector<Value>& posArgs,
+                       const std::vector<std::pair<std::string, Value>>& namedArgs);
 
     // Appends v's per-iteration values (see iterationValues()) onto out —
     // used by `each` in both a plain list literal and a list-comprehension
