@@ -844,6 +844,23 @@ TEST_CASE("Interp:search over a table uses index_col_num to pick the compared co
     REQUIRE(v.asVec()[1].asNumber() == Approx(2.0));
 }
 
+TEST_CASE("Interp:search with index_col_num=-1 compares a vector match_value against the whole row",
+          "[interp][v35]") {
+    // PR #72 review follow-up: -1 means "match_value matches the entire row
+    // vector", not a specific column. It also suppresses the usual
+    // per-element decomposition of a vector match_value (search() normally
+    // treats a vector match_value as one needle per element), since here the
+    // whole vector *is* the needle being compared row-by-row.
+    Value v = evalVal("search([3,\"y\"], [[1,\"x\"],[3,\"y\"],[3,\"z\"]], 0, -1)");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 1);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(1.0));
+}
+
+TEST_CASE("Interp:search with a negative index_col_num other than -1 matches nothing", "[interp][v35]") {
+    REQUIRE(evalVal("search(3, [[1,\"x\"],[3,\"y\"]], 0, -2)").asVec().empty());
+}
+
 // ---------------------------------------------------------------------------
 // v3.5 — version() / version_num()
 // ---------------------------------------------------------------------------

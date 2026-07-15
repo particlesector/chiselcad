@@ -680,6 +680,7 @@ Value Interpreter::callBuiltin(const std::string& name,
                 return Value::fromString(std::string(1, target.asString()[i]));
             const Value& e = target.asVec()[i];
             if (e.isVector()) {
+                if (indexCol == -1) return e; // compare against the whole row
                 if (indexCol >= 0 && static_cast<std::size_t>(indexCol) < e.asVec().size())
                     return e.asVec()[static_cast<std::size_t>(indexCol)];
                 return Value::undef();
@@ -698,18 +699,24 @@ Value Interpreter::callBuiltin(const std::string& name,
         };
 
         const Value& matchVal = args[0];
-        // A multi-character string or a vector match_value searches once per
-        // element and nests each element's matches in its own sub-vector; a
-        // single scalar/character match_value returns its matches directly
-        // (matching OpenSCAD: search("a","abcdabcd") == [0], but
-        // search("abc","abcdabcd") == [[0],[1],[2]]).
-        if (matchVal.isString() && matchVal.asString().size() > 1) {
+        // A multi-character string or a vector match_value normally searches
+        // once per element and nests each element's matches in its own
+        // sub-vector; a single scalar/character match_value returns its
+        // matches directly (matching OpenSCAD: search("a","abcdabcd") ==
+        // [0], but search("abc","abcdabcd") == [[0],[1],[2]]).
+        //
+        // index_col_num == -1 is the exception: it means "compare match_value
+        // whole against each entire row", specifically so a *vector*
+        // match_value can be matched as one unit against table rows rather
+        // than decomposed per-element — so the per-element nesting above
+        // must not kick in for it.
+        if (indexCol != -1 && matchVal.isString() && matchVal.asString().size() > 1) {
             std::vector<Value> outer;
             for (char c : matchVal.asString())
                 outer.push_back(Value::fromVec(searchOne(Value::fromString(std::string(1, c)))));
             return Value::fromVec(std::move(outer));
         }
-        if (matchVal.isVector()) {
+        if (indexCol != -1 && matchVal.isVector()) {
             std::vector<Value> outer;
             for (const auto& needle : matchVal.asVec())
                 outer.push_back(Value::fromVec(searchOne(needle)));
