@@ -58,6 +58,9 @@ static const CsgProjection& asProjection(const CsgNodePtr& n) {
 static const CsgResize& asResize(const CsgNodePtr& n) {
     return std::get<CsgResize>(*n);
 }
+static const CsgExtrusion& asExtrusion(const CsgNodePtr& n) {
+    return std::get<CsgExtrusion>(*n);
+}
 
 // ---------------------------------------------------------------------------
 // Global params forwarding
@@ -854,6 +857,32 @@ TEST_CASE("CsgEval:unbound module parameter is undef, not the caller's/global sa
     REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(0.0));
 }
 
+TEST_CASE("CsgEval:parent_module(0) returns the immediate caller's module name", "[csg][v35]") {
+    auto s = evaluate("module inner() { echo(parent_module(0)); }"
+                      "module outer() { inner(); }"
+                      "outer();");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("outer") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:$parent_modules counts the ancestor module chain", "[csg][v35]") {
+    auto s = evaluate("module inner() { echo($parent_modules); }"
+                      "module mid() { inner(); }"
+                      "module outer() { mid(); }"
+                      "outer();");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("2") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:parent_module/$parent_modules at the top of the call chain has no parent",
+          "[csg][v35]") {
+    auto s = evaluate("module solo() { echo($parent_modules); echo(parent_module(0)); }"
+                      "solo();");
+    REQUIRE(s.echoMessages.size() == 2);
+    REQUIRE(s.echoMessages[0].find("0") != std::string::npos);
+    REQUIRE(s.echoMessages[1].find("undef") != std::string::npos);
+}
+
 TEST_CASE("CsgEval:children() evaluates caller-authored geometry in the caller's scope, not the "
           "callee's params",
           "[csg][bugfix]") {
@@ -956,6 +985,14 @@ TEST_CASE("CsgEval:echo does not produce geometry", "[csg][tier-c]") {
     auto s = evaluate("echo(\"no geo\"); cube([1,1,1]);");
     REQUIRE(s.roots.size() == 1); // only the cube
     REQUIRE(s.echoMessages.size() == 1);
+}
+
+TEST_CASE("CsgEval:echo formats named arguments as name = value", "[csg][v35]") {
+    auto s = evaluate("echo(x=1, \"hi\", y=2);");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("x = 1") != std::string::npos);
+    REQUIRE(s.echoMessages[0].find("y = 2") != std::string::npos);
+    REQUIRE(s.echoMessages[0].find("\"hi\"") != std::string::npos);
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,6 +1119,35 @@ TEST_CASE("CsgEval:children index out of range returns nothing", "[csg][tier-c]"
     REQUIRE(s.roots.empty());
 }
 
+TEST_CASE("CsgEval:children with a vector of indices evaluates each one", "[csg][v35]") {
+    auto s = evaluate("module pick() { children([0,2]); }"
+                      "pick() { sphere(r=1); cube([1,1,1]); cylinder(h=1,r=1); }");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(std::holds_alternative<CsgBoolean>(*s.roots[0]));
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 2);
+    REQUIRE(asLeaf(b.children[0]).kind == CsgLeaf::Kind::Sphere);
+    REQUIRE(asLeaf(b.children[1]).kind == CsgLeaf::Kind::Cylinder);
+}
+
+TEST_CASE("CsgEval:children with a range of indices evaluates each index in range", "[csg][v35]") {
+    auto s = evaluate("module first_two() { children([0:1]); }"
+                      "first_two() { sphere(r=1); cube([1,1,1]); cylinder(h=1,r=1); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 2);
+    REQUIRE(asLeaf(b.children[0]).kind == CsgLeaf::Kind::Sphere);
+    REQUIRE(asLeaf(b.children[1]).kind == CsgLeaf::Kind::Cube);
+}
+
+TEST_CASE("CsgEval:children with a vector of indices skips out-of-range entries", "[csg][v35]") {
+    auto s = evaluate("module pick() { children([0,99]); }"
+                      "pick() { sphere(r=1); cube([1,1,1]); }");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(std::holds_alternative<CsgLeaf>(*s.roots[0]));
+    REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Sphere);
+}
+
 TEST_CASE("CsgEval:children outside module returns nothing", "[csg][tier-c]") {
     // children() called at top level — not inside a module body
     auto s = evaluate("children();");
@@ -1119,6 +1185,22 @@ TEST_CASE("CsgEval:$children zero when no children", "[csg][tier-c]") {
                       "maybe();");
     REQUIRE(s.roots.size() == 1);
     REQUIRE(asLeaf(s.roots[0]).kind == CsgLeaf::Kind::Cube);
+}
+
+// ---------------------------------------------------------------------------
+// linear_extrude/rotate_extrude params — MeshEvaluator (which actually
+// consumes these to build geometry) isn't part of the test binary (it links
+// manifold, which the test target doesn't), so this only verifies the
+// params survive parsing + CsgEvaluator's generic pass-through into the
+// CsgExtrusion IR node — the half that's actually unit-testable here.
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:linear_extrude slices param is threaded into the IR", "[csg][v35]") {
+    auto s = evaluate("linear_extrude(height=10, twist=90, slices=50) square(5);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& ext = asExtrusion(s.roots[0]);
+    REQUIRE(ext.params.at("slices") == Approx(50.0));
+    REQUIRE(ext.params.at("twist") == Approx(90.0));
+    REQUIRE(ext.params.at("height") == Approx(10.0));
 }
 
 // ---------------------------------------------------------------------------

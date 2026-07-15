@@ -412,11 +412,18 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
         float  scaleX = static_cast<float>(getP("scale_x", 1.0));
         float  scaleY = static_cast<float>(getP("scale_y", 1.0));
         double fnOvr  = getP("$fn",   0.0);
+        double slices = getP("slices", 0.0);
         // Divisions are only needed for twist (to smoothly interpolate the
         // rotation). A plain scale taper works correctly with 0 divisions.
-        int    nDivs  = (twist != 0.0)
-                        ? std::max(1, static_cast<int>(fnOvr > 0 ? fnOvr : 10))
-                        : 0;
+        // An explicit slices=... always wins over the $fn-derived default —
+        // it's OpenSCAD's dedicated knob for this and should be honored even
+        // when the caller also set $fn for an unrelated reason (e.g. a
+        // sibling circle() in the same file).
+        int nDivs = 0;
+        if (slices > 0.0)
+            nDivs = std::max(1, static_cast<int>(slices));
+        else if (twist != 0.0)
+            nDivs = std::max(1, static_cast<int>(fnOvr > 0 ? fnOvr : 10));
         bool   center = (getP("center", 0.0) != 0.0);
 
         result = manifold::Manifold::Extrude(

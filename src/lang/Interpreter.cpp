@@ -4,8 +4,9 @@
 #include <limits>
 #include <random>
 
-static constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
-static constexpr double kRad2Deg = 180.0 / 3.14159265358979323846;
+static constexpr double kPi      = 3.14159265358979323846;
+static constexpr double kDeg2Rad = kPi / 180.0;
+static constexpr double kRad2Deg = 180.0 / kPi;
 
 namespace chisel::lang {
 
@@ -77,6 +78,16 @@ Value Interpreter::evaluate(const ExprNode& expr) {
         else if constexpr (std::is_same_v<T, VarRef>) {
             auto it = m_env.find(node.name);
             if (it != m_env.end()) return it->second;
+            // Predefined constants/special vars — checked only once the
+            // environment lookup misses, so a user assignment of the same
+            // name (e.g. `PI = 3;`) still wins, matching OpenSCAD (these
+            // aren't protected keywords, just default values).
+            if (node.name == "PI")       return Value::fromNumber(kPi);
+            if (node.name == "$preview") return Value::fromBool(true); // no separate export-render pass exists yet
+            if (node.name == "$t")       return Value::fromNumber(0.0); // no animation/scrubbing yet (see roadmap v4)
+            if (node.name == "$parent_modules")
+                return Value::fromNumber(m_moduleNameStack.empty() ? 0.0
+                    : static_cast<double>(m_moduleNameStack.size() - 1));
             return Value::undef();
         }
 
@@ -614,6 +625,104 @@ Value Interpreter::callBuiltin(const std::string& name,
             }
         }
         return Value::fromNumber(pairs.back().second);
+    }
+
+    // ---- Type predicates ----
+    if (name == "is_undef")  return args.size() >= 1 ? Value::fromBool(args[0].isUndef())  : Value::undef();
+    if (name == "is_bool")   return args.size() >= 1 ? Value::fromBool(args[0].isBool())   : Value::undef();
+    if (name == "is_num")    return args.size() >= 1 ? Value::fromBool(args[0].isNumber()) : Value::undef();
+    if (name == "is_string") return args.size() >= 1 ? Value::fromBool(args[0].isString()) : Value::undef();
+    if (name == "is_list")   return args.size() >= 1 ? Value::fromBool(args[0].isVector()) : Value::undef();
+    // No first-class function-literal value exists yet (see roadmap v3.5),
+    // so nothing can ever actually be one — always false rather than absent,
+    // which is still correct given today's set of possible Value tags.
+    if (name == "is_function") return args.size() >= 1 ? Value::fromBool(false) : Value::undef();
+
+    // ---- version() / version_num() ----
+    // ChiselCAD isn't OpenSCAD, so there's no real "version" to report; this
+    // reports a fixed OpenSCAD-compatibility level instead, chosen to match
+    // the newest feature this interpreter actually supports (general list
+    // comprehensions/each, from OpenSCAD 2019.05) — real-world .scad files
+    // commonly gate features with `if (version_num() >= 20190500)`, and this
+    // makes them pick the modern branch. Don't bump this without confirming
+    // the corresponding OpenSCAD-version feature is actually supported.
+    if (name == "version")     return Value::fromVec({Value::fromNumber(2019),
+                                                        Value::fromNumber(5),
+                                                        Value::fromNumber(0)});
+    if (name == "version_num") return Value::fromNumber(20190500);
+
+    // ---- parent_module(idx) — name of the module idx levels up the current
+    // module-call chain (0 = immediate caller). See m_moduleNameStack. ----
+    if (name == "parent_module") {
+        if (args.size() >= 1 && args[0].isNumber()) {
+            int idx = static_cast<int>(args[0].asNumber());
+            int i   = static_cast<int>(m_moduleNameStack.size()) - 2 - idx;
+            if (idx >= 0 && i >= 0)
+                return Value::fromString(m_moduleNameStack[static_cast<std::size_t>(i)]);
+        }
+        return Value::undef();
+    }
+
+    // ---- search(match_value, string_or_vector, [num_returns_per_match=1], [index_col_num=0]) ----
+    if (name == "search") {
+        if (args.size() < 2) return Value::undef();
+        const Value& target = args[1];
+        if (!target.isString() && !target.isVector()) return Value::undef();
+
+        int numReturns = 1;
+        if (args.size() >= 3 && args[2].isNumber()) numReturns = static_cast<int>(args[2].asNumber());
+        int indexCol = 0;
+        if (args.size() >= 4 && args[3].isNumber()) indexCol = static_cast<int>(args[3].asNumber());
+
+        std::size_t targetSize = target.isString() ? target.asString().size() : target.asVec().size();
+        auto elementAt = [&](std::size_t i) -> Value {
+            if (target.isString())
+                return Value::fromString(std::string(1, target.asString()[i]));
+            const Value& e = target.asVec()[i];
+            if (e.isVector()) {
+                if (indexCol == -1) return e; // compare against the whole row
+                if (indexCol >= 0 && static_cast<std::size_t>(indexCol) < e.asVec().size())
+                    return e.asVec()[static_cast<std::size_t>(indexCol)];
+                return Value::undef();
+            }
+            return e;
+        };
+        auto searchOne = [&](const Value& needle) -> std::vector<Value> {
+            std::vector<Value> matches;
+            for (std::size_t i = 0; i < targetSize; ++i) {
+                if (valEqRec(needle, elementAt(i))) {
+                    matches.push_back(Value::fromNumber(static_cast<double>(i)));
+                    if (numReturns > 0 && static_cast<int>(matches.size()) >= numReturns) break;
+                }
+            }
+            return matches;
+        };
+
+        const Value& matchVal = args[0];
+        // A multi-character string or a vector match_value normally searches
+        // once per element and nests each element's matches in its own
+        // sub-vector; a single scalar/character match_value returns its
+        // matches directly (matching OpenSCAD: search("a","abcdabcd") ==
+        // [0], but search("abc","abcdabcd") == [[0],[1],[2]]).
+        //
+        // index_col_num == -1 is the exception: it means "compare match_value
+        // whole against each entire row", specifically so a *vector*
+        // match_value can be matched as one unit against table rows rather
+        // than decomposed per-element — so the per-element nesting above
+        // must not kick in for it.
+        if (indexCol != -1 && matchVal.isString() && matchVal.asString().size() > 1) {
+            std::vector<Value> outer;
+            for (char c : matchVal.asString())
+                outer.push_back(Value::fromVec(searchOne(Value::fromString(std::string(1, c)))));
+            return Value::fromVec(std::move(outer));
+        }
+        if (indexCol != -1 && matchVal.isVector()) {
+            std::vector<Value> outer;
+            for (const auto& needle : matchVal.asVec())
+                outer.push_back(Value::fromVec(searchOne(needle)));
+            return Value::fromVec(std::move(outer));
+        }
+        return Value::fromVec(searchOne(matchVal));
     }
 
     return Value::undef(); // unknown function

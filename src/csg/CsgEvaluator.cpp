@@ -655,6 +655,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
                 Value v = m_interp->evaluate(*arg.value);
                 msg += first ? " " : ", ";
                 first = false;
+                if (!arg.name.empty()) msg += arg.name + " = ";
                 msg += formatValue(v);
             }
             m_scene->echoMessages.push_back(std::move(msg));
@@ -761,6 +762,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     // Expose $children count and push the children context for children() access
     m_interp->setVar("$children", Value::fromNumber(static_cast<double>(call.children.size())));
     m_childrenStack.push_back({&call.children, &savedEnv});
+    m_interp->pushModuleName(call.name);
 
     // Evaluate the module body and collect geometry
     std::vector<CsgNodePtr> all;
@@ -771,6 +773,7 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     }
     --m_moduleDepth;
 
+    m_interp->popModuleName();
     m_childrenStack.pop_back();
     // Restore the caller's environment
     m_interp->restoreEnv(std::move(savedEnv));
@@ -808,11 +811,22 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
     // children(i)'s index expression is written in the *callee* module body,
     // so evaluate it in the callee's (still-active) scope, before switching
     // to the caller's scope for the child AST nodes themselves.
-    std::optional<int> idx;
+    //
+    // The index argument can be a plain number (children(i)), a vector of
+    // numbers (children([0,2])), or a range (children([0:2])) — collect
+    // whichever form into a flat list of indices to evaluate below.
+    std::vector<int> indices;
     if (!call.args.empty()) {
         Value idxVal = m_interp->evaluate(*call.args[0].value);
-        if (idxVal.isNumber())
-            idx = static_cast<int>(idxVal.asNumber());
+        if (idxVal.isNumber()) {
+            indices.push_back(static_cast<int>(idxVal.asNumber()));
+        } else if (idxVal.isVector()) {
+            for (const auto& e : idxVal.asVec())
+                if (e.isNumber()) indices.push_back(static_cast<int>(e.asNumber()));
+        } else if (idxVal.isRange()) {
+            for (const auto& v : m_interp->expandRange(idxVal.rangeStart, idxVal.rangeStep, idxVal.rangeEnd))
+                if (v.isNumber()) indices.push_back(static_cast<int>(v.asNumber()));
+        }
     }
 
     // Children AST nodes were written at the call site and must be evaluated
@@ -830,10 +844,15 @@ CsgNodePtr CsgEvaluator::evalChildren(const ModuleCallNode& call, const glm::mat
             if (auto c = evalNode(*child, xform, color))
                 all.push_back(std::move(c));
         }
-    } else if (idx && *idx >= 0 && *idx < static_cast<int>(activeChildren->size())) {
-        // children(i) — evaluate the i-th child
-        if (auto c = evalNode(*(*activeChildren)[static_cast<std::size_t>(*idx)], xform, color))
-            all.push_back(std::move(c));
+    } else {
+        // children(i) / children([...]) / children([a:b]) — evaluate each
+        // requested index that's actually in range; out-of-range indices are
+        // skipped rather than aborting the whole call.
+        for (int idx : indices) {
+            if (idx < 0 || idx >= static_cast<int>(activeChildren->size())) continue;
+            if (auto c = evalNode(*(*activeChildren)[static_cast<std::size_t>(idx)], xform, color))
+                all.push_back(std::move(c));
+        }
     }
 
     // Restore the callee's environment now that caller-scope evaluation is done

@@ -5,6 +5,7 @@
 #include <array>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace chisel::lang {
 
@@ -55,9 +56,17 @@ public:
     std::unordered_map<std::string, Value> snapshotEnv() const { return m_env; }
     void restoreEnv(std::unordered_map<std::string, Value> env) { m_env = std::move(env); }
 
+    // Module-call-name stack backing parent_module()/$parent_modules. Module
+    // calls are evaluated by CsgEvaluator, not here, so CsgEvaluator pushes/
+    // pops around each user-module call (mirroring how it already sets
+    // $children) rather than this class tracking module calls itself.
+    void pushModuleName(std::string name) { m_moduleNameStack.push_back(std::move(name)); }
+    void popModuleName() { m_moduleNameStack.pop_back(); }
+
 private:
     std::unordered_map<std::string, Value>             m_env;
     std::unordered_map<std::string, const FunctionDef*> m_funcDefs;
+    std::vector<std::string>                           m_moduleNameStack;
 
     // Guards against unbounded recursion in user-defined functions (e.g. a
     // missing base case) blowing the native call stack. Silent cap, no

@@ -67,6 +67,41 @@ else.
 - [x] PNG heightmap support for `surface()`
 - [x] Additional `import()` formats: OFF, 3MF, AMF, DXF, SVG
 
+## v3.5 — OpenSCAD Language Completeness (audit follow-up) ✓
+
+The v3 phases above closed the 33 filed correctness issues, but "feature
+complete with OpenSCAD" was never verified against OpenSCAD's actual
+builtin/special-variable surface — a July 2026 completeness audit (source
+read, not just the issue tracker) found real gaps the v3 checklist didn't
+cover. Fixed:
+
+- [x] `PI` constant (was entirely absent — scripts had to hard-code 3.14159)
+- [x] `is_undef()`/`is_bool()`/`is_num()`/`is_string()`/`is_list()`/`is_function()` type predicates
+- [x] `search()` (string/list/table search, matching OpenSCAD's flat-vs-nested result shape)
+- [x] `version()`/`version_num()` (fixed compatibility level, so version-gated library code picks its modern branch)
+- [x] `$preview`/`$t` special variables (fixed defaults: no animation/dual-render-pass distinction exists yet)
+- [x] `parent_module(idx)`/`$parent_modules`
+- [x] `linear_extrude(slices=...)` — was parsed but silently ignored; twist division count now honors it over the `$fn` default
+- [x] `children([vector])` / `children([range])` — only a single plain-number index worked before
+- [x] `echo(name=value)` now formats as `name = value`, matching OpenSCAD
+
+**Explicitly deferred, not done in this pass** (tracked here so they aren't
+lost, not because they don't matter):
+- First-class function literals (`f = function(x) x*2;`, OpenSCAD 2019.05+)
+  as values assignable to variables/passable as arguments — the language
+  has named `function foo(x) = expr;` defs but no closure value type; adding
+  one touches the `Value` variant, the parser grammar, and call dispatch
+  broadly enough that it deserves its own pass rather than riding along with
+  smaller fixes.
+- `$vpr`/`$vpt`/`$vpd` viewport special variables — would need the render
+  layer's camera state plumbed into the interpreter, a cross-subsystem wire
+  that doesn't exist today; rarely load-bearing in real `.scad` files.
+- `cube`/`sphere`/`translate`/etc. are reserved lexer keywords rather than
+  ordinary identifiers, so (unlike real OpenSCAD) a script can't use one of
+  those names as a variable. Real-world impact is low, but it's a genuine
+  parser-level deviation and any fix is a grammar-level change, not a
+  point fix — out of scope here.
+
 ## v4 — Tooling & Visual Quality
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)

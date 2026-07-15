@@ -755,3 +755,125 @@ TEST_CASE("Interp:nested list comprehensions share a joint element budget, not e
     REQUIRE(v.isVector());
     REQUIRE(v.asVec().size() < 10000);
 }
+
+// ---------------------------------------------------------------------------
+// v3.5 — PI / $preview / $t
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:PI is a predefined constant", "[interp][v35]") {
+    REQUIRE(evalNum("PI") == Approx(3.14159265358979323846));
+    REQUIRE(evalNum("sin(PI / 2 * 180 / PI)") == Approx(1.0)); // sanity: usable in expressions
+}
+
+TEST_CASE("Interp:PI can be shadowed by a user assignment", "[interp][v35]") {
+    // Matches OpenSCAD: PI is a default, not a protected keyword.
+    Interpreter interp = loadEnv("PI = 3;");
+    REQUIRE(interp.getVar("PI").asNumber() == Approx(3.0));
+}
+
+TEST_CASE("Interp:$preview and $t have sane defaults", "[interp][v35]") {
+    REQUIRE(bool(evalVal("$preview")) == true);
+    REQUIRE(evalNum("$t") == Approx(0.0));
+}
+
+// ---------------------------------------------------------------------------
+// v3.5 — is_undef / is_bool / is_num / is_string / is_list / is_function
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:is_undef distinguishes undef from other falsy values", "[interp][v35]") {
+    REQUIRE(bool(evalVal("is_undef(undef)")) == true);
+    REQUIRE(bool(evalVal("is_undef(some_never_declared_var)")) == true);
+    REQUIRE(bool(evalVal("is_undef(0)")) == false);
+    REQUIRE(bool(evalVal("is_undef(false)")) == false);
+    REQUIRE(bool(evalVal("is_undef([])")) == false);
+}
+
+TEST_CASE("Interp:is_bool/is_num/is_string/is_list each match only their own type", "[interp][v35]") {
+    REQUIRE(bool(evalVal("is_bool(true)")) == true);
+    REQUIRE(bool(evalVal("is_bool(1)")) == false);
+    REQUIRE(bool(evalVal("is_num(42)")) == true);
+    REQUIRE(bool(evalVal("is_num(\"42\")")) == false);
+    REQUIRE(bool(evalVal("is_string(\"hi\")")) == true);
+    REQUIRE(bool(evalVal("is_string(5)")) == false);
+    REQUIRE(bool(evalVal("is_list([1,2,3])")) == true);
+    REQUIRE(bool(evalVal("is_list(\"abc\")")) == false);
+}
+
+TEST_CASE("Interp:is_function is always false (no function-literal values exist yet)", "[interp][v35]") {
+    REQUIRE(bool(evalVal("is_function(42)")) == false);
+    REQUIRE(bool(evalVal("is_function(\"f\")")) == false);
+}
+
+// ---------------------------------------------------------------------------
+// v3.5 — search()
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:search single character returns a flat index vector", "[interp][v35]") {
+    Value v = evalVal("search(\"a\", \"abcdabcd\")");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 1);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
+}
+
+TEST_CASE("Interp:search with num_returns_per_match=0 returns every match", "[interp][v35]") {
+    Value v = evalVal("search(\"a\", \"abcdabcd\", 0)");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 2);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(4.0));
+}
+
+TEST_CASE("Interp:search with no match returns an empty vector", "[interp][v35]") {
+    Value v = evalVal("search(\"e\", \"abcdabcd\")");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().empty());
+}
+
+TEST_CASE("Interp:search with a multi-character match_value nests one result per character", "[interp][v35]") {
+    Value v = evalVal("search(\"abc\", \"abcdabcd\")");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 3);
+    for (const auto& e : v.asVec()) REQUIRE(e.isVector());
+    REQUIRE(v.asVec()[0].asVec()[0].asNumber() == Approx(0.0)); // 'a' -> [0]
+    REQUIRE(v.asVec()[1].asVec()[0].asNumber() == Approx(1.0)); // 'b' -> [1]
+    REQUIRE(v.asVec()[2].asVec()[0].asNumber() == Approx(2.0)); // 'c' -> [2]
+}
+
+TEST_CASE("Interp:search over a table uses index_col_num to pick the compared column", "[interp][v35]") {
+    Value v = evalVal("search(3, [[1,\"x\"],[3,\"y\"],[3,\"z\"]], 0, 0)");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 2);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(1.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(2.0));
+}
+
+TEST_CASE("Interp:search with index_col_num=-1 compares a vector match_value against the whole row",
+          "[interp][v35]") {
+    // PR #72 review follow-up: -1 means "match_value matches the entire row
+    // vector", not a specific column. It also suppresses the usual
+    // per-element decomposition of a vector match_value (search() normally
+    // treats a vector match_value as one needle per element), since here the
+    // whole vector *is* the needle being compared row-by-row.
+    Value v = evalVal("search([3,\"y\"], [[1,\"x\"],[3,\"y\"],[3,\"z\"]], 0, -1)");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 1);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(1.0));
+}
+
+TEST_CASE("Interp:search with a negative index_col_num other than -1 matches nothing", "[interp][v35]") {
+    REQUIRE(evalVal("search(3, [[1,\"x\"],[3,\"y\"]], 0, -2)").asVec().empty());
+}
+
+// ---------------------------------------------------------------------------
+// v3.5 — version() / version_num()
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:version_num reports a fixed OpenSCAD-compatibility level", "[interp][v35]") {
+    REQUIRE(evalNum("version_num()") == Approx(20190500.0));
+    REQUIRE(bool(evalVal("version_num() >= 20190500")) == true);
+}
+
+TEST_CASE("Interp:version returns a [major,minor,patch] vector matching version_num", "[interp][v35]") {
+    Value v = evalVal("version()");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 3);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(2019.0));
+    REQUIRE(v.asVec()[1].asNumber() == Approx(5.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(0.0));
+}
