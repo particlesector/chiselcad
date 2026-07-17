@@ -16,20 +16,22 @@ code-driven design. It reads OpenSCAD-syntax `.scad` files and renders them with
 a modern Vulkan renderer — giving you a dramatically faster result than
 legacy OpenGL-based tools.
 
-It implements most of the OpenSCAD language today — primitives, booleans,
-transforms, control flow, user-defined functions/modules, 2D extrusion,
-`color()`/`offset()`/`projection()`, and file I/O (`include`/`use`/`import`/
-`surface`/`text`). See [Supported Language](#supported-language) below for the
-full breakdown and the handful of constructs still missing.
+It implements nearly all of the OpenSCAD language today — primitives, booleans,
+transforms, control flow, user-defined functions/modules and function
+literals, 2D extrusion, `color()`/`offset()`/`projection()`, and file I/O
+(`include`/`use`/`import`/`surface`/`text`). See
+[Supported Language](#supported-language) below for the full breakdown and
+[docs/roadmap.md](docs/roadmap.md) (v3.7) for the small number of constructs
+still missing — mainly `assert()`/`echo()` used as chained expressions inside
+function bodies, multi-variable/C-style list comprehensions, and `roof()`.
 
-It is **not yet** a verified drop-in replacement, for two reasons: a few
-language constructs aren't implemented yet (tracked in
-[docs/roadmap.md](docs/roadmap.md), v3), and an ongoing correctness audit has
-found real bugs — including some common primitive argument forms that
-currently produce silently wrong geometry. These are tracked individually in
-[GitHub Issues](https://github.com/particlesector/chiselcad/issues); until the
-Critical/High-severity ones are resolved, verify output geometry rather than
-assuming full compatibility.
+All 33 issues from the original correctness audit (v3) are closed, and a
+July 2026 completeness re-audit (v3.7) closed three further gaps: `log()`
+was computing the natural logarithm instead of base-10 (and `ln()` didn't
+exist), `str()` silently dropped vector/range arguments instead of formatting
+them, and the `$vpf` viewport special variable was missing. Verify output
+geometry against real OpenSCAD for anything relying on the remaining gaps
+above; everything else should match.
 
 ```scad
 difference() {
@@ -50,7 +52,7 @@ difference() {
 > | UI responsiveness | Blocks on F6 render | Async — UI never freezes |
 > | Editor | Embedded QScintilla | External (VS Code) + file watch + diagnostics panel; embedded editor and LSP planned |
 > | AI assistance | None | Claude integration (planned) |
-> | Language coverage | Full OpenSCAD | Broad subset — most of the language; a few constructs + open correctness bugs remain (see below) |
+> | Language coverage | Full OpenSCAD | Nearly all of the language; a handful of constructs remain (see below) |
 
 ---
 
@@ -74,18 +76,21 @@ difference() {
 | Booleans / CSG | `union()`, `difference()`, `intersection()`, `hull()`, `minkowski()` |
 | Transforms | `translate()`, `rotate()`, `scale()`, `mirror()`, `multmatrix()`, `color()`, `resize()` |
 | CSG modifiers | `#` (highlight), `%` (background), `!` (root), `*` (disable) |
-| Control flow | `for`, `if`/`else`, `let`, ternary `?:`, ranges (`[a:b]`/`[a:b:c]`), list comprehensions |
+| Control flow | `for`, `if`/`else`, `let`, ternary `?:`, ranges (`[a:b]`/`[a:b:c]`), list comprehensions (single-variable) |
 | Functions & modules | user-defined `function`/`module`, `children()`/`$children`, named + default args |
 | Built-ins | full math set, string/vector helpers (`concat`, `str`, `len`, `lookup`, `rands`, ...) |
 | 2D → 3D | `linear_extrude`, `rotate_extrude` (including nested extrusion), `offset()`, `projection()` |
 | File I/O | `include <>`, `use <>` (per-file diagnostics), `import()` (STL, OFF, 3MF, AMF, DXF, SVG), `surface()` (`.dat` or `.png`) |
-| Diagnostics | `echo()`, `assert()` |
-| Quality | `$fn`, `$fs`, `$fa` (global and per-node) |
+| Diagnostics | `echo()`, `assert()` (statement form only — not yet as chained expressions) |
+| Quality | `$fn`, `$fs`, `$fa`, `$vpr`/`$vpt`/`$vpd`/`$vpf` (global and per-node) |
 | Export | Binary STL |
 
-v3 (see [docs/roadmap.md](docs/roadmap.md)) is complete. See the
-[issue tracker](https://github.com/particlesector/chiselcad/issues) for
-known correctness bugs currently being fixed.
+v3–v3.6 (see [docs/roadmap.md](docs/roadmap.md)) are complete, and the
+v3.7 re-audit closed the completeness gaps it found (`log()`/`ln()`, `str()`
+on vectors, `$vpf`). What's left — `assert()`/`echo()` as expressions,
+multi-variable list comprehensions, `roof()`, and non-STL export — is
+tracked in [docs/roadmap.md](docs/roadmap.md). There are no known open
+correctness bugs.
 
 ---
 
@@ -152,12 +157,12 @@ A full LSP extension for VS Code is planned (see [docs/roadmap.md](docs/roadmap.
 ## Project Status
 
 ChiselCAD is in **active development**. The core rendering pipeline, CSG
-evaluator, and most of the OpenSCAD language are implemented and working
-(see [Supported Language](#supported-language) above). Current focus is
-closing the remaining language gaps and fixing correctness bugs found by an
-ongoing audit — both tracked in [docs/roadmap.md](docs/roadmap.md) and
-[GitHub Issues](https://github.com/particlesector/chiselcad/issues) — before
-making any drop-in-replacement claim.
+evaluator, and nearly all of the OpenSCAD language are implemented and
+working (see [Supported Language](#supported-language) above), with no known
+open correctness bugs. Current focus is closing the small number of
+remaining language gaps tracked in [docs/roadmap.md](docs/roadmap.md) (v3.7)
+and the v4 tooling/visual-quality work before making a full drop-in-
+replacement claim.
 
 If you want to follow along or contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -118,6 +118,60 @@ cover. Fixed:
 - [x] `is_function()` now recognizes actual function values (was a
   stubbed-`false` placeholder pending this work).
 
+## v3.7 — OpenSCAD completeness re-audit ✓
+
+A July 2026 re-audit (source read against OpenSCAD's actual builtin surface,
+not just the v3/v3.5/v3.6 checklists) found three real gaps the prior passes
+missed:
+
+- [x] `log()`/`ln()` — `log()` was implemented as the *natural* logarithm
+  (`std::log`), and there was no `ln()` at all. OpenSCAD has this backwards
+  from C: `log()` is base-10, `ln()` is natural log. Easy mistake (C's own
+  `log()` is natural log) but a real correctness bug for any script doing
+  `log(100)` expecting `2`. Fixed: `log()` now calls `std::log10`, `ln()`
+  added as `std::log`. The stray non-OpenSCAD `log10()` name this
+  interpreter had invented is gone (folded into the now-correct `log()`).
+- [x] `str()` only handled number/bool/string/undef arguments — a vector,
+  range, or function argument silently contributed nothing (`str([1,2,3])`
+  returned `""` instead of `"[1, 2, 3]"`). Fixed with a recursive formatter
+  (`formatValueRec`) matching OpenSCAD's rule: a bare top-level string
+  argument is unquoted, but a string nested inside a vector is quoted
+  (`str("hi") == "hi"` but `str([1,"hi"]) == [1, "hi"]`) — mirrors
+  `CsgEvaluator::formatValue`'s existing echo()/assert() formatting, kept as
+  a separate implementation since `Interpreter` has no dependency on
+  `CsgEvaluator`.
+- [x] `$vpf` (viewport field-of-view) special variable — `$vpr`/`$vpt`/`$vpd`
+  were plumbed through in v3.5 but `$vpf` was missed. Added the same way:
+  `ViewportState::vpf` (default 22.5°, matching OpenSCAD's own default)
+  plumbed from `Camera::fovDeg` through `Application::currentViewport()` →
+  `MeshBuilder::buildOne()` → `Interpreter::setViewport()`.
+
+Gaps identified but deliberately not closed in this pass — real OpenSCAD
+surface, but each either architecturally deeper or low-value enough to
+warrant a separate decision rather than folding into this fix-up:
+
+- [ ] `assert()`/`echo()` as chainable **expressions** (`function f(x) =
+  assert(x>0, "must be positive") x*2;`, valid OpenSCAD since 2019.05).
+  Currently both are statement-only (dispatched in `CsgEvaluator`, which has
+  the diagnostics/echo-message sinks); a function body only ever reaches
+  `Interpreter::evaluate`, which has no diagnostic channel at all today.
+  Wiring this in cleanly means threading a diagnostics/echo sink through
+  every `Interpreter::evaluate` call site, not just adding a case to
+  `callBuiltin`.
+- [ ] List comprehensions don't support multi-variable `for` clauses
+  (`[for (i=[0:2], j=[0:2]) i*3+j]`), C-style `for(init; cond; next)`, or
+  nested `for` clauses within one bracket (`[for (i=a) for (j=b) i+j]`) —
+  `ListCompExpr`/`ListCompBody` (Expr.h) are explicitly single-variable only.
+- [ ] `roof()` (OpenSCAD 2021.01+, and still marked experimental upstream)
+  not implemented.
+- [ ] `textmetrics()`/`fontmetrics()` text-layout introspection functions
+  (2021.01+) not implemented.
+- [ ] Export is binary STL only. Every one of the import formats this
+  project already supports (OFF/AMF/3MF/DXF/SVG) has no matching exporter,
+  unlike real OpenSCAD which round-trips all of them plus CSG/PNG. Already
+  tracked below under v4 ("Additional export formats"), scoped there to
+  OBJ/3MF — worth revisiting for the fuller OpenSCAD export list.
+
 ## v4 — Tooling & Visual Quality
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)

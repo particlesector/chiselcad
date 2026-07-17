@@ -170,10 +170,13 @@ TEST_CASE("Interp:floor ceil round", "[interp]") {
     REQUIRE(evalNum("round(3.4)") == Approx(3.0));
 }
 
-TEST_CASE("Interp:log exp", "[interp]") {
+TEST_CASE("Interp:log exp ln", "[interp]") {
     REQUIRE(evalNum("exp(0)")      == Approx(1.0));
+    // log() is base-10 in OpenSCAD; ln() is the natural logarithm.
     REQUIRE(evalNum("log(1)")      == Approx(0.0));
-    REQUIRE(evalNum("exp(log(5))") == Approx(5.0).margin(1e-9));
+    REQUIRE(evalNum("log(100)")    == Approx(2.0));
+    REQUIRE(evalNum("ln(1)")       == Approx(0.0));
+    REQUIRE(evalNum("exp(ln(5))")  == Approx(5.0).margin(1e-9));
 }
 
 TEST_CASE("Interp:unknown function returns 0", "[interp]") {
@@ -444,6 +447,15 @@ TEST_CASE("Interp:str concat with string literal", "[interp][tier-b]") {
     Value v = evalVal("str(\"x=\", 5)");
     REQUIRE(v.isString());
     REQUIRE(v.asString() == "x=5");
+}
+
+TEST_CASE("Interp:str formats vectors/ranges, quoting nested strings", "[interp]") {
+    // A bare top-level string argument is unquoted, but the same string
+    // nested inside a vector is quoted — matches OpenSCAD.
+    REQUIRE(evalVal("str([1,2,3])").asString()      == "[1, 2, 3]");
+    REQUIRE(evalVal("str([1, \"a\"])").asString()   == "[1, \"a\"]");
+    REQUIRE(evalVal("str([0:2:6])").asString()      == "[0:2:6]");
+    REQUIRE(evalVal("str([[1,2],[3,4]])").asString() == "[[1, 2], [3, 4]]");
 }
 
 TEST_CASE("Interp:index into string literal", "[interp][tier-b]") {
@@ -795,17 +807,18 @@ TEST_CASE("Interp:$vpr/$vpt/$vpd default to OpenSCAD's own defaults", "[interp][
     REQUIRE(vpt.asVec()[2].asNumber() == Approx(0.0));
 
     REQUIRE(evalNum("$vpd") == Approx(140.0));
+    REQUIRE(evalNum("$vpf") == Approx(22.5));
 }
 
-TEST_CASE("Interp:setViewport overrides $vpr/$vpt/$vpd", "[interp][v35]") {
-    Lexer  lexer("_a = $vpr; _b = $vpt; _c = $vpd;");
+TEST_CASE("Interp:setViewport overrides $vpr/$vpt/$vpd/$vpf", "[interp][v35]") {
+    Lexer  lexer("_a = $vpr; _b = $vpt; _c = $vpd; _d = $vpf;");
     auto   tokens = lexer.tokenize();
     Parser parser(std::move(tokens));
     auto   result = parser.parse();
-    REQUIRE(result.assignments.size() == 3);
+    REQUIRE(result.assignments.size() == 4);
 
     Interpreter interp;
-    interp.setViewport(10.0, 20.0, 30.0, 1.0, 2.0, 3.0, 99.0);
+    interp.setViewport(10.0, 20.0, 30.0, 1.0, 2.0, 3.0, 99.0, 40.0);
 
     Value vpr = interp.evaluate(*result.assignments[0].value);
     REQUIRE(vpr.asVec()[0].asNumber() == Approx(10.0));
@@ -819,6 +832,9 @@ TEST_CASE("Interp:setViewport overrides $vpr/$vpt/$vpd", "[interp][v35]") {
 
     Value vpd = interp.evaluate(*result.assignments[2].value);
     REQUIRE(vpd.asNumber() == Approx(99.0));
+
+    Value vpf = interp.evaluate(*result.assignments[3].value);
+    REQUIRE(vpf.asNumber() == Approx(40.0));
 }
 
 TEST_CASE("Interp:$vpr/$vpt/$vpd can be shadowed by a user assignment", "[interp][v35]") {

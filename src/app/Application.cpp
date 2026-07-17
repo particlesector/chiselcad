@@ -324,6 +324,7 @@ ViewportState Application::currentViewport() const {
     vp.vpt[1] = t.y;
     vp.vpt[2] = t.z;
     vp.vpd    = m_camera.distance();
+    vp.vpf    = m_camera.fovDeg;
     return vp;
 }
 
