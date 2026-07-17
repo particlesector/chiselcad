@@ -362,7 +362,14 @@ AstNodePtr Parser::parseNodeInner() {
                 case TokenKind::Color:
                     return parseColor();
                 default:
-                    break; // unreachable — every kBuiltinNodeNames value is handled above
+                    // Every kBuiltinNodeNames value is handled above; reaching
+                    // here means the map and this switch have diverged (a
+                    // name was added to one but not the other). Fail loudly
+                    // instead of silently falling through to parseModuleCall()
+                    // below, which would misparse a builtin call as a
+                    // user-defined module call with no diagnostic at all.
+                    assert(false && "kBuiltinNodeNames entry with no matching parseNodeInner case");
+                    break;
                 }
             }
             // Not a builtin name: a user-defined module call.
