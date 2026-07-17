@@ -75,9 +75,15 @@ if(WIN32)
     set(PLATFORM_SOURCES
         src/editor/FileWatcherWin32.cpp
     )
+    set(PLATFORM_UTIL_SOURCES
+        src/util/ResourcePathsWin32.cpp
+    )
 elseif(UNIX)
     set(PLATFORM_SOURCES
         src/editor/FileWatcherInotify.cpp
+    )
+    set(PLATFORM_UTIL_SOURCES
+        src/util/ResourcePathsPosix.cpp
     )
 endif()
 
@@ -91,6 +97,10 @@ set(CHISELCAD_SOURCES
     src/app/Application.cpp
     src/app/Config.cpp
     src/app/MeshBuilder.cpp
+
+    # Util
+    src/util/ResourcePaths.cpp
+    ${PLATFORM_UTIL_SOURCES}
 
     # Editor (external editor + file watcher only; no embedded editor in v1)
     src/editor/ExternalEditor.cpp
@@ -218,6 +228,8 @@ set(CHISELCAD_TEST_SOURCES
     src/lang/Interpreter.cpp
     src/lang/SourceLoader.cpp
     src/csg/CsgEvaluator.cpp
+    src/util/ResourcePaths.cpp
+    ${PLATFORM_UTIL_SOURCES}
     src/import/StlLoader.cpp
     src/import/OffLoader.cpp
     src/import/DxfLoader.cpp

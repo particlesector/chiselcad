@@ -10,16 +10,13 @@
 #include "import/ThreeMfLoader.h"
 #include "util/PathSuffix.h"
 #include "util/PathUtf8.h"
+#include "util/ResourcePaths.h"
 
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
-
-#ifndef CHISELCAD_RESOURCE_DIR
-#error "CHISELCAD_RESOURCE_DIR must be defined by the build (see CMakeLists.txt)"
-#endif
 
 namespace chisel::csg {
 
@@ -31,7 +28,7 @@ static constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
 // Not baseDir-relative — this is a build-time resource path, not a
 // .scad-file-relative user path (see resolveFilePathArg()).
 static std::filesystem::path defaultFontPath() {
-    return std::filesystem::path(CHISELCAD_RESOURCE_DIR) / "fonts" / "Roboto-Regular.ttf";
+    return chisel::util::resolveResourceDir() / "fonts" / "Roboto-Regular.ttf";
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@
 #endif
 
 #include "editor/ExternalEditor.h"
+#include "util/ResourcePaths.h"
 
 namespace chisel::app {
 using namespace chisel::io;
@@ -249,7 +250,8 @@ void Application::initVulkan() {
     glfwGetFramebufferSize(m_window, &w, &h);
     m_vma.init(m_ctx.instance(), m_ctx.physDevice(), m_ctx.device());
     m_swapchain.init(m_ctx, static_cast<uint32_t>(w), static_cast<uint32_t>(h));
-    m_pipeline.init(m_ctx.device(), m_swapchain.renderPass(), CHISELCAD_SHADER_DIR,
+    m_pipeline.init(m_ctx.device(), m_swapchain.renderPass(),
+                    chisel::util::resolveShaderDir().string(),
                     m_ctx.fillModeNonSolidSupported());
     m_renderer.init(m_ctx, m_swapchain);
 }

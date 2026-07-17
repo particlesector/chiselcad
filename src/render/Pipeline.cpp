@@ -1,6 +1,7 @@
 #include "Pipeline.h"
 #include "GpuMesh.h"
 #include <array>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -229,6 +230,12 @@ VkPipeline Pipeline::buildBackgroundPipeline(VkDevice device, VkRenderPass rende
 // ---------------------------------------------------------------------------
 // init
 // ---------------------------------------------------------------------------
+namespace {
+std::string shaderPath(const std::string& shaderDir, const char* name) {
+    return (std::filesystem::path(shaderDir) / name).string();
+}
+} // namespace
+
 void Pipeline::init(VkDevice device, VkRenderPass renderPass,
                     const std::string& shaderDir, bool wireSupported)
 {
@@ -247,8 +254,8 @@ void Pipeline::init(VkDevice device, VkRenderPass renderPass,
     layoutCI.pPushConstantRanges    = pcRanges.data();
     VK_CHECK(vkCreatePipelineLayout(device, &layoutCI, nullptr, &m_layout));
 
-    auto vertMod = loadShader(device, shaderDir + "mesh.vert.spv");
-    auto fragMod = loadShader(device, shaderDir + "mesh.frag.spv");
+    auto vertMod = loadShader(device, shaderPath(shaderDir, "mesh.vert.spv"));
+    auto fragMod = loadShader(device, shaderPath(shaderDir, "mesh.frag.spv"));
 
     // Solid pipeline: filled triangles, back-face culling, no depth bias
     m_solidPipeline = buildPipeline(device, renderPass, vertMod, fragMod,
@@ -270,8 +277,8 @@ void Pipeline::init(VkDevice device, VkRenderPass renderPass,
     bgLayoutCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     VK_CHECK(vkCreatePipelineLayout(device, &bgLayoutCI, nullptr, &m_bgLayout));
 
-    auto bgVert = loadShader(device, shaderDir + "background.vert.spv");
-    auto bgFrag = loadShader(device, shaderDir + "background.frag.spv");
+    auto bgVert = loadShader(device, shaderPath(shaderDir, "background.vert.spv"));
+    auto bgFrag = loadShader(device, shaderPath(shaderDir, "background.frag.spv"));
     m_bgPipeline = buildBackgroundPipeline(device, renderPass, bgVert, bgFrag);
     vkDestroyShaderModule(device, bgVert, nullptr);
     vkDestroyShaderModule(device, bgFrag, nullptr);
