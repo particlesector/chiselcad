@@ -172,6 +172,89 @@ warrant a separate decision rather than folding into this fix-up:
   tracked below under v4 ("Additional export formats"), scoped there to
   OBJ/3MF — worth revisiting for the fuller OpenSCAD export list.
 
+## v3.8 — Corpus validation against OpenSCAD's own test suite
+
+Every prior completeness pass (v3–v3.7) was a source-level read against the
+OpenSCAD manual/builtin list — and each pass found real bugs the previous
+ones missed anyway. That pattern (not the absence of bugs) is what prompted
+a different kind of check: install real OpenSCAD (`apt install openscad`,
+2021.01 on Ubuntu noble — runs fully headless for non-geometry output, no
+Xvfb needed) and run its own ~120-file `echo` regression-test corpus through
+both it and a new headless ChiselCAD runner (`tests/tools/scad_dump.cpp` —
+see `tests/tools/README.md`), diffing output line by line. This found two
+real bugs in under an hour that four rounds of manual audit had missed:
+
+- [x] **Parser crash on `$special = expr` as a plain call argument.**
+  `f($fn=64, 1)` (or the same on a user module call) wasn't recognized as a
+  named argument at all outside the primitive-specific param parsers — the
+  parser tried to parse `$fn` as a positional expression, then choked on the
+  trailing `=`, and the recovery cascaded into a wall of unrelated parse
+  errors for the rest of the file. This one test file alone
+  (`arg-permutations.scad`) was silently invalidating ~30 of the corpus's
+  ~120 files' worth of signal. Fixed in both the function-call and
+  module-call argument-list parsers.
+- [x] **`$special` named args now dynamically scope into function/closure
+  calls, not just module calls.** Once parseable, `CsgEvaluator`'s
+  module-call binding already applied *any* named arg into scope regardless
+  of whether it matched a declared parameter (correct — special variables
+  are dynamically scoped, not ordinary parameters). `Interpreter`'s
+  function-call and closure-call binding didn't do the same, so
+  `function f() = $fn; f($fn=64)` would parse but silently ignore the
+  override. Fixed to match, and verified byte-for-byte against real
+  OpenSCAD's output for both cases.
+
+Both are covered by regression tests (`tests/test_parser.cpp`,
+`tests/test_interpreter.cpp`, `tests/test_csg_evaluator.cpp`) and verified
+against the full 544-test suite (built directly with system `g++`/`apt`
+packages for Catch2/glm/spdlog — see `tests/tools/README.md` — since this
+environment has no vcpkg/Manifold/Vulkan).
+
+Confirmed via the same corpus run but **not yet fixed** — real gaps, ranked
+roughly by expected real-world impact:
+
+- [ ] **Dot-member access on vectors/ranges**: `v.x`/`v.y`/`v.z`/`v.w` and
+  `range.begin`/`range.step`/`range.end` (OpenSCAD 2019.05+). Only bracket
+  indexing (`v[0]`) is supported today; `IndexExpr` (Expr.h) has no dotted
+  form. (`vector-swizzling` test.)
+- [ ] **Calling the result of an arbitrary expression**, e.g.
+  `(function(x) function(y) x+y)(2)(5)` (currying/IIFE). `FunctionCall`
+  (Expr.h) is name-keyed (`std::string name`) — it can only represent
+  "call the thing named `name`", not "call this expression's result". Needs
+  a distinct callee-expression AST shape, not just a grammar tweak.
+- [ ] **Named/positional argument interleaving order.** OpenSCAD's actual
+  rule (confirmed empirically via `arg-permutations.scad`, all 119
+  permutations): positional args bind to parameter slots by a plain
+  left-to-right counter that does **not** skip slots already targeted by a
+  named arg, and named/positional bindings apply strictly in the order
+  written in the call — so `f(a=1, 2)` gives `a=2` (the trailing positional
+  overwrites the earlier named value at the same slot), not `a=1, b=2` as
+  ChiselCAD currently produces (named args always win over positional,
+  positional args skip already-named slots). Affects `Interpreter`'s
+  function/closure-call binding and `CsgEvaluator::evalModuleCall` — all
+  three currently share the "named wins, positional fills the gaps" model.
+- [ ] Possible UTF-8/Unicode string-handling gaps (`unicode-tests`,
+  `utf8-tests`, `nbsp-latin1-test`, `string-unicode`, `search-tests-unicode`
+  all mismatch) — `Value::str` is a raw `std::string`; `len()`/indexing/
+  `chr()`/`ord()` likely count bytes, not codepoints, for multi-byte UTF-8.
+  Not yet root-caused in detail.
+- [ ] Recursion-depth differences on deliberately-deep-recursion test files
+  (`recursion-test-function`, `tail-recursion-tests`,
+  `issue3118-recur-limit`) — `kMaxCallDepth` (200, chosen for MSVC's 1 MiB
+  default stack) is far lower than whatever depth OpenSCAD's own tests
+  expect to succeed. A deliberate safety/compatibility tradeoff, not
+  obviously wrong, but worth a second look.
+- [ ] A longer tail of smaller mismatches not yet individually triaged:
+  variable redefinition/scoping (`redefinition`, `value-reassignment-tests`,
+  `variable-scope-tests`, `function-scope`, `let-module-tests`), and
+  edge cases in `search()`/`norm()`/`cross()`/`concat()`/`rands()`/
+  `parent_module()`. Full list of mismatching test names is reproducible via
+  `tests/tools/README.md`'s corpus script.
+- Cosmetic (not a value/behavior bug): ChiselCAD doesn't emit OpenSCAD's
+  arity-mismatch ("`abs() number of parameters does not match`") or
+  file-not-found warning text — builtins just silently return `undef` on a
+  bad call, matching OpenSCAD's *value*, just not its *diagnostic wording*.
+  ~36 of the corpus's ~106 raw failures are this category alone.
+
 ## v4 — Tooling & Visual Quality
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)

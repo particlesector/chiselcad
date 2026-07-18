@@ -912,9 +912,13 @@ ExprPtr Parser::parsePrimary() {
             fc.loc  = name_tok.loc;
             while (!check(TokenKind::RParen) && !atEnd()) {
                 FunctionArg arg;
-                // Named arg: ident = expr
-                if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
-                    arg.name = advance().text; // consume ident
+                // Named arg: ident = expr, or $special = expr (e.g. f($fn=64, 1))
+                // — a call-site special-variable override, valid on any call
+                // (not just primitives), so must be recognized here rather
+                // than only erroring out like an unrecognized token would.
+                if ((check(TokenKind::Ident) || check(TokenKind::SpecialVar)) &&
+                    peek(1).kind == TokenKind::Equals) {
+                    arg.name = advance().text; // consume ident/$special
                     advance();                 // consume '='
                 }
                 arg.value = parseExpr();
@@ -1135,9 +1139,12 @@ AstNodePtr Parser::parseModuleCall() {
     expect(TokenKind::LParen, "expected '(' in module call");
     while (!check(TokenKind::RParen) && !atEnd()) {
         ModuleArg arg;
-        // Named argument: ident = expr
-        if (check(TokenKind::Ident) && peek(1).kind == TokenKind::Equals) {
-            arg.name = advance().text; // ident
+        // Named argument: ident = expr, or $special = expr (e.g.
+        // my_module($fn=64, x=1)) — see the matching FunctionCall comment in
+        // parsePrimary for why $special must be accepted here too.
+        if ((check(TokenKind::Ident) || check(TokenKind::SpecialVar)) &&
+            peek(1).kind == TokenKind::Equals) {
+            arg.name = advance().text; // ident/$special
             advance();                 // =
         }
         arg.value = parseExpr();

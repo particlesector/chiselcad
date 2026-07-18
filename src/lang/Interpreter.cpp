@@ -373,6 +373,14 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                             setVar(param.name, Value::undef()); // unbound → undef, not the caller's same-named variable
                     }
                 }
+                // A $-prefixed named arg (e.g. f($fn=64, 1)) is a special-
+                // variable override, visible inside the call regardless of
+                // whether the function declares a same-named parameter —
+                // unlike an ordinary extra named arg, which OpenSCAD just
+                // discards. Mirrors CsgEvaluator::evalModuleCall's identical
+                // treatment for user-defined modules.
+                for (const auto& [n, v] : namedArgs)
+                    if (!n.empty() && n[0] == '$') setVar(n, v);
 
                 ++m_callDepth;
                 Value result = evaluate(*def.body);
@@ -533,6 +541,9 @@ Value Interpreter::callClosure(Value fnVal,
                 setVar(param.name, Value::undef());
         }
     }
+    // See the matching comment in the named FunctionDef call path above.
+    for (const auto& [n, v] : namedArgs)
+        if (!n.empty() && n[0] == '$') setVar(n, v);
 
     ++m_callDepth;
     Value result = evaluate(*def.body);

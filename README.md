@@ -21,17 +21,21 @@ transforms, control flow, user-defined functions/modules and function
 literals, 2D extrusion, `color()`/`offset()`/`projection()`, and file I/O
 (`include`/`use`/`import`/`surface`/`text`). See
 [Supported Language](#supported-language) below for the full breakdown and
-[docs/roadmap.md](docs/roadmap.md) (v3.7) for the small number of constructs
+[docs/roadmap.md](docs/roadmap.md) (v3.7/v3.8) for the small number of constructs
 still missing — mainly `assert()`/`echo()` used as chained expressions inside
 function bodies, multi-variable/C-style list comprehensions, and `roof()`.
 
-All 33 issues from the original correctness audit (v3) are closed, and a
-July 2026 completeness re-audit (v3.7) closed three further gaps: `log()`
-was computing the natural logarithm instead of base-10 (and `ln()` didn't
-exist), `str()` silently dropped vector/range arguments instead of formatting
-them, and the `$vpf` viewport special variable was missing. Verify output
-geometry against real OpenSCAD for anything relying on the remaining gaps
-above; everything else should match.
+All 33 issues from the original correctness audit (v3) are closed. A July
+2026 completeness re-audit (v3.7) fixed three gaps found by re-reading the
+source against the OpenSCAD manual (`log()`/`ln()` were swapped, `str()`
+dropped vector/range arguments, `$vpf` was missing), and a follow-up pass
+(v3.8) went further — running OpenSCAD's own test corpus through a live,
+installed OpenSCAD binary and diffing against ChiselCAD's output — which
+found a parser crash on `$special=value` call arguments (fixed) plus a
+handful of confirmed-but-still-open gaps (dot-member access like `v.x`,
+calling a function-literal expression's result directly, named/positional
+argument ordering, and some Unicode-string edge cases). See
+[docs/roadmap.md](docs/roadmap.md) (v3.8) for the full list.
 
 ```scad
 difference() {
@@ -85,12 +89,13 @@ difference() {
 | Quality | `$fn`, `$fs`, `$fa`, `$vpr`/`$vpt`/`$vpd`/`$vpf` (global and per-node) |
 | Export | Binary STL |
 
-v3–v3.6 (see [docs/roadmap.md](docs/roadmap.md)) are complete, and the
-v3.7 re-audit closed the completeness gaps it found (`log()`/`ln()`, `str()`
-on vectors, `$vpf`). What's left — `assert()`/`echo()` as expressions,
-multi-variable list comprehensions, `roof()`, and non-STL export — is
-tracked in [docs/roadmap.md](docs/roadmap.md). There are no known open
-correctness bugs.
+v3–v3.6 (see [docs/roadmap.md](docs/roadmap.md)) are complete. v3.7/v3.8
+found and fixed further gaps (`log()`/`ln()`, `str()` on vectors, `$vpf`,
+a `$special=value` call-argument parser crash) via both source audit and
+corpus testing against a live OpenSCAD binary. What's left — `assert()`/
+`echo()` as expressions, multi-variable list comprehensions, `roof()`,
+non-STL export, vector dot-member access, and a few other confirmed gaps —
+is tracked in [docs/roadmap.md](docs/roadmap.md).
 
 ---
 
@@ -158,11 +163,11 @@ A full LSP extension for VS Code is planned (see [docs/roadmap.md](docs/roadmap.
 
 ChiselCAD is in **active development**. The core rendering pipeline, CSG
 evaluator, and nearly all of the OpenSCAD language are implemented and
-working (see [Supported Language](#supported-language) above), with no known
-open correctness bugs. Current focus is closing the small number of
-remaining language gaps tracked in [docs/roadmap.md](docs/roadmap.md) (v3.7)
-and the v4 tooling/visual-quality work before making a full drop-in-
-replacement claim.
+working (see [Supported Language](#supported-language) above). Current focus
+is closing the remaining language gaps tracked in
+[docs/roadmap.md](docs/roadmap.md) (v3.8) — found via corpus testing against
+a live OpenSCAD binary, see `tests/tools/README.md` — and the v4 tooling/
+visual-quality work, before making a full drop-in-replacement claim.
 
 If you want to follow along or contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 

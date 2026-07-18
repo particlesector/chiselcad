@@ -929,6 +929,31 @@ TEST_CASE("Interp:function literal bound directly to a name can recurse by that 
     REQUIRE(ctx.interp.evalNumber(call) == Approx(720.0));
 }
 
+TEST_CASE("Interp:$special named arg overrides a special var inside a named function call",
+          "[interp][v37]") {
+    // f($fn=64) makes $fn=64 visible inside f's body even though f doesn't
+    // declare an $fn parameter — a dynamically-scoped special-variable
+    // override, not an ordinary named argument (which OpenSCAD would
+    // instead just discard if unmatched by a declared parameter). Found via
+    // a corpus comparison against OpenSCAD's own test suite (see
+    // docs/roadmap.md v3.7): the parser used to reject `$fn=` entirely in a
+    // plain function-call argument list.
+    auto ctx = loadEnvWithFuncs("function f() = $fn;");
+    FunctionCall fc;
+    fc.name = "f";
+    FunctionArg dollarArg;
+    dollarArg.name  = "$fn";
+    dollarArg.value = makeExpr(NumberLit{64.0, {}});
+    fc.args.push_back(std::move(dollarArg));
+    ExprNode call = std::move(fc);
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(64.0));
+
+    // Without the override, $fn falls back to whatever's in scope (0 here,
+    // since none was ever set).
+    ExprNode plainCall = makeCall("f", {});
+    REQUIRE(ctx.interp.evalNumber(plainCall) == Approx(0.0));
+}
+
 TEST_CASE("Interp:copying a function-literal variable does not leak into the original's scope", "[interp][v36]") {
     // `h = f;` is a plain copy, not a new literal — it must not retroactively
     // mutate f's captured environment (e.g. by injecting "h" as a self-ref).

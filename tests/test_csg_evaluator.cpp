@@ -987,6 +987,20 @@ TEST_CASE("CsgEval:echo does not produce geometry", "[csg][tier-c]") {
     REQUIRE(s.echoMessages.size() == 1);
 }
 
+TEST_CASE("CsgEval:$special named arg to a user module call parses and overrides scope",
+          "[csg][v37]") {
+    // Previously `m($fn=64)` failed to parse at all here (the generic
+    // module-call argument list only recognized plain-identifier named
+    // args) — found via a corpus comparison against OpenSCAD's own test
+    // suite (see docs/roadmap.md v3.7). CsgEvaluator::evalModuleCall
+    // already bound any named arg into scope regardless of whether it
+    // matched a declared parameter, so once the parser accepts the syntax,
+    // the override is visible inside the module body for free.
+    auto s = evaluate("module m() { echo($fn); }\nm($fn = 64);");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0] == "ECHO: 64");
+}
+
 TEST_CASE("CsgEval:echo formats named arguments as name = value", "[csg][v35]") {
     auto s = evaluate("echo(x=1, \"hi\", y=2);");
     REQUIRE(s.echoMessages.size() == 1);
