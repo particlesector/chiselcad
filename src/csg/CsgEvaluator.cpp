@@ -1380,11 +1380,18 @@ CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::m
         }
         // Fan-triangulate from the face's first vertex — OpenSCAD faces are
         // assumed planar/convex, matching OpenSCAD's own triangulation for
-        // that common case.
+        // that common case. OpenSCAD's documented polyhedron() convention
+        // lists each face's vertices clockwise as seen from outside the
+        // solid; Manifold (like most engines) expects counter-clockwise
+        // from outside, so the last two indices are swapped to flip each
+        // triangle's winding — without this, every polyhedron() came out
+        // with inverted normals and exactly negated volume (confirmed via
+        // corpus comparison against real OpenSCAD's STL export: see
+        // docs/roadmap.md v3.9).
         for (std::size_t i = 1; i + 1 < faceIdx.size(); ++i) {
             indices.push_back(faceIdx[0]);
-            indices.push_back(faceIdx[i]);
             indices.push_back(faceIdx[i + 1]);
+            indices.push_back(faceIdx[i]);
         }
     }
 

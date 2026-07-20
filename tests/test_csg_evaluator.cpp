@@ -1639,6 +1639,28 @@ TEST_CASE("CsgEval:polyhedron fan-triangulates an n-gon face", "[csg][tier-f]") 
     REQUIRE(s.evalDiags.empty());
 }
 
+TEST_CASE("CsgEval:polyhedron flips face winding to Manifold's CCW-from-outside convention",
+          "[csg][v39][bugfix]") {
+    // OpenSCAD's documented polyhedron() convention lists each face's
+    // vertices clockwise as seen from outside the solid; Manifold expects
+    // counter-clockwise from outside. Before this fix, every polyhedron()
+    // came out with exactly negated volume — confirmed via corpus
+    // comparison against real OpenSCAD's STL export (docs/roadmap.md v3.9)
+    // — because the fan-triangulation preserved the input winding verbatim
+    // instead of flipping it. For face [0,1,2,3], fan-triangulating from
+    // vertex 0 with the winding flipped produces (0,2,1) then (0,3,2), not
+    // the input-order (0,1,2) then (0,2,3).
+    auto s = evaluate("polyhedron(points=[[0,0,0],[1,0,0],[1,1,0],[0,1,0]], faces=[[0,1,2,3]]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.meshIndices.size() == 6);
+    REQUIRE(leaf.meshIndices[0] == 0);
+    REQUIRE(leaf.meshIndices[1] == 2);
+    REQUIRE(leaf.meshIndices[2] == 1);
+    REQUIRE(leaf.meshIndices[3] == 0);
+    REQUIRE(leaf.meshIndices[4] == 3);
+    REQUIRE(leaf.meshIndices[5] == 2);
+}
+
 TEST_CASE("CsgEval:polyhedron accepts triangles= as an alias for faces=", "[csg][tier-f]") {
     auto s = evaluate("polyhedron(points=[[0,0,0],[1,0,0],[0,1,0]], triangles=[[0,1,2]]);");
     REQUIRE(s.roots.size() == 1);

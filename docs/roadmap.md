@@ -255,6 +255,95 @@ roughly by expected real-world impact:
   bad call, matching OpenSCAD's *value*, just not its *diagnostic wording*.
   ~36 of the corpus's ~106 raw failures are this category alone.
 
+## v3.9 — Geometry corpus validation (volumetric, tessellation-agnostic)
+
+v3.8's corpus run only covered `echo()`-based tests — computed *values*,
+never actual mesh output — because ChiselCAD (Manifold) and OpenSCAD (CGAL,
+or its own separate Manifold integration) tessellate primitives completely
+differently: different vertex counts, ordering, and coordinates even for a
+byte-perfect-correct geometry engine. A raw point/vertex diff between their
+STL exports would "fail" even when the underlying solid is identical, so it
+was never a viable comparison — until now.
+
+The fix is a tessellation-agnostic check: build the *real* C++ Manifold
+library (not available via `apt`, but builds standalone from source in ~20s
+with zero extra dependencies once pinned to v3.5.2 — the version this
+environment builds against, since Manifold's `master` branch has since
+dropped `CrossSection::FillRule`, which ChiselCAD's `PrimitiveGen.cpp`/
+`MeshEvaluator.cpp` still use), export the same `.scad` file to STL from
+both OpenSCAD and ChiselCAD's *actual compiled mesh pipeline*
+(`CsgEvaluator` → `MeshEvaluator` → `PrimitiveGen`, exactly as
+`MeshBuilder::buildOne()` runs it — not a reimplementation), reload both as
+Manifolds, and measure the volume of their **symmetric difference**
+((A−B)∪(B−A)). Two meshes representing the same solid have a symmetric
+difference volume of ~0 regardless of how differently each one discretized
+it; a real shape difference shows up as a non-trivial fraction of the
+model's own volume. Two new standalone tools do this (see
+`tests/tools/README.md` for the exact build/run steps):
+
+- `scad_to_stl.cpp` — runs ChiselCAD's real mesh pipeline on a `.scad` file
+  and writes the (BatchBoolean-unioned) result as ASCII STL.
+- `stl_diff.cpp` — loads two ASCII STL files as Manifolds (via
+  `MeshGL::Merge()` to weld the triangle-soup positions STL always exports),
+  and reports `volume_a`, `volume_b`, `sym_diff_volume`, and their ratio.
+
+Run against `tests/data/scad/3D/features/*.scad` (OpenSCAD's own 3D-feature
+test corpus), this immediately found a real, high-confidence, now-fixed bug:
+
+- [x] **`polyhedron()` faces came out with exactly negated volume** — every
+  `polyhedron-*` test file showed `volume_b == -volume_a` to the last digit.
+  Root cause: OpenSCAD's documented `polyhedron()` convention lists each
+  face's vertices **clockwise as seen from outside the solid**; Manifold
+  (like most engines) expects **counter-clockwise from outside**.
+  `CsgEvaluator::evalPolyhedron()`'s fan-triangulation preserved the input
+  winding verbatim instead of flipping it. Fixed by swapping the last two
+  indices of each fan triangle; verified against real OpenSCAD on
+  `polyhedron-cube`/`polyhedron-soup`/`polyhedron-concave-test` (now exact,
+  `sym_diff_volume == 0`) with a regression test on the raw triangle indices
+  (`tests/test_csg_evaluator.cpp`).
+
+Confirmed via the same run but **not yet fixed** — a first pass over one
+test subdirectory, not an exhaustive sweep:
+
+- [ ] **Non-planar polyhedron faces** (`polyhedron-nonplanar-tests`) still
+  mismatch after the winding fix (`2.94` vs `1.29`) — a real but distinct
+  issue: fan-triangulating a non-planar quad from vertex 0 picks a different
+  diagonal than whatever OpenSCAD/CGAL does, producing a different (smaller)
+  volume. Needs its own investigation, not just a winding flip.
+- [ ] **Real volume differences (10–70%), not just tessellation noise**, on
+  `sphere-tests` (11%), `cylinder-diameter-tests` (55%),
+  `rotate_extrude-tests`/`rotate_extrude-angle` (27%/71%),
+  `linear_extrude-scale-zero-tests`/`linear_extrude_invisible-tests`
+  (117%), `resize-tests` (1.5%), `module-recursion`, `ifelse-tests`,
+  `surface-simple`. These are large enough to be real bugs, not floating-
+  point/discretization noise (contrast with the sub-1e-6 relative error on
+  `difference-tests`/`minkowski3-tests`/`rotate_extrude-touch-*`/
+  `child-tests`, which pass cleanly) — not yet root-caused individually.
+- [ ] Several files fail to even produce a valid combined Manifold
+  (`cube-tests`, `cylinder-tests`, `hull3-tests`, `linear_extrude-tests`,
+  `2d-3d`, `assign-tests`, `intersection-tests`, `intersection_for-tests`,
+  `primitive-inf-tests`) — these are deliberately edge-case-heavy files
+  (e.g. `cube-tests` exercises negative/zero sizes), and the working
+  hypothesis is that `scad_to_stl`'s `BatchBoolean(Add)` across *all*
+  top-level roots at once fails outright the moment *any* one root is
+  degenerate/invalid, whereas OpenSCAD keeps rendering the valid ones and
+  just warns about the bad one — but this hasn't been confirmed against
+  `MeshEvaluator`'s actual per-root handling (`scad_to_stl` unions
+  everything before checking; a per-root check would isolate whether it's a
+  test-tool limitation or a real ChiselCAD gap).
+- [ ] Several other files (`polyhedron-tests`, `minkowski3-difference-test`,
+  `scale3D-tests`, `for-nested-tests`, `render-tests`, `mirror-tests`,
+  `for-tests`, `edge-cases`, `rotate-parameters`,
+  `scale-mirror2D-3D-tests`, `transform-tests`) fail to parse at all under
+  ChiselCAD — mostly `for`/transform-argument grammar edge cases not yet
+  individually triaged (some may double-count v3.8 gaps already listed
+  above, e.g. multi-variable `for`).
+
+Only one of the corpus's several subdirectories (`3D/features`) has been
+run through this so far — `2D`, `bugs`, `bugs2D`, `misc`, `issues` are
+still unexamined. This should become a standing regression suite (rerun
+after any geometry-affecting change), not a one-time audit.
+
 ## v4 — Tooling & Visual Quality
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)
