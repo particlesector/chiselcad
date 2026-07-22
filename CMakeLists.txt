@@ -295,6 +295,7 @@ target_include_directories(chiselcad_tests PRIVATE src/ third_party/)
 
 target_compile_definitions(chiselcad_tests PRIVATE
     CHISELCAD_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/"
+    CHISELCAD_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/"
 )
 
 target_link_libraries(chiselcad_tests PRIVATE
