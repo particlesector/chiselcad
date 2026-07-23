@@ -110,7 +110,45 @@ cmake -B /tmp/manifold-src/build -S /tmp/manifold-src -DCMAKE_BUILD_TYPE=Release
     -DMANIFOLD_TEST=OFF -DMANIFOLD_PAR=OFF -DMANIFOLD_PYBIND=OFF -DMANIFOLD_CBIND=OFF \
     -DMANIFOLD_USE_BUILTIN_TBB=OFF
 cmake --build /tmp/manifold-src/build -j"$(nproc)"
+cmake --install /tmp/manifold-src/build --prefix /tmp/manifold-install
+```
 
+**Now that `chiselcad_core`/`chiselcad_cli`/`chiselcad_tests` exist as real
+CMake targets** (the `CHISELCAD_BUILD_GUI=OFF` split, merged from `main`),
+this is simpler than the original ad hoc `g++` object-file build below —
+just point CMake's `find_package(manifold)` at the installed prefix:
+
+```bash
+cmake -B build-headless -S . -DCHISELCAD_BUILD_GUI=OFF -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/tmp/manifold-install
+cmake --build build-headless -j"$(nproc)"
+./build-headless/chiselcad_tests   # the real, official test suite — now
+                                    # includes actual Manifold-mesh-level
+                                    # tests (tests/test_headless_build.cpp),
+                                    # not just language/CSG-tree ones
+```
+
+`scad_to_stl`/`stl_diff` link straight against the resulting
+`build-headless/libchiselcad_core.a` (guaranteed to be the exact same code
+`chiselcad_cli`/the GUI app run, no separate compile-flag drift):
+
+```bash
+MF_INC=/tmp/manifold-install/include
+MF_LIB=/tmp/manifold-install/lib
+
+g++ -std=c++20 -O1 -Isrc -Ithird_party -I"$MF_INC" tests/tools/scad_to_stl.cpp \
+    build-headless/libchiselcad_core.a \
+    -L"$MF_LIB" -lmanifold -lspdlog -lfmt -lz -Wl,-rpath,"$MF_LIB" -o scad_to_stl
+
+g++ -std=c++20 -O1 -I"$MF_INC" tests/tools/stl_diff.cpp \
+    -L"$MF_LIB" -lmanifold -Wl,-rpath,"$MF_LIB" -o stl_diff
+```
+
+<details>
+<summary>Original ad hoc build (before chiselcad_core existed) — kept for
+reference, prefer the CMake path above</summary>
+
+```bash
 MF_INC=/tmp/manifold-src/include
 MF_BUILD_INC=/tmp/manifold-src/build/include
 MF_LIB=/tmp/manifold-src/build/src
@@ -132,6 +170,9 @@ g++ -std=c++20 -O1 -Isrc -Ithird_party -I"$MF_INC" -I"$MF_BUILD_INC" \
 
 g++ -std=c++20 -O1 -I"$MF_INC" -I"$MF_BUILD_INC" tests/tools/stl_diff.cpp \
     -L"$MF_LIB" -lmanifold -Wl,-rpath,"$MF_LIB" -o stl_diff
+```
+
+</details>
 
 # Compare one file:
 openscad --export-format asciistl -o real.stl some_file.scad
@@ -142,10 +183,14 @@ openscad --export-format asciistl -o real.stl some_file.scad
 
 `rel_error` near 0 (e.g. 1e-6, from float-precision + differing
 tessellation) means the same solid; anywhere from a few percent up means a
-real geometry bug. This immediately found and fixed one: `polyhedron()`
-faces came out with exactly negated volume on every test file (OpenSCAD's
-documented clockwise-from-outside face-winding convention wasn't being
-flipped to Manifold's counter-clockwise-from-outside expectation before
-fan-triangulating). See docs/roadmap.md v3.9 for the full fixed/open list —
+real geometry bug. This has already found and fixed four: `polyhedron()`
+faces came out with exactly negated volume (clockwise- vs. counter-
+clockwise-from-outside winding convention mismatch); `sphere`/`cylinder`/
+`circle` used `r` instead of `d` when both were given; per-node `$fa`/`$fs`
+overrides were silently ignored in favor of the global values; and an
+unset `cylinder(r1=...)` (no `r2`) wrongly mirrored `r1` instead of
+independently defaulting to `1.0`. See docs/roadmap.md v3.9 for the full
+fixed/open list, including a note on a **test-tool** bug (not a ChiselCAD
+bug) in `scad_to_stl` itself that was masking several more files' results —
 only one corpus subdirectory (`tests/data/scad/3D/features`) has been run
 through this so far.

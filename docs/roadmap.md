@@ -302,35 +302,87 @@ test corpus), this immediately found a real, high-confidence, now-fixed bug:
   `sym_diff_volume == 0`) with a regression test on the raw triangle indices
   (`tests/test_csg_evaluator.cpp`).
 
-Confirmed via the same run but **not yet fixed** — a first pass over one
-test subdirectory, not an exhaustive sweep:
+A second pass fixed three more real bugs, all found by bisecting
+`sphere-tests`/`cylinder-diameter-tests` line by line against real
+OpenSCAD once the test infrastructure improved (main's `chiselcad_core`
+split — merged in from `main` mid-investigation — made it possible to
+build ChiselCAD's real `PrimitiveGen`/`MeshEvaluator` against an installed
+Manifold via plain `cmake -DCHISELCAD_BUILD_GUI=OFF`, instead of the
+original ad hoc `g++` object-file dance):
+
+- [x] **`r`/`d` precedence**: when both a radius and a diameter argument are
+  given (`sphere(r=1, d=10)`), OpenSCAD always uses `d`, order-independent
+  (confirmed empirically: `sphere(d=10, r=1)` gives the same result) — not
+  "`d` only when `r` is absent", which is what `CsgEvaluator` did for
+  `sphere`/`cylinder`(`r`/`r1`/`r2`)/`circle`. Fixed in all five call sites;
+  regression test added on the resolved `CsgLeaf::params`.
+- [x] **Per-node `$fa`/`$fs` overrides were silently ignored.**
+  `PrimitiveGen::resolveSegments()` only accepted a per-node `$fn` override;
+  `$fa`/`$fs` overrides fell through to the *global* values regardless of
+  what the call site actually specified, so `sphere(5, $fa=40, $fs=0.3)`
+  tessellated at the global default resolution instead of the coarser one
+  it explicitly asked for. This alone accounted for most of
+  `sphere-tests`'s remaining error once winding/`r`-`d` were fixed. Fixed
+  by threading `$fa`/`$fs` through the same way `$fn` already was;
+  regression test (`runBuild` on two fixtures with the same radius but
+  different `$fa`/`$fs`, checking triangle counts diverge) added to
+  `tests/test_headless_build.cpp` — the first geometry-level (real
+  Manifold mesh) unit test this codebase has had, made possible by the
+  same `chiselcad_core` split.
+- [x] **`cylinder(r1=..., r2` unset`)` wrongly defaulted `r2` to `r1`'s
+  value** (a uniform cylinder) instead of independently defaulting to
+  `1.0` (a tapered cone down to radius 1) — confirmed against real
+  OpenSCAD's actual STL output. Fixed; regression test checks the exact
+  frustum volume formula.
+
+Together these fully resolved `sphere-tests` and `cylinder-diameter-tests`
+(both now `sym_diff_volume` at floating-point noise level, down from 11%
+and 55% relative error respectively) and incidentally unblocked several
+other files that had been failing for an unrelated **test-tool** reason:
+`scad_to_stl`'s `BatchBoolean(Add)` across *all* top-level roots at once
+turned out to fail outright (empty combined result) the moment *any* one
+root was degenerate/invalid (e.g. `cylinder(r1=0, r2=0)` in
+`cube-tests.scad`/`cylinder-tests.scad`) — confirmed via `chiselcad_cli
+--stats -` on the same file, which meshes each root independently and
+correctly kept the valid geometry while just flagging the bad root as an
+error diagnostic. Fixed `scad_to_stl` to drop non-`NoError`-status roots
+before unioning, matching that real per-root behavior. This was a harness
+bug, not a ChiselCAD product bug, but it had been hiding real signal:
+`cube-tests`, `hull3-tests`, and `2d-3d` all turned out to already match
+exactly once unblocked.
+
+Confirmed via the same corpus subdirectory (`3D/features`) but **not yet
+fixed**:
 
 - [ ] **Non-planar polyhedron faces** (`polyhedron-nonplanar-tests`) still
   mismatch after the winding fix (`2.94` vs `1.29`) — a real but distinct
   issue: fan-triangulating a non-planar quad from vertex 0 picks a different
   diagonal than whatever OpenSCAD/CGAL does, producing a different (smaller)
   volume. Needs its own investigation, not just a winding flip.
-- [ ] **Real volume differences (10–70%), not just tessellation noise**, on
-  `sphere-tests` (11%), `cylinder-diameter-tests` (55%),
-  `rotate_extrude-tests`/`rotate_extrude-angle` (27%/71%),
-  `linear_extrude-scale-zero-tests`/`linear_extrude_invisible-tests`
-  (117%), `resize-tests` (1.5%), `module-recursion`, `ifelse-tests`,
-  `surface-simple`. These are large enough to be real bugs, not floating-
-  point/discretization noise (contrast with the sub-1e-6 relative error on
-  `difference-tests`/`minkowski3-tests`/`rotate_extrude-touch-*`/
-  `child-tests`, which pass cleanly) — not yet root-caused individually.
-- [ ] Several files fail to even produce a valid combined Manifold
-  (`cube-tests`, `cylinder-tests`, `hull3-tests`, `linear_extrude-tests`,
-  `2d-3d`, `assign-tests`, `intersection-tests`, `intersection_for-tests`,
-  `primitive-inf-tests`) — these are deliberately edge-case-heavy files
-  (e.g. `cube-tests` exercises negative/zero sizes), and the working
-  hypothesis is that `scad_to_stl`'s `BatchBoolean(Add)` across *all*
-  top-level roots at once fails outright the moment *any* one root is
-  degenerate/invalid, whereas OpenSCAD keeps rendering the valid ones and
-  just warns about the bad one — but this hasn't been confirmed against
-  `MeshEvaluator`'s actual per-root handling (`scad_to_stl` unions
-  everything before checking; a per-root check would isolate whether it's a
-  test-tool limitation or a real ChiselCAD gap).
+- [ ] **`linear_extrude` volume mismatches, large and recurring across four
+  separate files** — the single highest-leverage remaining target:
+  `linear_extrude-tests` (102%), `linear_extrude-parameter-tests` (62%),
+  `linear_extrude_invisible-tests` (117%), `linear_extrude-scale-zero-tests`
+  (117%). Not yet root-caused; given the shared failure across `scale=`,
+  parameter, and "invisible" (presumably `$fn`-related) variants, likely one
+  or two systemic bugs in `linear_extrude`'s scale/twist/height handling
+  rather than four unrelated ones.
+- [ ] **`rotate_extrude` volume mismatches**: `rotate_extrude-tests` (27%),
+  `rotate_extrude-angle` (71%) — contrast with `rotate_extrude-touch-vertex`/
+  `rotate_extrude-touch-edge`, which pass at floating-point-noise level, so
+  this is parameter-specific (likely the `angle=` partial-revolution case
+  given `-angle` is the worse of the two) rather than a blanket
+  `rotate_extrude` bug.
+- [ ] `intersection-tests` (6.4%), `cylinder-tests` (13%, improved from
+  totally-blocked but still a real remaining gap after the harness fix
+  above), `primitive-inf-tests` (83%), `ifelse-tests` (175%),
+  `module-recursion`, `resize-tests` (1.5%), `surface-simple` — real
+  mismatches, not yet individually triaged.
+- [ ] `assign-tests` and `intersection_for-tests` still produce zero valid
+  geometry even after the harness fix — unlike the files that fix unblocked,
+  these appear to genuinely fail in `MeshEvaluator`/`PrimitiveGen` itself
+  (every root invalid, not just one), not just in the test tool. Needs the
+  same per-root `chiselcad_cli --stats` triage the harness bug above got.
 - [ ] Several other files (`polyhedron-tests`, `minkowski3-difference-test`,
   `scale3D-tests`, `for-nested-tests`, `render-tests`, `mirror-tests`,
   `for-tests`, `edge-cases`, `rotate-parameters`,

@@ -194,6 +194,22 @@ TEST_CASE("CsgEval:sphere diameter form", "[csg]") {
     REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(5.0));
 }
 
+TEST_CASE("CsgEval:d always overrides r when both are given, order-independent",
+          "[csg][v39][bugfix]") {
+    // Confirmed against real OpenSCAD (docs/roadmap.md v3.9): d wins over r
+    // regardless of which is given first, not just when r is absent —
+    // sphere(r=1, d=10) means radius 5, not 1.
+    REQUIRE(asLeaf(evaluate("sphere(r=1, d=10);").roots[0]).params.at("r") == Approx(5.0));
+    REQUIRE(asLeaf(evaluate("sphere(d=10, r=1);").roots[0]).params.at("r") == Approx(5.0));
+    REQUIRE(asLeaf(evaluate("circle(r=1, d=10);").roots[0]).params.at("r") == Approx(5.0));
+
+    auto c1 = asLeaf(evaluate("cylinder(h=1, r=1, d=10);").roots[0]);
+    REQUIRE(c1.params.at("r") == Approx(5.0));
+    auto c2 = asLeaf(evaluate("cylinder(h=1, r1=1, d1=10, r2=1, d2=10);").roots[0]);
+    REQUIRE(c2.params.at("r1") == Approx(5.0));
+    REQUIRE(c2.params.at("r2") == Approx(5.0));
+}
+
 // ---------------------------------------------------------------------------
 // Identity transform on un-transformed primitives
 // ---------------------------------------------------------------------------

@@ -33,8 +33,12 @@ struct PrimitiveGen {
     manifold::CrossSection generateCrossSection(const CsgLeaf& leaf) const;
 
     // Compute how many circular segments to use for a feature of radius r,
-    // respecting $fn / $fs / $fa in the same way OpenSCAD does.
-    int resolveSegments(double r, double fnOverride) const;
+    // respecting $fn / $fs / $fa in the same way OpenSCAD does. fnOverride/
+    // faOverride/fsOverride are this leaf's own $fn=/$fa=/$fs= arguments (0.0
+    // meaning "not given here"), each falling back independently to the
+    // corresponding global value when absent.
+    int resolveSegments(double r, double fnOverride, double faOverride = 0.0,
+                        double fsOverride = 0.0) const;
 
 private:
     static double getParam(const std::unordered_map<std::string, double>& p,

@@ -236,8 +236,11 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         leaf.kind = CsgLeaf::Kind::Sphere;
         for (const auto& [name, exprPtr] : p.params)
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
-        // diameter → radius
-        if (!leaf.params.count("r") && leaf.params.count("d"))
+        // diameter → radius: d always wins over r when both are given
+        // (order-independent — confirmed against real OpenSCAD, which
+        // resolves d before r regardless of argument order), not just when
+        // r is absent.
+        if (leaf.params.count("d"))
             leaf.params["r"] = leaf.params["d"] * 0.5;
         break;
 
@@ -251,12 +254,13 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
             leaf.params["h"] = leaf.params["_pos0"];
         if (!leaf.params.count("r") && leaf.params.count("_pos1"))
             leaf.params["r"] = leaf.params["_pos1"];
-        // diameter → radius conversions
-        if (!leaf.params.count("r") && leaf.params.count("d"))
+        // diameter → radius conversions: d/d1/d2 always win over r/r1/r2
+        // when both are given (see the sphere case above for why).
+        if (leaf.params.count("d"))
             leaf.params["r"] = leaf.params["d"] * 0.5;
-        if (!leaf.params.count("r1") && leaf.params.count("d1"))
+        if (leaf.params.count("d1"))
             leaf.params["r1"] = leaf.params["d1"] * 0.5;
-        if (!leaf.params.count("r2") && leaf.params.count("d2"))
+        if (leaf.params.count("d2"))
             leaf.params["r2"] = leaf.params["d2"] * 0.5;
         break;
 
@@ -299,8 +303,9 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         leaf.kind = CsgLeaf::Kind::Circle2D;
         for (const auto& [name, exprPtr] : p.params)
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
-        // diameter → radius
-        if (!leaf.params.count("r") && leaf.params.count("d"))
+        // diameter → radius: d always wins over r when both are given
+        // (see the sphere case above for why).
+        if (leaf.params.count("d"))
             leaf.params["r"] = leaf.params["d"] * 0.5;
         break;
 

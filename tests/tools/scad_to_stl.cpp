@@ -80,9 +80,18 @@ int main(int argc, char** argv) {
 
     // Only the "real" roots (scene.roots.size() of them) count as the
     // exportable model — background ('%') roots are appended after and
-    // excluded, matching MeshBuilder's STL-export convention.
-    std::vector<manifold::Manifold> realRoots(
-        rootMeshes.begin(), rootMeshes.begin() + static_cast<long>(scene.roots.size()));
+    // excluded, matching MeshBuilder's STL-export convention. A root with
+    // invalid/degenerate geometry (e.g. cylinder(r1=0, r2=0) — already
+    // reported above via meshEval.diagnostics()) is dropped before
+    // unioning: BatchBoolean(Add) across a set that includes an
+    // invalid-status Manifold produces a garbage/empty *combined* result,
+    // silently discarding every valid root too — chiselcad_cli's per-root
+    // (non-unioned) pipeline doesn't have this failure mode, so this only
+    // affects this tool's true-union comparison, not the real product.
+    std::vector<manifold::Manifold> realRoots;
+    for (std::size_t i = 0; i < scene.roots.size(); ++i)
+        if (rootMeshes[i].Status() == manifold::Manifold::Error::NoError)
+            realRoots.push_back(rootMeshes[i]);
 
     manifold::Manifold combined = realRoots.empty()
         ? manifold::Manifold()
