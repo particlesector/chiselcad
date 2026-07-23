@@ -147,3 +147,54 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  # ──────────────────────────────────────────────
+  # Linux, headless (no Vulkan SDK) — proves chiselcad_core/chiselcad_cli/
+  # chiselcad_tests actually build and run with CHISELCAD_BUILD_GUI=OFF,
+  # which is the whole point of that option: a CI job for the future
+  # OpenSCAD compat/regression suite that never touches the Vulkan
+  # toolchain. Deliberately skips the Vulkan SDK/GLFW/X11 apt packages the
+  # other two jobs install — if this job ever needs them to pass, the
+  # GUI/core split has regressed.
+  # ──────────────────────────────────────────────
+  build-linux-headless:
+    name: Linux / GCC (headless, no Vulkan)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build pkg-config
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 57987637aac17d62bac535bc839baca3754490e6
+
+      - name: Cache vcpkg installed packages
+        uses: actions/cache@v5
+        with:
+          path: build/vcpkg_installed
+          # Distinct key from build-linux's: the "gui" manifest feature is
+          # off here, so the installed package set (and thus what's worth
+          # caching) differs even though vcpkg.json's hash is the same.
+          key: vcpkg-linux-x64-headless-${{ hashFiles('vcpkg.json') }}-57987637
+
+      - name: Configure CMake
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCHISELCAD_BUILD_GUI=OFF
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke-test chiselcad_cli
+        run: |
+          ./build/chiselcad_cli tests/2d_extrude_test.scad --out /tmp/smoke.stl --stats -
+          test -s /tmp/smoke.stl
