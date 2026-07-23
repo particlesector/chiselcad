@@ -212,11 +212,22 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create release
+      - name: Create or update release
+        # Idempotent: if the tag was published through the GitHub UI (or
+        # any other path that creates the release before this job runs),
+        # `gh release create` would fail with "release already exists" —
+        # so create it only if missing, and always attach/overwrite the
+        # built artifacts either way, without touching a title or notes
+        # someone may have already set by hand.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* \
-            --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+          if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$repo" \
+              --title "$tag" \
+              --generate-notes
+          fi
+          gh release upload "$tag" dist/* --repo "$repo" --clobber
