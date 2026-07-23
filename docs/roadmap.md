@@ -359,14 +359,38 @@ fixed**:
   issue: fan-triangulating a non-planar quad from vertex 0 picks a different
   diagonal than whatever OpenSCAD/CGAL does, producing a different (smaller)
   volume. Needs its own investigation, not just a winding flip.
-- [ ] **`linear_extrude` volume mismatches, large and recurring across four
-  separate files** — the single highest-leverage remaining target:
-  `linear_extrude-tests` (102%), `linear_extrude-parameter-tests` (62%),
-  `linear_extrude_invisible-tests` (117%), `linear_extrude-scale-zero-tests`
-  (117%). Not yet root-caused; given the shared failure across `scale=`,
-  parameter, and "invisible" (presumably `$fn`-related) variants, likely one
-  or two systemic bugs in `linear_extrude`'s scale/twist/height handling
-  rather than four unrelated ones.
+- [x] **`linear_extrude()`'s default height was 1, not OpenSCAD's actual
+  default of 100.** Found bisecting `linear_extrude-tests.scad` line by
+  line: `linear_extrude(v=[3,2,5]) square([10,10])` (no `height=` given)
+  gives volume 10000 in real OpenSCAD — a 10×10 profile times height
+  100 — not 100 (height 1). Fixed in `MeshEvaluator::evalExtrusion()`.
+- [x] **A malformed `scale=` vector (anything but exactly 2 elements) was
+  partially applied instead of rejected.** `linear_extrude(height=20,
+  scale=[4,5,6]) square(10)` — 3 elements, not the 2 (`[sx,sy]`) OpenSCAD's
+  `scale=` accepts — comes out as a plain *unscaled* 10×10×20 prism (volume
+  2000) in real OpenSCAD, i.e. the whole malformed vector is ignored;
+  `CsgEvaluator` was instead taking just the first two components (`sx=4,
+  sy=5`), giving a wrongly-scaled volume of 17000. Fixed to require exactly
+  2 elements. Both fixes together brought `linear_extrude-tests.scad` from
+  102% relative error down to 13.6%; regression tests added (CsgEvaluator-
+  level for the scale rejection, `runBuild`-level for the default height).
+- [ ] `linear_extrude-tests.scad`'s remaining ~13.6% error, and the other
+  three `linear_extrude-*` files, are not yet further root-caused —
+  **and a real methodological wrinkle turned up while bisecting**: the
+  installed oracle is OpenSCAD 2021.01 (`apt`'s only option here), but the
+  test corpus is cloned from `openscad/openscad`'s current `master` branch.
+  `linear_extrude(h=10, ...)` (the corpus file's own comment: "`h` is an
+  alias for `height`") triggers `WARNING: variable h not specified as
+  parameter` on the installed 2021.01 oracle — i.e. **2021.01 itself
+  doesn't recognize `h=` for `linear_extrude`**, while ChiselCAD does.
+  Whether that's a genuine ChiselCAD-ahead-of-2021.01 case (`h=` added in a
+  later real OpenSCAD release the corpus already assumes) or an actual
+  ChiselCAD-only invention needs checking against a newer real OpenSCAD
+  build (or the current online manual) before touching it either way —
+  don't "fix" this by matching the older oracle without that check first.
+  The same applies to `segments=` (also unrecognized by 2021.01). This
+  caveat likely explains some fraction of the other still-open mismatches
+  below too, not just `linear_extrude`.
 - [ ] **`rotate_extrude` volume mismatches**: `rotate_extrude-tests` (27%),
   `rotate_extrude-angle` (71%) — contrast with `rotate_extrude-touch-vertex`/
   `rotate_extrude-touch-edge`, which pass at floating-point-noise level, so

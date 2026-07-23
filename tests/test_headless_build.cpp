@@ -97,6 +97,18 @@ TEST_CASE("runBuild: cylinder r2 defaults to 1.0 independently of r1, not mirror
     CHECK(result.volume == Approx(kExpectedFrustumVolume).margin(1.0));
 }
 
+TEST_CASE("runBuild: linear_extrude()'s default height is 100, not 1",
+          "[headless][v39][bugfix]") {
+    // Confirmed against real OpenSCAD's STL output for
+    // linear_extrude(v=[3,2,5]) square([10,10]) (no height given): volume
+    // 10000, i.e. a 10x10 profile times height 100 — MeshEvaluator was
+    // defaulting to height 1 instead.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/linear_extrude_default_height.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    CHECK(result.volume == Approx(10.0 * 10.0 * 100.0).margin(1e-6));
+}
+
 TEST_CASE("runBuild honors AbortFn by returning early", "[headless]") {
     chisel::csg::MeshCache cache;
     auto alwaysAbort = [] { return true; };

@@ -407,7 +407,12 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
     manifold::Manifold result;
 
     if (e.kind == CsgExtrusion::Kind::Linear) {
-        double height = getP("height", getP("h", getP("_pos0", 1.0)));
+        // OpenSCAD's default linear_extrude() height is 100, not 1 —
+        // confirmed against real OpenSCAD's STL output for
+        // linear_extrude(v=[3,2,5]) square([10,10]) (no height given):
+        // volume 10000, i.e. a 10x10 profile times height 100 (docs/
+        // roadmap.md v3.9).
+        double height = getP("height", getP("h", getP("_pos0", 100.0)));
         double twist  = -getP("twist",  0.0); // OpenSCAD uses left-hand rule; Manifold uses right-hand
         float  scaleX = static_cast<float>(getP("scale_x", 1.0));
         float  scaleY = static_cast<float>(getP("scale_y", 1.0));

@@ -1233,6 +1233,27 @@ TEST_CASE("CsgEval:linear_extrude slices param is threaded into the IR", "[csg][
     REQUIRE(ext.params.at("height") == Approx(10.0));
 }
 
+TEST_CASE("CsgEval:linear_extrude scale must be exactly a 2-vector, else no scaling",
+          "[csg][v39][bugfix]") {
+    // A malformed 3-element scale vector isn't a valid linear_extrude()
+    // scale in OpenSCAD — it's rejected entirely (no scale_x/scale_y set,
+    // meaning MeshEvaluator falls back to unscaled 1.0/1.0), not "take the
+    // first two components" as this used to do. Confirmed against real
+    // OpenSCAD's STL output (docs/roadmap.md v3.9): linear_extrude(height=20,
+    // scale=[4,5,6]) square(10) comes out as a plain unscaled 10x10x20 prism
+    // (volume 2000), not scaled by 4/5 as ChiselCAD previously did.
+    auto bad = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=[4,5,6]) square(10);").roots[0]);
+    REQUIRE_FALSE(bad.params.count("scale_x"));
+    REQUIRE_FALSE(bad.params.count("scale_y"));
+
+    // A genuine 2-vector still works.
+    auto good = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=[4,5]) square(10);").roots[0]);
+    REQUIRE(good.params.at("scale_x") == Approx(4.0));
+    REQUIRE(good.params.at("scale_y") == Approx(5.0));
+}
+
 // ---------------------------------------------------------------------------
 // Recursive functions (Tier C — confirmed already working via Tier A impl)
 // ---------------------------------------------------------------------------

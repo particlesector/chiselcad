@@ -905,7 +905,12 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
             if (sv.isNumber()) {
                 ext.params["scale_x"] = sv.asNumber();
                 ext.params["scale_y"] = sv.asNumber();
-            } else if (sv.isVector() && sv.asVec().size() >= 2) {
+            } else if (sv.isVector() && sv.asVec().size() == 2) {
+                // Exactly 2 elements — anything else (e.g. a stray 3-vector)
+                // isn't a valid linear_extrude() scale and OpenSCAD ignores
+                // it entirely (falls back to no scaling), rather than using
+                // just the first two components — confirmed against real
+                // OpenSCAD's STL output (docs/roadmap.md v3.9).
                 ext.params["scale_x"] = sv.asVec()[0].asNumber();
                 ext.params["scale_y"] = sv.asVec()[1].asNumber();
             }
