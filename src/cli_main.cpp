@@ -67,6 +67,12 @@ int main(int argc, char** argv) {
     chisel::app::BuildResult result =
         chisel::app::runBuild(scadPath, /*viewport=*/{}, /*options=*/{}, cache);
 
+    // Tracked instead of returning immediately on failure so a --out error
+    // (e.g. an unwritable path) doesn't skip an explicitly-requested
+    // --stats — the build's diagnostics/stats are already fully known at
+    // that point regardless of whether the STL write itself succeeded.
+    bool outputFailed = false;
+
     if (!outStlPath.empty()) {
         if (!result.ok()) {
             std::cerr << "Not exporting STL: build did not succeed ("
@@ -83,7 +89,7 @@ int main(int argc, char** argv) {
             auto err = chisel::io::exportBinaryStl(outStlPath, result.verts, exportIndices);
             if (!err.empty()) {
                 std::cerr << "STL export failed: " << err << "\n";
-                return 1;
+                outputFailed = true;
             }
         }
     }
@@ -96,11 +102,12 @@ int main(int argc, char** argv) {
             std::ofstream f(statsPath, std::ios::binary);
             if (!f) {
                 std::cerr << "Could not open " << statsPath << " for writing\n";
-                return 1;
+                outputFailed = true;
+            } else {
+                f << json << "\n";
             }
-            f << json << "\n";
         }
     }
 
-    return result.ok() ? 0 : 1;
+    return (result.ok() && !outputFailed) ? 0 : 1;
 }

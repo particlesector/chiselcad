@@ -287,6 +287,7 @@ set(CHISELCAD_TEST_SOURCES
     tests/test_amf_loader.cpp
     tests/test_surface_loader.cpp
     tests/test_text_loader.cpp
+    tests/test_headless_build.cpp
 )
 
 add_executable(chiselcad_tests ${CHISELCAD_TEST_SOURCES})

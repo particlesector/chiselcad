@@ -84,6 +84,13 @@ void MeshBuilder::buildOne(std::filesystem::path path, int gen, ViewportState vi
         // further to set here.
     }
 
+    // Stored unconditionally, even for a build that shouldAbort() cut
+    // short (gen != m_currentGen here) — unlike the pre-refactor buildOne(),
+    // which simply returned without touching m_pendingResult in that case.
+    // Harmless: poll() compares m_pendingGen against m_currentGen and
+    // discards anything stale before a caller ever sees it, so storing a
+    // superseded/partial result just means one extra allocate-then-discard
+    // instead of skipping the store — never a wrong result reaching the UI.
     {
         std::lock_guard<std::mutex> lk(m_resultMutex);
         m_pendingResult = std::make_unique<BuildResult>(std::move(result));
