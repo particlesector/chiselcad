@@ -1,5 +1,5 @@
 #pragma once
-#include "render/GpuMesh.h"
+#include "render/Vertex.h"
 #include <filesystem>
 #include <string>
 #include <vector>

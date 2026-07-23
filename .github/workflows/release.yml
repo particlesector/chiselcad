@@ -85,13 +85,27 @@ jobs:
 
       - name: Bundle runtime DLLs
         # vcpkg's default Windows triplet (x64-windows) links dependencies
-        # dynamically. VCPKG_APPLOCAL_DEPS (on by default with the vcpkg
-        # toolchain file) already copies the required DLLs next to
-        # build/Release/chiselcad.exe as a post-build step — `cmake
-        # --install` only installs the chiselcad target itself, so those
-        # DLLs have to be copied into the package by hand.
+        # dynamically — including manifold, so chiselcad_cli.exe needs
+        # manifold.dll beside it just as much as chiselcad.exe does.
+        # VCPKG_APPLOCAL_DEPS (on by default with the vcpkg toolchain file)
+        # copies each target's required DLLs into build/Release/ as a
+        # post-build step; since every target (chiselcad, chiselcad_cli,
+        # chiselcad_tests) shares that one output directory, this wildcard
+        # sweeps up whatever any of them needs — `cmake --install` only
+        # installs the executables themselves, so the DLLs have to be
+        # copied into the package by hand.
         shell: pwsh
         run: Copy-Item build\Release\*.dll install\bin\ -ErrorAction SilentlyContinue
+
+      - name: Smoke-test packaged chiselcad_cli
+        # Runs the actual installed binary (not the one still sitting in
+        # build/Release/ with the full build tree around it) to prove the
+        # DLL bundling above is complete — this is what would catch a
+        # missing manifold.dll or similar before it reaches a user.
+        shell: pwsh
+        run: |
+          install\bin\chiselcad_cli.exe tests\2d_extrude_test.scad --out "$env:TEMP\smoke.stl" --stats -
+          if (-not (Test-Path "$env:TEMP\smoke.stl")) { throw "chiselcad_cli did not produce an STL" }
 
       - name: Package
         shell: pwsh
@@ -163,6 +177,14 @@ jobs:
         # be present on any machine with a working Vulkan driver.
         run: cmake --install build --prefix install
 
+      - name: Smoke-test packaged chiselcad_cli
+        # Same purpose as the Windows job's equivalent step: proves the
+        # actual installed binary runs standalone, not just the one still
+        # sitting in the build tree with its shared libs nearby.
+        run: |
+          install/bin/chiselcad_cli tests/2d_extrude_test.scad --out /tmp/smoke.stl --stats -
+          test -s /tmp/smoke.stl
+
       - name: Package
         run: |
           version="${{ github.ref_name }}"
@@ -190,11 +212,22 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Create release
+      - name: Create or update release
+        # Idempotent: if the tag was published through the GitHub UI (or
+        # any other path that creates the release before this job runs),
+        # `gh release create` would fail with "release already exists" —
+        # so create it only if missing, and always attach/overwrite the
+        # built artifacts either way, without touching a title or notes
+        # someone may have already set by hand.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* \
-            --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+          if ! gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$repo" \
+              --title "$tag" \
+              --generate-notes
+          fi
+          gh release upload "$tag" dist/* --repo "$repo" --clobber

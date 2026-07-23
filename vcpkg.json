@@ -3,21 +3,28 @@
   "version": "0.1.0",
   "description": "A fast, precise, GPU-accelerated CSG modeler with OpenSCAD-compatible syntax",
   "dependencies": [
-    "vulkan-memory-allocator",
-    "glfw3",
-    {
-      "name": "imgui",
-      "features": [
-        "vulkan-binding",
-        "glfw-binding",
-        "docking-experimental"
-      ]
-    },
     "glm",
     "manifold",
     "spdlog",
     "nlohmann-json",
     "catch2",
     "zlib"
-  ]
+  ],
+  "features": {
+    "gui": {
+      "description": "Vulkan GUI application (chiselcad) — not needed by chiselcad_core/chiselcad_cli/chiselcad_tests",
+      "dependencies": [
+        "vulkan-memory-allocator",
+        "glfw3",
+        {
+          "name": "imgui",
+          "features": [
+            "vulkan-binding",
+            "glfw-binding",
+            "docking-experimental"
+          ]
+        }
+      ]
+    }
+  }
 }
