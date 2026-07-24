@@ -548,6 +548,36 @@ TEST_CASE("Interp:chr and ord roundtrip", "[interp][tier-b]") {
 }
 
 // ---------------------------------------------------------------------------
+// Unicode strings: len()/indexing/chr()/ord() count and address codepoints,
+// not UTF-8 bytes (issue #82).
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:len counts codepoints, not UTF-8 bytes", "[interp][unicode]") {
+    // U+00E9 (é) is 2 bytes in UTF-8 but a single codepoint.
+    REQUIRE(evalNum("len(\"\xC3\xA9\")") == Approx(1.0));
+    // 3 codepoints, each multi-byte (U+00E9 x3 == 6 bytes total).
+    REQUIRE(evalNum("len(\"\xC3\xA9\xC3\xA9\xC3\xA9\")") == Approx(3.0));
+}
+
+TEST_CASE("Interp:string indexing addresses codepoints, not bytes", "[interp][unicode]") {
+    // "a" + é + "b": indices 0/1/2 are the three codepoints, not the four bytes.
+    Value v0 = evalVal("\"a\xC3\xA9""b\"[0]");
+    Value v1 = evalVal("\"a\xC3\xA9""b\"[1]");
+    Value v2 = evalVal("\"a\xC3\xA9""b\"[2]");
+    REQUIRE(v0.asString() == "a");
+    REQUIRE(v1.asString() == "\xC3\xA9");
+    REQUIRE(v2.asString() == "b");
+    REQUIRE(evalVal("\"a\xC3\xA9""b\"[3]").isUndef());
+}
+
+TEST_CASE("Interp:ord/chr roundtrip non-ASCII codepoints", "[interp][unicode]") {
+    REQUIRE(evalNum("ord(\"\xC3\xA9\")") == Approx(233.0)); // U+00E9
+    REQUIRE(evalVal("chr(233)").asString() == "\xC3\xA9");
+    // Astral codepoint (U+1F600, outside the old chr() 0-127 cap).
+    REQUIRE(evalNum("ord(\"\xF0\x9F\x98\x80\")") == Approx(128512.0));
+    REQUIRE(evalVal("chr(128512)").asString() == "\xF0\x9F\x98\x80");
+}
+
+// ---------------------------------------------------------------------------
 // Tier B: rands
 // ---------------------------------------------------------------------------
 TEST_CASE("Interp:rands count", "[interp][tier-b]") {
