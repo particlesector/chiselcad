@@ -202,6 +202,30 @@ real bugs in under an hour that four rounds of manual audit had missed:
   `function f() = $fn; f($fn=64)` would parse but silently ignore the
   override. Fixed to match, and verified byte-for-byte against real
   OpenSCAD's output for both cases.
+- [x] **Dot-member access on vectors/ranges** (issue #79): added a `Dot` token
+  (`Token.h`/`Lexer.cpp`) and a `MemberExpr` postfix AST node
+  (`Expr.h`/`Parser.cpp`'s `parsePostfix`), evaluated in `Interpreter.cpp`
+  for `Value::Tag::Vector` (`.x`/`.y`/`.z`/`.w`, the `.r`/`.g`/`.b`/`.a`
+  aliases, and multi-letter swizzles like `.xyzw`/`.xr`/`.rrrr`, one output
+  element per member letter) and `Value::Tag::Range` (`.begin`/`.step`/
+  `.end` reading `rangeStart`/`rangeStep`/`rangeEnd`). Out-of-range/
+  unrecognized members return `undef`, matching bracket-indexing's existing
+  convention. Covered by `tests/test_interpreter.cpp`.
+- [x] **Named/positional argument interleaving order** (issue #81): reworked
+  `Interpreter`'s function-call and closure-call binding (`bindOrderedArgs`
+  in `Interpreter.h`, shared by both) to replay arguments in their original
+  call-site textual order instead of two separate named-then-positional
+  passes — a positional arg now advances an unconditional left-to-right
+  counter that doesn't skip slots already targeted by a named arg, and
+  whichever of a named/positional binding to the same slot comes later in
+  the call wins, matching OpenSCAD's actual rule (verified against all 119
+  permutations in `arg-permutations.scad`). While investigating, found
+  `CsgEvaluator::evalModuleCall`'s module-call binding — despite this
+  issue's original suspicion that all three call sites shared the same
+  buggy model — was **already** implementing the correct order-replay rule
+  (it walks `call.args` in original order and binds unconditionally as it
+  goes), so it was left unchanged; only the two `Interpreter` call sites
+  needed the fix. Covered by `tests/test_interpreter.cpp`.
 
 Both are covered by regression tests (`tests/test_parser.cpp`,
 `tests/test_interpreter.cpp`, `tests/test_csg_evaluator.cpp`) and verified
@@ -212,26 +236,11 @@ environment has no vcpkg/Manifold/Vulkan).
 Confirmed via the same corpus run but **not yet fixed** — real gaps, ranked
 roughly by expected real-world impact:
 
-- [ ] **Dot-member access on vectors/ranges** (issue #79): `v.x`/`v.y`/`v.z`/`v.w` and
-  `range.begin`/`range.step`/`range.end` (OpenSCAD 2019.05+). Only bracket
-  indexing (`v[0]`) is supported today; `IndexExpr` (Expr.h) has no dotted
-  form. (`vector-swizzling` test.)
 - [ ] **Calling the result of an arbitrary expression** (issue #80), e.g.
   `(function(x) function(y) x+y)(2)(5)` (currying/IIFE). `FunctionCall`
   (Expr.h) is name-keyed (`std::string name`) — it can only represent
   "call the thing named `name`", not "call this expression's result". Needs
   a distinct callee-expression AST shape, not just a grammar tweak.
-- [ ] **Named/positional argument interleaving order** (issue #81). OpenSCAD's actual
-  rule (confirmed empirically via `arg-permutations.scad`, all 119
-  permutations): positional args bind to parameter slots by a plain
-  left-to-right counter that does **not** skip slots already targeted by a
-  named arg, and named/positional bindings apply strictly in the order
-  written in the call — so `f(a=1, 2)` gives `a=2` (the trailing positional
-  overwrites the earlier named value at the same slot), not `a=1, b=2` as
-  ChiselCAD currently produces (named args always win over positional,
-  positional args skip already-named slots). Affects `Interpreter`'s
-  function/closure-call binding and `CsgEvaluator::evalModuleCall` — all
-  three currently share the "named wins, positional fills the gaps" model.
 - [ ] Possible UTF-8/Unicode string-handling gaps (issue #82) (`unicode-tests`,
   `utf8-tests`, `nbsp-latin1-test`, `string-unicode`, `search-tests-unicode`
   all mismatch) — `Value::str` is a raw `std::string`; `len()`/indexing/

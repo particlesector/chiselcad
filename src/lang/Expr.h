@@ -21,6 +21,7 @@ struct BinaryExpr;
 struct UnaryExpr;
 struct TernaryExpr;
 struct IndexExpr;
+struct MemberExpr;
 struct LetExpr;
 struct FunctionCall;
 struct RangeLit;
@@ -28,7 +29,7 @@ struct ListCompExpr;
 struct FunctionLit;
 
 using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, StringLit, VectorLit, VarRef,
-                               BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr,
+                               BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr, MemberExpr,
                                LetExpr, FunctionCall, RangeLit, ListCompExpr, FunctionLit>;
 using ExprPtr  = std::unique_ptr<ExprNode>;
 
@@ -113,6 +114,15 @@ struct IndexExpr {
     ExprPtr   target;
     ExprPtr   index;
     SourceLoc loc;
+};
+
+// target.member — vector swizzling (.x/.y/.z/.w and multi-letter forms like
+// .xyzw/.rgba/.xr/.rrrr) and range member access (.begin/.step/.end),
+// OpenSCAD 2019.05+.
+struct MemberExpr {
+    ExprPtr     target;
+    std::string member;
+    SourceLoc   loc;
 };
 
 // let(x = expr, ...) body_expr

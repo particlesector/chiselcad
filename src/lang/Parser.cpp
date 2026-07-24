@@ -788,18 +788,32 @@ ExprPtr Parser::parseUnary() {
     return parsePostfix();
 }
 
-// Postfix operators applied to any primary: expr[index]
+// Postfix operators applied to any primary: expr[index], expr.member
 ExprPtr Parser::parsePostfix() {
     auto expr = parsePrimary();
-    while (check(TokenKind::LBracket)) {
-        SourceLoc loc = advance().loc; // consume '['
-        auto idx = parseExpr();
-        expect(TokenKind::RBracket, "expected ']' after index");
-        IndexExpr ie;
-        ie.target = std::move(expr);
-        ie.index  = std::move(idx);
-        ie.loc    = loc;
-        expr = makeExpr(std::move(ie));
+    for (;;) {
+        if (check(TokenKind::LBracket)) {
+            SourceLoc loc = advance().loc; // consume '['
+            auto idx = parseExpr();
+            expect(TokenKind::RBracket, "expected ']' after index");
+            IndexExpr ie;
+            ie.target = std::move(expr);
+            ie.index  = std::move(idx);
+            ie.loc    = loc;
+            expr = makeExpr(std::move(ie));
+            continue;
+        }
+        if (check(TokenKind::Dot)) {
+            SourceLoc loc = advance().loc; // consume '.'
+            const Token& memberTok = expect(TokenKind::Ident, "expected member name after '.'");
+            MemberExpr me;
+            me.target = std::move(expr);
+            me.member = memberTok.text;
+            me.loc    = loc;
+            expr = makeExpr(std::move(me));
+            continue;
+        }
+        break;
     }
     return expr;
 }
