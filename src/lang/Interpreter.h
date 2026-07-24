@@ -164,13 +164,27 @@ private:
     // slots already targeted by a named arg, and a named arg binds directly
     // by name, so whichever (named or positional) comes later in the call
     // wins for that slot. This mirrors OpenSCAD's actual argument-binding
-    // rule (confirmed against OpenSCAD's own arg-permutations.scad test)
-    // and matches CsgEvaluator::evalModuleCall's equivalent binding for
-    // module calls. Params untouched by any arg fall back to their default
-    // expression, or undef.
+    // rule (confirmed against OpenSCAD's own arg-permutations.scad test).
+    // A named arg that matches neither a declared parameter nor a
+    // $-prefixed special variable is discarded, not bound — an unmatched
+    // ordinary named arg must NOT leak into the callee's local scope, since
+    // that scope is just the caller's env snapshot-and-restore, and setting
+    // it there would shadow an unrelated same-named variable from the
+    // enclosing scope for the duration of the call (e.g. `x = 100;
+    // function f(a) = x; f(a=1, x=5)` must still see the outer `x = 100`,
+    // not silently pick up `x=5`). $-prefixed names are the one deliberate
+    // exception: those are genuinely dynamically-scoped special-variable
+    // overrides, valid on any call regardless of whether the callee
+    // declares a same-named parameter. Params untouched by any arg fall
+    // back to their default expression, or undef.
     template <typename Param>
     void bindOrderedArgs(const std::vector<Param>& params,
                           const std::vector<std::pair<std::string, Value>>& orderedArgs) {
+        auto isDeclaredParam = [&](const std::string& name) {
+            for (const auto& p : params)
+                if (p.name == name) return true;
+            return false;
+        };
         std::size_t posIdx = 0;
         std::unordered_set<std::string> namedBound;
         for (const auto& [name, value] : orderedArgs) {
@@ -178,10 +192,13 @@ private:
                 if (posIdx < params.size())
                     setVar(params[posIdx].name, value);
                 ++posIdx;
-            } else {
+            } else if (name[0] == '$') {
+                setVar(name, value);
+            } else if (isDeclaredParam(name)) {
                 setVar(name, value);
                 namedBound.insert(name);
             }
+            // else: unmatched ordinary named arg — discarded (see comment above).
         }
         for (std::size_t i = 0; i < params.size(); ++i) {
             const auto& param = params[i];

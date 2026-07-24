@@ -372,6 +372,29 @@ TEST_CASE("Interp:argument interleaving order also applies to function-literal c
     REQUIRE(v.asVec()[0].asNumber() == Approx(2.0));
 }
 
+TEST_CASE("Interp:an unmatched named arg is discarded, not bound into the callee's scope",
+          "[interp][bugfix]") {
+    // x is unrelated to f's declared params — f(a=1, x=5) must not let f's
+    // body see x=5 in place of the outer x=100. Only $-prefixed names are
+    // meant to pass through as dynamically-scoped special-variable
+    // overrides regardless of parameter match; an ordinary unmatched named
+    // arg is simply discarded, matching real OpenSCAD.
+    auto ctx = loadEnvWithFuncs(
+        "x = 100;\n"
+        "function f(a) = x;\n");
+    ExprNode call = makeCallArgs("f", {{"a", 1.0}, {"x", 5.0}});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(100.0));
+}
+
+TEST_CASE("Interp:an unmatched named arg is discarded, not bound into a closure's captured scope",
+          "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs(
+        "x = 100;\n"
+        "g = function(a) x;\n");
+    ExprNode call = makeCallArgs("g", {{"a", 1.0}, {"x", 5.0}});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(100.0));
+}
+
 // ---------------------------------------------------------------------------
 // && / || short-circuit (#28) and recursion-depth guard (#29)
 // ---------------------------------------------------------------------------
