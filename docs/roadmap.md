@@ -212,16 +212,16 @@ environment has no vcpkg/Manifold/Vulkan).
 Confirmed via the same corpus run but **not yet fixed** — real gaps, ranked
 roughly by expected real-world impact:
 
-- [ ] **Dot-member access on vectors/ranges**: `v.x`/`v.y`/`v.z`/`v.w` and
+- [ ] **Dot-member access on vectors/ranges** (issue #79): `v.x`/`v.y`/`v.z`/`v.w` and
   `range.begin`/`range.step`/`range.end` (OpenSCAD 2019.05+). Only bracket
   indexing (`v[0]`) is supported today; `IndexExpr` (Expr.h) has no dotted
   form. (`vector-swizzling` test.)
-- [ ] **Calling the result of an arbitrary expression**, e.g.
+- [ ] **Calling the result of an arbitrary expression** (issue #80), e.g.
   `(function(x) function(y) x+y)(2)(5)` (currying/IIFE). `FunctionCall`
   (Expr.h) is name-keyed (`std::string name`) — it can only represent
   "call the thing named `name`", not "call this expression's result". Needs
   a distinct callee-expression AST shape, not just a grammar tweak.
-- [ ] **Named/positional argument interleaving order.** OpenSCAD's actual
+- [ ] **Named/positional argument interleaving order** (issue #81). OpenSCAD's actual
   rule (confirmed empirically via `arg-permutations.scad`, all 119
   permutations): positional args bind to parameter slots by a plain
   left-to-right counter that does **not** skip slots already targeted by a
@@ -232,24 +232,24 @@ roughly by expected real-world impact:
   positional args skip already-named slots). Affects `Interpreter`'s
   function/closure-call binding and `CsgEvaluator::evalModuleCall` — all
   three currently share the "named wins, positional fills the gaps" model.
-- [ ] Possible UTF-8/Unicode string-handling gaps (`unicode-tests`,
+- [ ] Possible UTF-8/Unicode string-handling gaps (issue #82) (`unicode-tests`,
   `utf8-tests`, `nbsp-latin1-test`, `string-unicode`, `search-tests-unicode`
   all mismatch) — `Value::str` is a raw `std::string`; `len()`/indexing/
   `chr()`/`ord()` likely count bytes, not codepoints, for multi-byte UTF-8.
   Not yet root-caused in detail.
-- [ ] Recursion-depth differences on deliberately-deep-recursion test files
+- [ ] Recursion-depth differences (issue #83) on deliberately-deep-recursion test files
   (`recursion-test-function`, `tail-recursion-tests`,
   `issue3118-recur-limit`) — `kMaxCallDepth` (200, chosen for MSVC's 1 MiB
   default stack) is far lower than whatever depth OpenSCAD's own tests
   expect to succeed. A deliberate safety/compatibility tradeoff, not
   obviously wrong, but worth a second look.
-- [ ] A longer tail of smaller mismatches not yet individually triaged:
+- [ ] A longer tail of smaller mismatches not yet individually triaged (issue #84):
   variable redefinition/scoping (`redefinition`, `value-reassignment-tests`,
   `variable-scope-tests`, `function-scope`, `let-module-tests`), and
   edge cases in `search()`/`norm()`/`cross()`/`concat()`/`rands()`/
   `parent_module()`. Full list of mismatching test names is reproducible via
   `tests/tools/README.md`'s corpus script.
-- Cosmetic (not a value/behavior bug): ChiselCAD doesn't emit OpenSCAD's
+- Cosmetic (not a value/behavior bug, issue #85): ChiselCAD doesn't emit OpenSCAD's
   arity-mismatch ("`abs() number of parameters does not match`") or
   file-not-found warning text — builtins just silently return `undef` on a
   bad call, matching OpenSCAD's *value*, just not its *diagnostic wording*.
@@ -354,7 +354,7 @@ exactly once unblocked.
 Confirmed via the same corpus subdirectory (`3D/features`) but **not yet
 fixed**:
 
-- [ ] **Non-planar polyhedron faces** (`polyhedron-nonplanar-tests`) still
+- [ ] **Non-planar polyhedron faces** (issue #86) (`polyhedron-nonplanar-tests`) still
   mismatch after the winding fix (`2.94` vs `1.29`) — a real but distinct
   issue: fan-triangulating a non-planar quad from vertex 0 picks a different
   diagonal than whatever OpenSCAD/CGAL does, producing a different (smaller)
@@ -374,7 +374,7 @@ fixed**:
   2 elements. Both fixes together brought `linear_extrude-tests.scad` from
   102% relative error down to 13.6%; regression tests added (CsgEvaluator-
   level for the scale rejection, `runBuild`-level for the default height).
-- [ ] `linear_extrude-tests.scad`'s remaining ~13.6% error, and the other
+- [ ] `linear_extrude-tests.scad`'s remaining ~13.6% error (issue #91), and the other
   three `linear_extrude-*` files, are not yet further root-caused —
   **and a real methodological wrinkle turned up while bisecting**: the
   installed oracle is OpenSCAD 2021.01 (`apt`'s only option here), but the
@@ -391,23 +391,23 @@ fixed**:
   The same applies to `segments=` (also unrecognized by 2021.01). This
   caveat likely explains some fraction of the other still-open mismatches
   below too, not just `linear_extrude`.
-- [ ] **`rotate_extrude` volume mismatches**: `rotate_extrude-tests` (27%),
+- [ ] **`rotate_extrude` volume mismatches** (issue #87): `rotate_extrude-tests` (27%),
   `rotate_extrude-angle` (71%) — contrast with `rotate_extrude-touch-vertex`/
   `rotate_extrude-touch-edge`, which pass at floating-point-noise level, so
   this is parameter-specific (likely the `angle=` partial-revolution case
   given `-angle` is the worse of the two) rather than a blanket
   `rotate_extrude` bug.
-- [ ] `intersection-tests` (6.4%), `cylinder-tests` (13%, improved from
+- [ ] (issue #88) `intersection-tests` (6.4%), `cylinder-tests` (13%, improved from
   totally-blocked but still a real remaining gap after the harness fix
   above), `primitive-inf-tests` (83%), `ifelse-tests` (175%),
   `module-recursion`, `resize-tests` (1.5%), `surface-simple` — real
   mismatches, not yet individually triaged.
-- [ ] `assign-tests` and `intersection_for-tests` still produce zero valid
+- [ ] `assign-tests` and `intersection_for-tests` (issue #89) still produce zero valid
   geometry even after the harness fix — unlike the files that fix unblocked,
   these appear to genuinely fail in `MeshEvaluator`/`PrimitiveGen` itself
   (every root invalid, not just one), not just in the test tool. Needs the
   same per-root `chiselcad_cli --stats` triage the harness bug above got.
-- [ ] Several other files (`polyhedron-tests`, `minkowski3-difference-test`,
+- [ ] Several other files (issue #90) (`polyhedron-tests`, `minkowski3-difference-test`,
   `scale3D-tests`, `for-nested-tests`, `render-tests`, `mirror-tests`,
   `for-tests`, `edge-cases`, `rotate-parameters`,
   `scale-mirror2D-3D-tests`, `transform-tests`) fail to parse at all under
