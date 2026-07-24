@@ -1,6 +1,7 @@
 #include "Interpreter.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <random>
 
@@ -9,6 +10,102 @@ static constexpr double kDeg2Rad = kPi / 180.0;
 static constexpr double kRad2Deg = 180.0 / kPi;
 
 namespace chisel::lang {
+
+// ---------------------------------------------------------------------------
+// UTF-8 helpers backing len()/indexing/chr()/ord() on strings — OpenSCAD
+// counts and indexes strings by Unicode codepoint, not by byte, so a
+// std::string's own .size()/operator[] (byte-oriented) can't be used
+// directly for those builtins. Malformed/truncated sequences decode as a
+// single replacement codepoint (U+FFFD) and advance one byte, matching the
+// same graceful-degradation choice made for text() shaping in
+// NaiveLtrShaper.cpp (duplicated here rather than shared: that helper lives
+// in src/import, which Interpreter has no dependency on).
+// ---------------------------------------------------------------------------
+namespace {
+
+uint32_t decodeUtf8At(const std::string& s, std::size_t& i) {
+    unsigned char b0 = static_cast<unsigned char>(s[i]);
+    auto continuation = [&](std::size_t idx) {
+        return idx < s.size() && (static_cast<unsigned char>(s[idx]) & 0xC0) == 0x80;
+    };
+
+    if (b0 < 0x80) {
+        ++i;
+        return b0;
+    }
+    if ((b0 & 0xE0) == 0xC0 && continuation(i + 1)) {
+        uint32_t cp =
+            (static_cast<uint32_t>(b0 & 0x1F) << 6) | (static_cast<unsigned char>(s[i + 1]) & 0x3F);
+        i += 2;
+        return cp;
+    }
+    if ((b0 & 0xF0) == 0xE0 && continuation(i + 1) && continuation(i + 2)) {
+        uint32_t cp = (static_cast<uint32_t>(b0 & 0x0F) << 12) |
+                      (static_cast<uint32_t>(static_cast<unsigned char>(s[i + 1]) & 0x3F) << 6) |
+                      (static_cast<unsigned char>(s[i + 2]) & 0x3F);
+        i += 3;
+        return cp;
+    }
+    if ((b0 & 0xF8) == 0xF0 && continuation(i + 1) && continuation(i + 2) && continuation(i + 3)) {
+        uint32_t cp = (static_cast<uint32_t>(b0 & 0x07) << 18) |
+                      (static_cast<uint32_t>(static_cast<unsigned char>(s[i + 1]) & 0x3F) << 12) |
+                      (static_cast<uint32_t>(static_cast<unsigned char>(s[i + 2]) & 0x3F) << 6) |
+                      (static_cast<unsigned char>(s[i + 3]) & 0x3F);
+        i += 4;
+        return cp;
+    }
+    ++i;
+    return 0xFFFD;
+}
+
+// Encodes a single codepoint back to its UTF-8 byte sequence.
+std::string encodeUtf8(uint32_t cp) {
+    std::string out;
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+    return out;
+}
+
+// Number of Unicode codepoints in a UTF-8 string (OpenSCAD's len()/string
+// indexing unit), not the byte count std::string::size() would give.
+std::size_t utf8Length(const std::string& s) {
+    std::size_t count = 0;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        decodeUtf8At(s, i);
+        ++count;
+    }
+    return count;
+}
+
+// Returns the codepointIdx-th character (as its own UTF-8-encoded
+// substring), or an empty string if out of range.
+std::string utf8CharAt(const std::string& s, std::size_t codepointIdx) {
+    std::size_t i = 0;
+    std::size_t idx = 0;
+    while (i < s.size()) {
+        std::size_t start = i;
+        decodeUtf8At(s, i);
+        if (idx == codepointIdx) return s.substr(start, i - start);
+        ++idx;
+    }
+    return {};
+}
+
+} // namespace
 
 // Textual representation used by str() for any argument that isn't itself a
 // top-level string (str()'s caller special-cases that: a bare string arg is
@@ -262,9 +359,9 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 return target.asVec()[static_cast<std::size_t>(i)];
             }
             if (target.isString()) {
-                if (static_cast<std::size_t>(i) >= target.asString().size())
-                    return Value::undef();
-                return Value::fromString(std::string(1, target.asString()[static_cast<std::size_t>(i)]));
+                std::string ch = utf8CharAt(target.asString(), static_cast<std::size_t>(i));
+                if (ch.empty()) return Value::undef();
+                return Value::fromString(std::move(ch));
             }
             if (target.isRange()) {
                 auto vals = expandRange(target.rangeStart, target.rangeStep, target.rangeEnd);
@@ -663,7 +760,7 @@ Value Interpreter::callBuiltin(const std::string& name,
     if (name == "len") {
         if (args.size() >= 1) {
             if (args[0].isVector()) return Value::fromNumber(static_cast<double>(args[0].asVec().size()));
-            if (args[0].isString()) return Value::fromNumber(static_cast<double>(args[0].asString().size()));
+            if (args[0].isString()) return Value::fromNumber(static_cast<double>(utf8Length(args[0].asString())));
             if (args[0].isRange())
                 return Value::fromNumber(static_cast<double>(
                     expandRange(args[0].rangeStart, args[0].rangeStep, args[0].rangeEnd).size()));
@@ -694,15 +791,16 @@ Value Interpreter::callBuiltin(const std::string& name,
     if (name == "chr") {
         if (args.size() >= 1 && args[0].isNumber()) {
             double v = args[0].asNumber();
-            if (std::isfinite(v) && v >= 0 && v <= 127)
-                return Value::fromString(std::string(1, static_cast<char>(static_cast<int>(v))));
+            if (std::isfinite(v) && v >= 0 && v <= 0x10FFFF)
+                return Value::fromString(encodeUtf8(static_cast<uint32_t>(v)));
         }
         return Value::undef();
     }
     if (name == "ord") {
-        if (args.size() >= 1 && args[0].isString() && !args[0].asString().empty())
-            return Value::fromNumber(static_cast<double>(
-                static_cast<unsigned char>(args[0].asString()[0])));
+        if (args.size() >= 1 && args[0].isString() && !args[0].asString().empty()) {
+            std::size_t i = 0;
+            return Value::fromNumber(static_cast<double>(decodeUtf8At(args[0].asString(), i)));
+        }
         return Value::undef();
     }
 
