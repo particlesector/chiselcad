@@ -97,6 +97,9 @@ enum class TokenKind : uint8_t {
     // Range separator
     Colon, // :
 
+    // Vector/range member access: v.x, v.xyz, range.begin
+    Dot, // .
+
     // Arithmetic operators
     Plus,    // +
     Minus,   // -

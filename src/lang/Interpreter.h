@@ -5,6 +5,7 @@
 #include <array>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace chisel::lang {
@@ -143,18 +144,73 @@ private:
                       const std::vector<Value>& args) const;
 
     // Invokes a closure Value (see Value::Tag::Function): binds fnVal's
-    // params against posArgs/namedArgs the same way a named FunctionDef call
-    // does, but starting from the closure's *captured* environment rather
-    // than the caller's — a function literal sees the scope where
-    // `function(...) ...` was written, not the scope it's called from.
-    // Takes fnVal by value, not by reference: the caller's reference is
-    // typically an element inside m_env (e.g. a FunctionCall looks the
-    // callee up via m_env.find), and this function reassigns m_env wholesale
-    // as its first step (to switch to the closure's own captured scope) —
-    // a reference into the old map would dangle the moment that happens.
+    // params against orderedArgs the same way a named FunctionDef call does
+    // (see bindOrderedArgs), but starting from the closure's *captured*
+    // environment rather than the caller's — a function literal sees the
+    // scope where `function(...) ...` was written, not the scope it's
+    // called from. Takes fnVal by value, not by reference: the caller's
+    // reference is typically an element inside m_env (e.g. a FunctionCall
+    // looks the callee up via m_env.find), and this function reassigns
+    // m_env wholesale as its first step (to switch to the closure's own
+    // captured scope) — a reference into the old map would dangle the
+    // moment that happens.
     Value callClosure(Value fnVal,
-                       const std::vector<Value>& posArgs,
-                       const std::vector<std::pair<std::string, Value>>& namedArgs);
+                       const std::vector<std::pair<std::string, Value>>& orderedArgs);
+
+    // Binds `params` in the current environment by replaying orderedArgs
+    // (pairs of arg-name/value in original call-site textual order; an
+    // empty name means positional) in that order — a positional arg
+    // advances an unconditional left-to-right counter that does NOT skip
+    // slots already targeted by a named arg, and a named arg binds directly
+    // by name, so whichever (named or positional) comes later in the call
+    // wins for that slot. This mirrors OpenSCAD's actual argument-binding
+    // rule (confirmed against OpenSCAD's own arg-permutations.scad test).
+    // A named arg that matches neither a declared parameter nor a
+    // $-prefixed special variable is discarded, not bound — an unmatched
+    // ordinary named arg must NOT leak into the callee's local scope, since
+    // that scope is just the caller's env snapshot-and-restore, and setting
+    // it there would shadow an unrelated same-named variable from the
+    // enclosing scope for the duration of the call (e.g. `x = 100;
+    // function f(a) = x; f(a=1, x=5)` must still see the outer `x = 100`,
+    // not silently pick up `x=5`). $-prefixed names are the one deliberate
+    // exception: those are genuinely dynamically-scoped special-variable
+    // overrides, valid on any call regardless of whether the callee
+    // declares a same-named parameter. Params untouched by any arg fall
+    // back to their default expression, or undef.
+    template <typename Param>
+    void bindOrderedArgs(const std::vector<Param>& params,
+                          const std::vector<std::pair<std::string, Value>>& orderedArgs) {
+        auto isDeclaredParam = [&](const std::string& name) {
+            for (const auto& p : params)
+                if (p.name == name) return true;
+            return false;
+        };
+        std::size_t posIdx = 0;
+        std::unordered_set<std::string> namedBound;
+        for (const auto& [name, value] : orderedArgs) {
+            if (name.empty()) {
+                if (posIdx < params.size())
+                    setVar(params[posIdx].name, value);
+                ++posIdx;
+            } else if (name[0] == '$') {
+                setVar(name, value);
+            } else if (isDeclaredParam(name)) {
+                setVar(name, value);
+                namedBound.insert(name);
+            }
+            // else: unmatched ordinary named arg — discarded (see comment above).
+        }
+        for (std::size_t i = 0; i < params.size(); ++i) {
+            const auto& param = params[i];
+            bool bound = (i < posIdx) || namedBound.count(param.name) != 0;
+            if (!bound) {
+                if (param.defaultVal)
+                    setVar(param.name, evaluate(*param.defaultVal));
+                else
+                    setVar(param.name, Value::undef());
+            }
+        }
+    }
 
     // Appends v's per-iteration values (see iterationValues()) onto out —
     // used by `each` in both a plain list literal and a list-comprehension

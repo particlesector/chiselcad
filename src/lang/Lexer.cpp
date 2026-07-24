@@ -149,6 +149,9 @@ std::vector<Token> Lexer::tokenize() {
         case ':':
             tokens.push_back(makeToken(TokenKind::Colon, startOffset));
             break;
+        case '.':
+            tokens.push_back(makeToken(TokenKind::Dot, startOffset));
+            break;
         case '+':
             tokens.push_back(makeToken(TokenKind::Plus, startOffset));
             break;

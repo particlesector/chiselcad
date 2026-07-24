@@ -292,6 +292,21 @@ static ExprNode makeCall(std::string name, std::vector<double> nums) {
     return fc;
 }
 
+// Helper: build a FunctionCall with args in a specific textual order — an
+// empty name means positional — so tests can exercise named/positional
+// interleaving order without going through the parser.
+static ExprNode makeCallArgs(std::string name, std::vector<std::pair<std::string, double>> args) {
+    FunctionCall fc;
+    fc.name = std::move(name);
+    for (auto& [argName, val] : args) {
+        FunctionArg arg;
+        arg.name = argName;
+        arg.value = makeExpr(NumberLit{val, {}});
+        fc.args.push_back(std::move(arg));
+    }
+    return fc;
+}
+
 TEST_CASE("Interp:user function basic", "[interp][tier-a]") {
     auto ctx = loadEnvWithFuncs("function double(x) = x * 2;");
     ExprNode call = makeCall("double", {5.0});
@@ -317,6 +332,67 @@ TEST_CASE("Interp:unbound function parameter is undef, not the caller's same-nam
     ExprNode call = makeCall("f", {});
     // undef coerces to 0 via evalNumber, not the global x = 100.
     REQUIRE(ctx.interp.evalNumber(call) == Approx(0.0));
+}
+
+// ---------------------------------------------------------------------------
+// Named/positional argument interleaving order (#81) — OpenSCAD's actual
+// rule: a positional arg advances a plain left-to-right counter that does
+// NOT skip slots already targeted by a named arg, and whichever of a named
+// or positional binding to the same slot comes LATER in the textual arg
+// list wins. Confirmed against OpenSCAD's own arg-permutations.scad test.
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:a later positional arg overwrites an earlier named arg to the same slot",
+          "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs("function f(a=0, b=0, c=0) = [a, b, c];");
+    ExprNode call = makeCallArgs("f", {{"a", 1.0}, {"", 2.0}});
+    Value v = ctx.interp.evaluate(call);
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec()[0].asNumber() == Approx(2.0)); // positional overwrites named a=1
+    REQUIRE(v.asVec()[1].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(0.0));
+}
+
+TEST_CASE("Interp:a later named arg overwrites an earlier positional arg to the same slot",
+          "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs("function f(a=0, b=0, c=0) = [a, b, c];");
+    ExprNode call = makeCallArgs("f", {{"", 2.0}, {"a", 1.0}});
+    Value v = ctx.interp.evaluate(call);
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec()[0].asNumber() == Approx(1.0)); // named a=1 comes later, wins
+    REQUIRE(v.asVec()[1].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[2].asNumber() == Approx(0.0));
+}
+
+TEST_CASE("Interp:argument interleaving order also applies to function-literal closures",
+          "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs("g = function(a=0, b=0, c=0) [a, b, c];");
+    ExprNode call = makeCallArgs("g", {{"a", 1.0}, {"", 2.0}});
+    Value v = ctx.interp.evaluate(call);
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec()[0].asNumber() == Approx(2.0));
+}
+
+TEST_CASE("Interp:an unmatched named arg is discarded, not bound into the callee's scope",
+          "[interp][bugfix]") {
+    // x is unrelated to f's declared params — f(a=1, x=5) must not let f's
+    // body see x=5 in place of the outer x=100. Only $-prefixed names are
+    // meant to pass through as dynamically-scoped special-variable
+    // overrides regardless of parameter match; an ordinary unmatched named
+    // arg is simply discarded, matching real OpenSCAD.
+    auto ctx = loadEnvWithFuncs(
+        "x = 100;\n"
+        "function f(a) = x;\n");
+    ExprNode call = makeCallArgs("f", {{"a", 1.0}, {"x", 5.0}});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(100.0));
+}
+
+TEST_CASE("Interp:an unmatched named arg is discarded, not bound into a closure's captured scope",
+          "[interp][bugfix]") {
+    auto ctx = loadEnvWithFuncs(
+        "x = 100;\n"
+        "g = function(a) x;\n");
+    ExprNode call = makeCallArgs("g", {{"a", 1.0}, {"x", 5.0}});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(100.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -659,6 +735,66 @@ TEST_CASE("Interp:indexing into a range yields the nth expanded value", "[interp
 
 TEST_CASE("Interp:indexing past the end of a range is undef", "[interp][bugfix]") {
     REQUIRE(evalVal("[0:2:10][100]").isUndef());
+}
+
+// ---------------------------------------------------------------------------
+// Vector/range dot-member access (.x/.y/.z/.w, swizzles, .begin/.step/.end)
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:vector .x/.y/.z/.w component access", "[interp][bugfix]") {
+    REQUIRE(evalNum("[1,2,3].x") == Approx(1.0));
+    REQUIRE(evalNum("[1,2,3].y") == Approx(2.0));
+    REQUIRE(evalNum("[1,2,3].z") == Approx(3.0));
+    REQUIRE(evalVal("[1,2,3].w").isUndef()); // only 3 elements
+}
+
+TEST_CASE("Interp:vector .r/.g/.b/.a are aliases for .x/.y/.z/.w", "[interp][bugfix]") {
+    REQUIRE(evalNum("[1,2,3,4].r") == Approx(1.0));
+    REQUIRE(evalNum("[1,2,3,4].g") == Approx(2.0));
+    REQUIRE(evalNum("[1,2,3,4].b") == Approx(3.0));
+    REQUIRE(evalNum("[1,2,3,4].a") == Approx(4.0));
+}
+
+TEST_CASE("Interp:multi-letter vector swizzle produces a vector in written order", "[interp][bugfix]") {
+    Value v = evalVal("[1,2,3,4].xyzw");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 4);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(1.0));
+    REQUIRE(v.asVec()[3].asNumber() == Approx(4.0));
+
+    Value repeated = evalVal("[5,6,7].xr");
+    REQUIRE(repeated.isVector());
+    REQUIRE(repeated.asVec().size() == 2);
+    REQUIRE(repeated.asVec()[0].asNumber() == Approx(5.0));
+    REQUIRE(repeated.asVec()[1].asNumber() == Approx(5.0));
+
+    Value rrrr = evalVal("[9,8,7].rrrr");
+    REQUIRE(rrrr.isVector());
+    REQUIRE(rrrr.asVec().size() == 4);
+    for (const auto& e : rrrr.asVec())
+        REQUIRE(e.asNumber() == Approx(9.0));
+}
+
+TEST_CASE("Interp:range .begin/.step/.end access", "[interp][bugfix]") {
+    REQUIRE(evalNum("[1:2:10].begin") == Approx(1.0));
+    REQUIRE(evalNum("[1:2:10].step")  == Approx(2.0));
+    REQUIRE(evalNum("[1:2:10].end")   == Approx(10.0));
+    REQUIRE(evalNum("[1:10].step")    == Approx(1.0)); // default step
+}
+
+TEST_CASE("Interp:member access on a non-vector/range value is undef", "[interp][bugfix]") {
+    // `5.x` isn't used here: the lexer's number grammar allows a bare
+    // trailing dot (`3.` is a valid float literal, matching OpenSCAD's own
+    // number grammar), so "5.x" tokenizes as Number("5.") followed by a
+    // separate Ident("x") rather than Number(5) Dot Ident(x) — an
+    // inherent lexical ambiguity, not something a member-access feature can
+    // resolve, and not how member access is ever written on a real
+    // (non-literal) expression.
+    REQUIRE(evalVal("let(n = 5) n.x").isUndef());
+    REQUIRE(evalVal("\"abc\".x").isUndef());
+}
+
+TEST_CASE("Interp:chained member access", "[interp][bugfix]") {
+    REQUIRE(evalNum("[[1,2,3],[4,5,6]][1].y") == Approx(5.0));
 }
 
 // ---------------------------------------------------------------------------

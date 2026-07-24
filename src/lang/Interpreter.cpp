@@ -274,6 +274,50 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             return Value::undef();
         }
 
+        // ---- Member expression: target.member (vector swizzling, range
+        // .begin/.step/.end) ----
+        else if constexpr (std::is_same_v<T, MemberExpr>) {
+            Value target = evaluate(*node.target);
+            if (target.isRange()) {
+                if (node.member == "begin") return Value::fromNumber(target.rangeStart);
+                if (node.member == "step")  return Value::fromNumber(target.rangeStep);
+                if (node.member == "end")   return Value::fromNumber(target.rangeEnd);
+                return Value::undef();
+            }
+            if (target.isVector()) {
+                // x/y/z/w and rgba are two names for the same four slots —
+                // matches OpenSCAD's vector-swizzling grammar.
+                auto slotOf = [](char c) -> int {
+                    switch (c) {
+                    case 'x': case 'r': return 0;
+                    case 'y': case 'g': return 1;
+                    case 'z': case 'b': return 2;
+                    case 'w': case 'a': return 3;
+                    default:            return -1;
+                    }
+                };
+                const auto& vec = target.asVec();
+                if (node.member.size() == 1) {
+                    int slot = slotOf(node.member[0]);
+                    if (slot < 0 || static_cast<std::size_t>(slot) >= vec.size())
+                        return Value::undef();
+                    return vec[static_cast<std::size_t>(slot)];
+                }
+                // Multi-letter swizzle (.xyzw, .rgba, .xr, .rrrr, ...): one
+                // output element per member letter, in the order written.
+                std::vector<Value> out;
+                out.reserve(node.member.size());
+                for (char c : node.member) {
+                    int slot = slotOf(c);
+                    if (slot < 0 || static_cast<std::size_t>(slot) >= vec.size())
+                        return Value::undef();
+                    out.push_back(vec[static_cast<std::size_t>(slot)]);
+                }
+                return Value::fromVec(std::move(out));
+            }
+            return Value::undef();
+        }
+
         // ---- Let expression: let(x = expr, ...) body ----
         else if constexpr (std::is_same_v<T, LetExpr>) {
             auto savedEnv = snapshotEnv();
@@ -329,16 +373,16 @@ Value Interpreter::evaluate(const ExprNode& expr) {
 
         // ---- Function call ----
         else if constexpr (std::is_same_v<T, FunctionCall>) {
-            // Collect positional and named argument values
-            std::vector<Value>                        posArgs;
-            std::vector<std::pair<std::string, Value>> namedArgs;
-            for (const auto& arg : node.args) {
-                Value v = evaluate(*arg.value);
-                if (arg.name.empty())
-                    posArgs.push_back(std::move(v));
-                else
-                    namedArgs.push_back({arg.name, std::move(v)});
-            }
+            // Evaluate args in their original call-site textual order,
+            // preserving each one's name (empty = positional) — needed so
+            // binding can replay OpenSCAD's actual left-to-right
+            // interleaving rule (see bindOrderedArgs in Interpreter.h)
+            // instead of treating "named" and "positional" as two separate
+            // passes.
+            std::vector<std::pair<std::string, Value>> orderedArgs;
+            orderedArgs.reserve(node.args.size());
+            for (const auto& arg : node.args)
+                orderedArgs.push_back({arg.name, evaluate(*arg.value)});
 
             // A variable bound to a function-literal value takes priority
             // over a same-named `function` definition or builtin — mirrors
@@ -347,7 +391,7 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             // exists under that name.
             auto varIt = m_env.find(node.name);
             if (varIt != m_env.end() && varIt->second.isFunction())
-                return callClosure(varIt->second, posArgs, namedArgs);
+                return callClosure(varIt->second, orderedArgs);
 
             // Try user-defined function first
             auto fit = m_funcDefs.find(node.name);
@@ -357,30 +401,7 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 const FunctionDef& def = *fit->second;
                 auto savedEnv = snapshotEnv();
 
-                std::size_t posIdx = 0;
-                for (const auto& param : def.params) {
-                    // Check named args
-                    bool bound = false;
-                    for (const auto& [n, v] : namedArgs) {
-                        if (n == param.name) { setVar(param.name, v); bound = true; break; }
-                    }
-                    if (!bound) {
-                        if (posIdx < posArgs.size())
-                            setVar(param.name, posArgs[posIdx++]);
-                        else if (param.defaultVal)
-                            setVar(param.name, evaluate(*param.defaultVal));
-                        else
-                            setVar(param.name, Value::undef()); // unbound → undef, not the caller's same-named variable
-                    }
-                }
-                // A $-prefixed named arg (e.g. f($fn=64, 1)) is a special-
-                // variable override, visible inside the call regardless of
-                // whether the function declares a same-named parameter —
-                // unlike an ordinary extra named arg, which OpenSCAD just
-                // discards. Mirrors CsgEvaluator::evalModuleCall's identical
-                // treatment for user-defined modules.
-                for (const auto& [n, v] : namedArgs)
-                    if (!n.empty() && n[0] == '$') setVar(n, v);
+                bindOrderedArgs(def.params, orderedArgs);
 
                 ++m_callDepth;
                 Value result = evaluate(*def.body);
@@ -389,9 +410,13 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 return result;
             }
 
-            // Fall back to built-ins (positional args only)
-            std::vector<Value> allArgs = std::move(posArgs);
-            for (auto& [n, v] : namedArgs) allArgs.push_back(std::move(v));
+            // Fall back to built-ins (positional args in order, then named
+            // args in order — builtins have no declared parameter list to
+            // bind named args against by position).
+            std::vector<Value> allArgs;
+            allArgs.reserve(orderedArgs.size());
+            for (auto& [n, v] : orderedArgs) if (n.empty())  allArgs.push_back(v);
+            for (auto& [n, v] : orderedArgs) if (!n.empty()) allArgs.push_back(v);
             return callBuiltin(node.name, allArgs);
         }
 
@@ -512,8 +537,7 @@ void Interpreter::assignVar(const std::string& name, const ExprNode& valueExpr) 
 // callClosure — invoke a Value::Tag::Function closure
 // ---------------------------------------------------------------------------
 Value Interpreter::callClosure(Value fnVal,
-                                const std::vector<Value>& posArgs,
-                                const std::vector<std::pair<std::string, Value>>& namedArgs) {
+                                const std::vector<std::pair<std::string, Value>>& orderedArgs) {
     if (!fnVal.closure || !fnVal.closure->def || m_callDepth >= kMaxCallDepth)
         return Value::undef();
     const FunctionLit& def = *fnVal.closure->def;
@@ -526,24 +550,7 @@ Value Interpreter::callClosure(Value fnVal,
     if (!fnVal.closure->selfName.empty())
         m_env[fnVal.closure->selfName] = fnVal;
 
-    std::size_t posIdx = 0;
-    for (const auto& param : def.params) {
-        bool bound = false;
-        for (const auto& [n, v] : namedArgs) {
-            if (n == param.name) { setVar(param.name, v); bound = true; break; }
-        }
-        if (!bound) {
-            if (posIdx < posArgs.size())
-                setVar(param.name, posArgs[posIdx++]);
-            else if (param.defaultVal)
-                setVar(param.name, evaluate(*param.defaultVal));
-            else
-                setVar(param.name, Value::undef());
-        }
-    }
-    // See the matching comment in the named FunctionDef call path above.
-    for (const auto& [n, v] : namedArgs)
-        if (!n.empty() && n[0] == '$') setVar(n, v);
+    bindOrderedArgs(def.params, orderedArgs);
 
     ++m_callDepth;
     Value result = evaluate(*def.body);
