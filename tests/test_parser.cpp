@@ -1099,3 +1099,27 @@ TEST_CASE("Parser:named module-call argument named after a builtin transform", "
     REQUIRE(c.args.size() == 1);
     REQUIRE(c.args[0].name == "scale");
 }
+
+TEST_CASE("Parser:$special = expr accepted as a named module-call argument", "[parser][v37]") {
+    // Previously a $-prefixed name in a generic module-call argument list
+    // (as opposed to a builtin primitive's dedicated param parser) wasn't
+    // recognized as a named arg at all: the parser tried to parse `$fn` as a
+    // positional expression, then choked on the following `=`, cascading
+    // into a parse-error storm for the rest of the file — found via a
+    // corpus comparison against OpenSCAD's own test suite (see
+    // docs/roadmap.md v3.7).
+    auto r = parse("module m(x) { echo(x); }\nm($fn = 64, 1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& c = asModuleCall(r.roots[0]);
+    REQUIRE(c.args.size() == 2);
+    REQUIRE(c.args[0].name == "$fn");
+    REQUIRE(c.args[1].name.empty());
+}
+
+TEST_CASE("Parser:$special = expr accepted as a named function-call argument", "[parser][v37]") {
+    auto r = parse("function f(x) = x;\ny = f($fn = 64, 1);");
+    REQUIRE(r.assignments.size() == 1);
+    auto& fc = std::get<FunctionCall>(*r.assignments[0].value);
+    REQUIRE(fc.args.size() == 2);
+    REQUIRE(fc.args[0].name == "$fn");
+}

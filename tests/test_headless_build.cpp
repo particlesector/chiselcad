@@ -4,6 +4,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 
@@ -50,6 +51,62 @@ TEST_CASE("runBuild reports parse errors instead of throwing", "[headless]") {
         if (d.level == chisel::lang::DiagLevel::Error)
             hasError = true;
     CHECK(hasError);
+}
+
+// ---------------------------------------------------------------------------
+// v3.9 geometry bugfixes — found via volumetric corpus comparison against
+// real OpenSCAD (docs/roadmap.md v3.9). These need a real Manifold build to
+// verify (mesh/volume output, not just CsgLeaf params), which chiselcad_core
+// now makes possible for chiselcad_tests.
+// ---------------------------------------------------------------------------
+TEST_CASE("runBuild: per-node $fa/$fs override actually changes tessellation",
+          "[headless][v39][bugfix]") {
+    // Before this fix, PrimitiveGen::resolveSegments only read a per-node
+    // $fn override; $fa/$fs overrides were silently ignored in favor of the
+    // *global* $fa/$fs, so sphere(r=5, $fa=40, $fs=0.3) rendered at the
+    // global default resolution regardless of its own $fa/$fs. Both fixtures
+    // use the same radius; a coarse $fa/$fs must produce far fewer
+    // triangles than a fine one, or this override isn't taking effect.
+    chisel::csg::MeshCache cache;
+    BuildResult coarse = runBuild(fixture("headless/sphere_fa_coarse.scad"), {}, {}, cache);
+    BuildResult fine   = runBuild(fixture("headless/sphere_fa_fine.scad"), {}, {}, cache);
+
+    REQUIRE(coarse.ok());
+    REQUIRE(fine.ok());
+    CHECK(coarse.triCount < fine.triCount / 2);
+    // Both approximate the same sphere (r=5, volume 4/3*pi*r^3 ≈ 523.6) from
+    // inside, so more segments should mean a volume closer to that ideal.
+    constexpr double kIdealVolume = (4.0 / 3.0) * 3.14159265358979323846 * 5.0 * 5.0 * 5.0;
+    CHECK(std::abs(fine.volume - kIdealVolume) < std::abs(coarse.volume - kIdealVolume));
+}
+
+TEST_CASE("runBuild: cylinder r2 defaults to 1.0 independently of r1, not mirroring it",
+          "[headless][v39][bugfix]") {
+    // Confirmed against real OpenSCAD: cylinder(h=5, r1=5) (r2 unset) tapers
+    // from r1=5 down to r2=1, not a uniform r=5 cylinder. Before this fix,
+    // PrimitiveGen defaulted an unset r2 to r1's value instead of 1.0.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/cylinder_r1_only.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+
+    // Frustum volume = (pi*h/3)*(r1^2 + r1*r2 + r2^2) with r1=5, r2=1, h=5.
+    constexpr double kPi = 3.14159265358979323846;
+    constexpr double kExpectedFrustumVolume = (kPi * 5.0 / 3.0) * (25.0 + 5.0 * 1.0 + 1.0);
+    // A uniform r=5 cylinder (the pre-fix bug) would give pi*25*5 ≈ 392.7 —
+    // clearly distinct from the ~162.3 frustum volume expected here.
+    CHECK(result.volume == Approx(kExpectedFrustumVolume).margin(1.0));
+}
+
+TEST_CASE("runBuild: linear_extrude()'s default height is 100, not 1",
+          "[headless][v39][bugfix]") {
+    // Confirmed against real OpenSCAD's STL output for
+    // linear_extrude(v=[3,2,5]) square([10,10]) (no height given): volume
+    // 10000, i.e. a 10x10 profile times height 100 — MeshEvaluator was
+    // defaulting to height 1 instead.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/linear_extrude_default_height.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    CHECK(result.volume == Approx(10.0 * 10.0 * 100.0).margin(1e-6));
 }
 
 TEST_CASE("runBuild honors AbortFn by returning early", "[headless]") {

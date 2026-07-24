@@ -109,13 +109,25 @@ double PrimitiveGen::getParam(const std::unordered_map<std::string, double>& p,
 // Matches OpenSCAD's fn/fs/fa segment formula.
 // fn > 0 → use fn directly.
 // Otherwise: ceil(max(min(360/fa, 2π·r/fs), 5))
-int PrimitiveGen::resolveSegments(double r, double fnOverride) const {
+//
+// faOverride/fsOverride are this leaf's own $fa=/$fs= arguments (0.0 meaning
+// "not given here" — matching fnOverride's existing convention), each
+// falling back independently to the global $fa/$fs when absent. Before this
+// fix, only a per-node $fn override was honored; $fa/$fs overrides were
+// silently ignored in favor of the global values, so e.g.
+// `sphere(5, $fa=40, $fs=0.3)` rendered at the *global* default resolution
+// instead of the coarser one it explicitly asked for — confirmed against
+// real OpenSCAD via volumetric corpus comparison (docs/roadmap.md v3.9).
+int PrimitiveGen::resolveSegments(double r, double fnOverride, double faOverride,
+                                   double fsOverride) const {
     double fn = (fnOverride > 0.0) ? fnOverride : globalFn;
     if (fn > 0.0)
         return std::max(3, static_cast<int>(std::round(fn)));
 
-    double byAngle = (globalFa > 0.0) ? 360.0 / globalFa : 360.0;
-    double bySize  = (globalFs > 0.0 && r > 0.0) ? (2.0 * 3.14159265358979323846 * r / globalFs) : byAngle;
+    double fa = (faOverride > 0.0) ? faOverride : globalFa;
+    double fs = (fsOverride > 0.0) ? fsOverride : globalFs;
+    double byAngle = (fa > 0.0) ? 360.0 / fa : 360.0;
+    double bySize  = (fs > 0.0 && r > 0.0) ? (2.0 * 3.14159265358979323846 * r / fs) : byAngle;
     int segs = static_cast<int>(std::ceil(std::min(byAngle, bySize)));
     return std::max(segs, 5);
 }
@@ -145,7 +157,9 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
     case CsgLeaf::Kind::Sphere: {
         double r = getParam(p, "r", getParam(p, "_pos0", 1.0));
         double fnOvr = getParam(p, "$fn", 0.0);
-        int segs = resolveSegments(r, fnOvr);
+        double faOvr = getParam(p, "$fa", 0.0);
+        double fsOvr = getParam(p, "$fs", 0.0);
+        int segs = resolveSegments(r, fnOvr, faOvr, fsOvr);
         if (useManifoldSphere)
             return manifold::Manifold::Sphere(static_cast<float>(r), segs);
         return makeUVSphere(static_cast<float>(r), segs);
@@ -157,10 +171,16 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
     case CsgLeaf::Kind::Cylinder: {
         double h  = getParam(p, "h",  1.0);
         double r  = getParam(p, "r", -1.0);  // -1 = not set
+        // r1/r2 each fall back to the plain r= if given, else independently
+        // default to 1.0 — r2 does NOT mirror r1 (confirmed against real
+        // OpenSCAD: cylinder(h=5, r1=5) tapers from r1=5 down to r2=1, not a
+        // uniform r=5 cylinder — see docs/roadmap.md v3.9).
         double r1 = (r >= 0.0) ? r : getParam(p, "r1", 1.0);
-        double r2 = (r >= 0.0) ? r : getParam(p, "r2", r1);
+        double r2 = (r >= 0.0) ? r : getParam(p, "r2", 1.0);
         double fnOvr = getParam(p, "$fn", 0.0);
-        int segs = resolveSegments(std::max(r1, r2), fnOvr);
+        double faOvr = getParam(p, "$fa", 0.0);
+        double fsOvr = getParam(p, "$fs", 0.0);
+        int segs = resolveSegments(std::max(r1, r2), fnOvr, faOvr, fsOvr);
         return manifold::Manifold::Cylinder(
             static_cast<float>(h),
             static_cast<float>(r1),
@@ -262,7 +282,9 @@ manifold::CrossSection PrimitiveGen::generateCrossSection(const CsgLeaf& leaf) c
     case CsgLeaf::Kind::Circle2D: {
         double r    = getParam(p, "r", getParam(p, "_pos0", 1.0));
         double fnOvr = getParam(p, "$fn", 0.0);
-        int    segs  = resolveSegments(r, fnOvr);
+        double faOvr = getParam(p, "$fa", 0.0);
+        double fsOvr = getParam(p, "$fs", 0.0);
+        int    segs  = resolveSegments(r, fnOvr, faOvr, fsOvr);
         return manifold::CrossSection::Circle(static_cast<float>(r), segs);
     }
 

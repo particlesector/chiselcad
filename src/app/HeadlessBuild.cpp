@@ -114,10 +114,10 @@ BuildResult runBuild(const std::filesystem::path& path,
         &loaded.files; // per-file diagnostics + relative-path resolution across include/use
 
     // Full evaluate() overload (rather than the convenience one) so $vpr/
-    // $vpt/$vpd reflect the caller-supplied viewport.
+    // $vpt/$vpd/$vpf reflect the caller-supplied viewport.
     lang::Interpreter interp;
     interp.setViewport(viewport.vpr[0], viewport.vpr[1], viewport.vpr[2], viewport.vpt[0],
-                        viewport.vpt[1], viewport.vpt[2], viewport.vpd);
+                        viewport.vpt[1], viewport.vpt[2], viewport.vpd, viewport.vpf);
     interp.loadAssignments(ast);
     interp.loadFunctions(ast);
     auto scene = csgEval.evaluate(ast, interp);

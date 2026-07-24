@@ -83,18 +83,20 @@ public:
     void pushModuleName(std::string name) { m_moduleNameStack.push_back(std::move(name)); }
     void popModuleName() { m_moduleNameStack.pop_back(); }
 
-    // Sets $vpr/$vpt/$vpd (viewport rotation/translation/distance), backing
-    // those special variables' VarRef fallback below. Left at their
-    // OpenSCAD-matching defaults (see member initializers) unless the caller
-    // has real render-camera state to plumb in (MeshBuilder does this,
-    // deriving vpr from Camera's yaw/pitch — see MeshBuilder::buildOne);
-    // headless evaluation (tests, CLI use) just keeps the defaults.
+    // Sets $vpr/$vpt/$vpd/$vpf (viewport rotation/translation/distance/
+    // field-of-view), backing those special variables' VarRef fallback
+    // below. Left at their OpenSCAD-matching defaults (see member
+    // initializers) unless the caller has real render-camera state to plumb
+    // in (MeshBuilder does this, deriving vpr from Camera's yaw/pitch — see
+    // MeshBuilder::buildOne); headless evaluation (tests, CLI use) just
+    // keeps the defaults.
     void setViewport(double vprX, double vprY, double vprZ,
                      double vptX, double vptY, double vptZ,
-                     double vpd) {
+                     double vpd, double vpf) {
         m_vpr = {vprX, vprY, vprZ};
         m_vpt = {vptX, vptY, vptZ};
         m_vpd = vpd;
+        m_vpf = vpf;
     }
 
 private:
@@ -108,6 +110,7 @@ private:
     std::array<double, 3> m_vpr{55.0, 0.0, 25.0};
     std::array<double, 3> m_vpt{0.0, 0.0, 0.0};
     double                m_vpd = 140.0;
+    double                m_vpf = 22.5;
 
     // Guards against unbounded recursion in user-defined functions (e.g. a
     // missing base case) blowing the native call stack. Silent cap, no

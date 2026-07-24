@@ -236,8 +236,11 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         leaf.kind = CsgLeaf::Kind::Sphere;
         for (const auto& [name, exprPtr] : p.params)
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
-        // diameter → radius
-        if (!leaf.params.count("r") && leaf.params.count("d"))
+        // diameter → radius: d always wins over r when both are given
+        // (order-independent — confirmed against real OpenSCAD, which
+        // resolves d before r regardless of argument order), not just when
+        // r is absent.
+        if (leaf.params.count("d"))
             leaf.params["r"] = leaf.params["d"] * 0.5;
         break;
 
@@ -251,12 +254,13 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
             leaf.params["h"] = leaf.params["_pos0"];
         if (!leaf.params.count("r") && leaf.params.count("_pos1"))
             leaf.params["r"] = leaf.params["_pos1"];
-        // diameter → radius conversions
-        if (!leaf.params.count("r") && leaf.params.count("d"))
+        // diameter → radius conversions: d/d1/d2 always win over r/r1/r2
+        // when both are given (see the sphere case above for why).
+        if (leaf.params.count("d"))
             leaf.params["r"] = leaf.params["d"] * 0.5;
-        if (!leaf.params.count("r1") && leaf.params.count("d1"))
+        if (leaf.params.count("d1"))
             leaf.params["r1"] = leaf.params["d1"] * 0.5;
-        if (!leaf.params.count("r2") && leaf.params.count("d2"))
+        if (leaf.params.count("d2"))
             leaf.params["r2"] = leaf.params["d2"] * 0.5;
         break;
 
@@ -299,8 +303,9 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         leaf.kind = CsgLeaf::Kind::Circle2D;
         for (const auto& [name, exprPtr] : p.params)
             leaf.params[name] = m_interp->evalNumber(*exprPtr);
-        // diameter → radius
-        if (!leaf.params.count("r") && leaf.params.count("d"))
+        // diameter → radius: d always wins over r when both are given
+        // (see the sphere case above for why).
+        if (leaf.params.count("d"))
             leaf.params["r"] = leaf.params["d"] * 0.5;
         break;
 
@@ -900,7 +905,12 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
             if (sv.isNumber()) {
                 ext.params["scale_x"] = sv.asNumber();
                 ext.params["scale_y"] = sv.asNumber();
-            } else if (sv.isVector() && sv.asVec().size() >= 2) {
+            } else if (sv.isVector() && sv.asVec().size() == 2) {
+                // Exactly 2 elements — anything else (e.g. a stray 3-vector)
+                // isn't a valid linear_extrude() scale and OpenSCAD ignores
+                // it entirely (falls back to no scaling), rather than using
+                // just the first two components — confirmed against real
+                // OpenSCAD's STL output (docs/roadmap.md v3.9).
                 ext.params["scale_x"] = sv.asVec()[0].asNumber();
                 ext.params["scale_y"] = sv.asVec()[1].asNumber();
             }
@@ -1377,11 +1387,18 @@ CsgNodePtr CsgEvaluator::evalPolyhedron(const ModuleCallNode& call, const glm::m
         }
         // Fan-triangulate from the face's first vertex — OpenSCAD faces are
         // assumed planar/convex, matching OpenSCAD's own triangulation for
-        // that common case.
+        // that common case. OpenSCAD's documented polyhedron() convention
+        // lists each face's vertices clockwise as seen from outside the
+        // solid; Manifold (like most engines) expects counter-clockwise
+        // from outside, so the last two indices are swapped to flip each
+        // triangle's winding — without this, every polyhedron() came out
+        // with inverted normals and exactly negated volume (confirmed via
+        // corpus comparison against real OpenSCAD's STL export: see
+        // docs/roadmap.md v3.9).
         for (std::size_t i = 1; i + 1 < faceIdx.size(); ++i) {
             indices.push_back(faceIdx[0]);
-            indices.push_back(faceIdx[i]);
             indices.push_back(faceIdx[i + 1]);
+            indices.push_back(faceIdx[i]);
         }
     }
 

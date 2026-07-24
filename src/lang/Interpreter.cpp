@@ -10,6 +10,55 @@ static constexpr double kRad2Deg = 180.0 / kPi;
 
 namespace chisel::lang {
 
+// Textual representation used by str() for any argument that isn't itself a
+// top-level string (str()'s caller special-cases that: a bare string arg is
+// appended verbatim/unquoted, but a string nested inside a vector — handled
+// here — is quoted, matching OpenSCAD: str("hi") == "hi" but
+// str([1,"hi"]) == "[1, \"hi\"]"). Also backs echo()/assert() message
+// formatting via CsgEvaluator::formatValue, which mirrors this same shape at
+// the CSG-evaluator layer (duplicated rather than shared because Interpreter
+// has no dependency on CsgEvaluator).
+static std::string formatValueRec(const Value& v) {
+    if (v.isNumber()) {
+        double n = v.asNumber();
+        if (std::isnan(n)) return "nan";
+        if (std::isinf(n)) return n < 0 ? "-inf" : "inf";
+        char buf[32];
+        constexpr double kMaxExactInt = 9.007199254740992e15; // 2^53
+        if (std::abs(n) < kMaxExactInt && n == static_cast<long long>(n))
+            std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(n));
+        else
+            std::snprintf(buf, sizeof(buf), "%g", n);
+        return buf;
+    }
+    if (v.isBool())   return v.asBool() ? "true" : "false";
+    if (v.isString()) return "\"" + v.asString() + "\"";
+    if (v.isVector()) {
+        std::string s = "[";
+        for (std::size_t i = 0; i < v.asVec().size(); ++i) {
+            if (i > 0) s += ", ";
+            s += formatValueRec(v.asVec()[i]);
+        }
+        return s + "]";
+    }
+    if (v.isRange())
+        return "[" + formatValueRec(Value::fromNumber(v.rangeStart)) + ":" +
+               formatValueRec(Value::fromNumber(v.rangeStep)) + ":" +
+               formatValueRec(Value::fromNumber(v.rangeEnd)) + "]";
+    if (v.isFunction()) {
+        std::string s = "function(";
+        if (v.closure && v.closure->def) {
+            const auto& params = v.closure->def->params;
+            for (std::size_t i = 0; i < params.size(); ++i) {
+                if (i > 0) s += ", ";
+                s += params[i].name;
+            }
+        }
+        return s + ")";
+    }
+    return "undef";
+}
+
 // Structural equality used by the `==`/`!=` fallback for non-numeric,
 // non-bool types (string content, and element-wise vector comparison).
 static bool valEqRec(const Value& a, const Value& b) {
@@ -98,6 +147,8 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                                         Value::fromNumber(m_vpt[2])});
             if (node.name == "$vpd")
                 return Value::fromNumber(m_vpd);
+            if (node.name == "$vpf")
+                return Value::fromNumber(m_vpf);
             return Value::undef();
         }
 
@@ -322,6 +373,14 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                             setVar(param.name, Value::undef()); // unbound → undef, not the caller's same-named variable
                     }
                 }
+                // A $-prefixed named arg (e.g. f($fn=64, 1)) is a special-
+                // variable override, visible inside the call regardless of
+                // whether the function declares a same-named parameter —
+                // unlike an ordinary extra named arg, which OpenSCAD just
+                // discards. Mirrors CsgEvaluator::evalModuleCall's identical
+                // treatment for user-defined modules.
+                for (const auto& [n, v] : namedArgs)
+                    if (!n.empty() && n[0] == '$') setVar(n, v);
 
                 ++m_callDepth;
                 Value result = evaluate(*def.body);
@@ -482,6 +541,9 @@ Value Interpreter::callClosure(Value fnVal,
                 setVar(param.name, Value::undef());
         }
     }
+    // See the matching comment in the named FunctionDef call path above.
+    for (const auto& [n, v] : namedArgs)
+        if (!n.empty() && n[0] == '$') setVar(n, v);
 
     ++m_callDepth;
     Value result = evaluate(*def.body);
@@ -514,8 +576,10 @@ Value Interpreter::callBuiltin(const std::string& name,
     if (name == "ceil")  return args.size() >= 1 ? Value::fromNumber(std::ceil(num(0)))  : Value::undef();
     if (name == "round") return args.size() >= 1 ? Value::fromNumber(std::round(num(0))) : Value::undef();
     if (name == "exp")   return args.size() >= 1 ? finite(std::exp(num(0)))  : Value::undef();
-    if (name == "log")   return args.size() >= 1 ? finite(std::log(num(0)))  : Value::undef();
-    if (name == "log10") return args.size() >= 1 ? finite(std::log10(num(0))): Value::undef();
+    // OpenSCAD's log() is base-10; natural log is the separate ln() builtin
+    // (easy to get backwards since C's log() is natural log).
+    if (name == "log")   return args.size() >= 1 ? finite(std::log10(num(0))): Value::undef();
+    if (name == "ln")    return args.size() >= 1 ? finite(std::log(num(0)))  : Value::undef();
     if (name == "sign")  return args.size() >= 1
                                ? Value::fromNumber(num(0) > 0.0 ? 1.0 : num(0) < 0.0 ? -1.0 : 0.0)
                                : Value::undef();
@@ -613,26 +677,11 @@ Value Interpreter::callBuiltin(const std::string& name,
     // ---- String ----
     if (name == "str") {
         std::string out;
-        for (const auto& arg : args) {
-            if (arg.isNumber()) {
-                double v = arg.asNumber();
-                if (std::isnan(v)) {
-                    out += "nan";
-                } else if (std::isinf(v)) {
-                    out += v < 0 ? "-inf" : "inf";
-                } else {
-                    char buf[32];
-                    constexpr double kMaxExactInt = 9.007199254740992e15; // 2^53
-                    if (std::abs(v) < kMaxExactInt && v == static_cast<long long>(v))
-                        std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(v));
-                    else
-                        std::snprintf(buf, sizeof(buf), "%g", v);
-                    out += buf;
-                }
-            } else if (arg.isBool())   { out += arg.asBool() ? "true" : "false"; }
-            else if (arg.isString())   { out += arg.asString(); }
-            else if (arg.isUndef())    { out += "undef"; }
-        }
+        for (const auto& arg : args)
+            // A bare string argument is appended unquoted; every other type
+            // (including a string nested inside a vector/range) goes through
+            // the quoting/bracketing formatter — see formatValueRec.
+            out += arg.isString() ? arg.asString() : formatValueRec(arg);
         return Value::fromString(std::move(out));
     }
     if (name == "chr") {

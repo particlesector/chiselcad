@@ -22,6 +22,7 @@ struct ViewportState {
     double vpr[3] = {55.0, 0.0, 25.0}; // [x,y,z] rotation degrees
     double vpt[3] = {0.0, 0.0, 0.0};   // [x,y,z] translation (orbit target)
     double vpd    = 140.0;             // viewport distance
+    double vpf    = 22.5;              // viewport field-of-view degrees
 };
 
 enum class BuildPhase : int {

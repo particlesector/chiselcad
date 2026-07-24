@@ -194,6 +194,22 @@ TEST_CASE("CsgEval:sphere diameter form", "[csg]") {
     REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(5.0));
 }
 
+TEST_CASE("CsgEval:d always overrides r when both are given, order-independent",
+          "[csg][v39][bugfix]") {
+    // Confirmed against real OpenSCAD (docs/roadmap.md v3.9): d wins over r
+    // regardless of which is given first, not just when r is absent —
+    // sphere(r=1, d=10) means radius 5, not 1.
+    REQUIRE(asLeaf(evaluate("sphere(r=1, d=10);").roots[0]).params.at("r") == Approx(5.0));
+    REQUIRE(asLeaf(evaluate("sphere(d=10, r=1);").roots[0]).params.at("r") == Approx(5.0));
+    REQUIRE(asLeaf(evaluate("circle(r=1, d=10);").roots[0]).params.at("r") == Approx(5.0));
+
+    auto c1 = asLeaf(evaluate("cylinder(h=1, r=1, d=10);").roots[0]);
+    REQUIRE(c1.params.at("r") == Approx(5.0));
+    auto c2 = asLeaf(evaluate("cylinder(h=1, r1=1, d1=10, r2=1, d2=10);").roots[0]);
+    REQUIRE(c2.params.at("r1") == Approx(5.0));
+    REQUIRE(c2.params.at("r2") == Approx(5.0));
+}
+
 // ---------------------------------------------------------------------------
 // Identity transform on un-transformed primitives
 // ---------------------------------------------------------------------------
@@ -987,6 +1003,20 @@ TEST_CASE("CsgEval:echo does not produce geometry", "[csg][tier-c]") {
     REQUIRE(s.echoMessages.size() == 1);
 }
 
+TEST_CASE("CsgEval:$special named arg to a user module call parses and overrides scope",
+          "[csg][v37]") {
+    // Previously `m($fn=64)` failed to parse at all here (the generic
+    // module-call argument list only recognized plain-identifier named
+    // args) — found via a corpus comparison against OpenSCAD's own test
+    // suite (see docs/roadmap.md v3.7). CsgEvaluator::evalModuleCall
+    // already bound any named arg into scope regardless of whether it
+    // matched a declared parameter, so once the parser accepts the syntax,
+    // the override is visible inside the module body for free.
+    auto s = evaluate("module m() { echo($fn); }\nm($fn = 64);");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0] == "ECHO: 64");
+}
+
 TEST_CASE("CsgEval:echo formats named arguments as name = value", "[csg][v35]") {
     auto s = evaluate("echo(x=1, \"hi\", y=2);");
     REQUIRE(s.echoMessages.size() == 1);
@@ -1201,6 +1231,27 @@ TEST_CASE("CsgEval:linear_extrude slices param is threaded into the IR", "[csg][
     REQUIRE(ext.params.at("slices") == Approx(50.0));
     REQUIRE(ext.params.at("twist") == Approx(90.0));
     REQUIRE(ext.params.at("height") == Approx(10.0));
+}
+
+TEST_CASE("CsgEval:linear_extrude scale must be exactly a 2-vector, else no scaling",
+          "[csg][v39][bugfix]") {
+    // A malformed 3-element scale vector isn't a valid linear_extrude()
+    // scale in OpenSCAD — it's rejected entirely (no scale_x/scale_y set,
+    // meaning MeshEvaluator falls back to unscaled 1.0/1.0), not "take the
+    // first two components" as this used to do. Confirmed against real
+    // OpenSCAD's STL output (docs/roadmap.md v3.9): linear_extrude(height=20,
+    // scale=[4,5,6]) square(10) comes out as a plain unscaled 10x10x20 prism
+    // (volume 2000), not scaled by 4/5 as ChiselCAD previously did.
+    auto bad = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=[4,5,6]) square(10);").roots[0]);
+    REQUIRE_FALSE(bad.params.count("scale_x"));
+    REQUIRE_FALSE(bad.params.count("scale_y"));
+
+    // A genuine 2-vector still works.
+    auto good = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=[4,5]) square(10);").roots[0]);
+    REQUIRE(good.params.at("scale_x") == Approx(4.0));
+    REQUIRE(good.params.at("scale_y") == Approx(5.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -1623,6 +1674,28 @@ TEST_CASE("CsgEval:polyhedron fan-triangulates an n-gon face", "[csg][tier-f]") 
     REQUIRE(leaf.meshPositions.size() == 4);
     REQUIRE(leaf.meshIndices.size() == 6); // one quad -> 2 triangles
     REQUIRE(s.evalDiags.empty());
+}
+
+TEST_CASE("CsgEval:polyhedron flips face winding to Manifold's CCW-from-outside convention",
+          "[csg][v39][bugfix]") {
+    // OpenSCAD's documented polyhedron() convention lists each face's
+    // vertices clockwise as seen from outside the solid; Manifold expects
+    // counter-clockwise from outside. Before this fix, every polyhedron()
+    // came out with exactly negated volume — confirmed via corpus
+    // comparison against real OpenSCAD's STL export (docs/roadmap.md v3.9)
+    // — because the fan-triangulation preserved the input winding verbatim
+    // instead of flipping it. For face [0,1,2,3], fan-triangulating from
+    // vertex 0 with the winding flipped produces (0,2,1) then (0,3,2), not
+    // the input-order (0,1,2) then (0,2,3).
+    auto s = evaluate("polyhedron(points=[[0,0,0],[1,0,0],[1,1,0],[0,1,0]], faces=[[0,1,2,3]]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.meshIndices.size() == 6);
+    REQUIRE(leaf.meshIndices[0] == 0);
+    REQUIRE(leaf.meshIndices[1] == 2);
+    REQUIRE(leaf.meshIndices[2] == 1);
+    REQUIRE(leaf.meshIndices[3] == 0);
+    REQUIRE(leaf.meshIndices[4] == 3);
+    REQUIRE(leaf.meshIndices[5] == 2);
 }
 
 TEST_CASE("CsgEval:polyhedron accepts triangles= as an alias for faces=", "[csg][tier-f]") {
