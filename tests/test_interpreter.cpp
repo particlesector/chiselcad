@@ -954,6 +954,28 @@ TEST_CASE("Interp:$special named arg overrides a special var inside a named func
     REQUIRE(ctx.interp.evalNumber(plainCall) == Approx(0.0));
 }
 
+TEST_CASE("Interp:$special named arg overrides a special var inside a function-literal call",
+          "[interp][v37]") {
+    // Same override as the named-function case above, but through
+    // callClosure() instead of the named-FunctionDef path — a separate copy
+    // of the same binding loop (Interpreter.cpp), so it needs its own
+    // coverage rather than relying on the named-function test to catch a
+    // regression here too (per PR #92 review).
+    auto ctx = loadEnvWithFuncs("h = function() $fn;");
+    FunctionCall fc;
+    fc.name = "h";
+    FunctionArg dollarArg;
+    dollarArg.name  = "$fn";
+    dollarArg.value = makeExpr(NumberLit{64.0, {}});
+    fc.args.push_back(std::move(dollarArg));
+    ExprNode call = std::move(fc);
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(64.0));
+
+    // Without the override, $fn falls back to whatever's in scope (0 here).
+    ExprNode plainCall = makeCall("h", {});
+    REQUIRE(ctx.interp.evalNumber(plainCall) == Approx(0.0));
+}
+
 TEST_CASE("Interp:copying a function-literal variable does not leak into the original's scope", "[interp][v36]") {
     // `h = f;` is a plain copy, not a new literal — it must not retroactively
     // mutate f's captured environment (e.g. by injecting "h" as a self-ref).
