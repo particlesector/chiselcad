@@ -3,6 +3,8 @@
 #include "lang/Interpreter.h"
 #include "lang/Lexer.h"
 #include "lang/Parser.h"
+#include <cmath>
+#include <limits>
 #include <memory>
 
 using namespace chisel::lang;
@@ -26,6 +28,24 @@ static double evalNum(std::string_view src) {
     REQUIRE(result.assignments.size() == 1);
     Interpreter interp;
     return interp.evalNumber(*result.assignments[0].value);
+}
+
+// Same as evalNum, but returns the raw Value instead of coercing to double
+// via evalNumber's geometry-safe (finite-only) path — use this whenever the
+// expected result may itself be nan/inf, a string, undef, etc.
+static Value evalVal(std::string_view src) {
+    std::string full = "_v = ";
+    full += src;
+    full += ";";
+    Lexer  lexer(full);
+    auto   tokens = lexer.tokenize();
+    REQUIRE_FALSE(lexer.hasErrors());
+    Parser parser(std::move(tokens));
+    auto   result = parser.parse();
+    REQUIRE_FALSE(parser.hasErrors());
+    REQUIRE(result.assignments.size() == 1);
+    Interpreter interp;
+    return interp.evaluate(*result.assignments[0].value);
 }
 
 // Build an Interpreter with assignments loaded from src.
@@ -247,6 +267,17 @@ TEST_CASE("Interp:let expression", "[interp][tier-a]") {
     REQUIRE(evalNum("let(x=3, y=4) x + y") == Approx(7.0));
 }
 
+TEST_CASE("Interp:let binding a $special variable", "[interp][bugfix]") {
+    // let($x=...) previously failed to parse at all — parseLetExpr/
+    // parseLetNode only accepted TokenKind::Ident for a binding name, not
+    // TokenKind::SpecialVar (e.g. $fn), the same gap the $special=value
+    // call-argument fix already covered for module/function calls. Found
+    // via OpenSCAD's own function-scope.scad corpus file, whose
+    // scope_leak_config test chains let($x=33) let($x=42) ... .
+    REQUIRE(evalNum("let($x=42) $x") == Approx(42.0));
+    REQUIRE(evalNum("let($x=33) let($x=42) $x") == Approx(42.0));
+}
+
 TEST_CASE("Interp:let does not leak into outer scope", "[interp][tier-a]") {
     // after let expression, the outer scope is restored
     std::string src = "outer = 99; _v = let(outer = 1) outer;";
@@ -462,6 +493,21 @@ TEST_CASE("Interp:norm", "[interp][tier-a]") {
     REQUIRE(evalNum("norm([0,0,1])") == Approx(1.0));
 }
 
+TEST_CASE("Interp:norm requires every element to be a number", "[interp][bugfix]") {
+    // norm() used to silently skip non-number elements instead of treating
+    // the whole call as invalid (norm([1,2,"a"]) was computing norm([1,2])
+    // == sqrt(5) instead of undef). Verified against OpenSCAD's own
+    // norm-tests.scad regression file (live 2021.01 binary).
+    REQUIRE(evalVal("norm([1, 2, \"a\"])").isUndef());
+    REQUIRE(evalVal("norm([1, 2, []])").isUndef());
+    REQUIRE(evalVal("norm([1, 2, [1]])").isUndef());
+    // nan/inf elements *do* still contribute — only non-numbers are
+    // rejected.
+    REQUIRE(std::isnan(evalVal("norm([1, 2, 0/0])").asNumber()));
+    REQUIRE(evalVal("norm([1, 2, 1/0])").asNumber() ==
+            std::numeric_limits<double>::infinity());
+}
+
 TEST_CASE("Interp:sign", "[interp][tier-a]") {
     REQUIRE(evalNum("sign(5)")  == Approx(1.0));
     REQUIRE(evalNum("sign(-3)") == Approx(-1.0));
@@ -473,6 +519,22 @@ TEST_CASE("Interp:cross product", "[interp][tier-a]") {
     REQUIRE(evalNum("cross([1,0,0],[0,1,0])[0]") == Approx(0.0));
 }
 
+TEST_CASE("Interp:cross product 2D", "[interp][bugfix]") {
+    // cross([ax,ay],[bx,by]) == ax*by - ay*bx, a scalar — a distinct
+    // OpenSCAD feature from the 3D vector cross product, previously
+    // unimplemented entirely (verified against OpenSCAD's own
+    // cross-tests.scad: cross([2,3],[5,6]) == -3).
+    REQUIRE(evalNum("cross([2,3],[5,6])") == Approx(-3.0));
+}
+
+TEST_CASE("Interp:cross product rejects non-finite components", "[interp][bugfix]") {
+    // Unlike plain arithmetic, cross() treats a nan/inf component as
+    // invalid input (undef), not something to propagate — verified against
+    // a live OpenSCAD 2021.01 binary via cross-tests.scad.
+    REQUIRE(evalVal("cross([2, 0/0, -3], [0, 4, 5])").isUndef());
+    REQUIRE(evalVal("cross([2, 1/0, -3], [0, 4, 5])").isUndef());
+}
+
 TEST_CASE("Interp:str function", "[interp][tier-a]") {
     REQUIRE(evalNum("len(str(42))")    == Approx(2.0));
     REQUIRE(evalNum("len(str(3.14))")  == Approx(4.0));
@@ -481,21 +543,6 @@ TEST_CASE("Interp:str function", "[interp][tier-a]") {
 // ---------------------------------------------------------------------------
 // Tier B: string literals
 // ---------------------------------------------------------------------------
-static Value evalVal(std::string_view src) {
-    std::string full = "_v = ";
-    full += src;
-    full += ";";
-    Lexer  lexer(full);
-    auto   tokens = lexer.tokenize();
-    REQUIRE_FALSE(lexer.hasErrors());
-    Parser parser(std::move(tokens));
-    auto   result = parser.parse();
-    REQUIRE_FALSE(parser.hasErrors());
-    REQUIRE(result.assignments.size() == 1);
-    Interpreter interp;
-    return interp.evaluate(*result.assignments[0].value);
-}
-
 TEST_CASE("Interp:string literal basic", "[interp][tier-b]") {
     Value v = evalVal("\"hello\"");
     REQUIRE(v.isString());
@@ -530,7 +577,7 @@ TEST_CASE("Interp:str formats vectors/ranges, quoting nested strings", "[interp]
     // nested inside a vector is quoted — matches OpenSCAD.
     REQUIRE(evalVal("str([1,2,3])").asString()      == "[1, 2, 3]");
     REQUIRE(evalVal("str([1, \"a\"])").asString()   == "[1, \"a\"]");
-    REQUIRE(evalVal("str([0:2:6])").asString()      == "[0:2:6]");
+    REQUIRE(evalVal("str([0:2:6])").asString()      == "[0 : 2 : 6]");
     REQUIRE(evalVal("str([[1,2],[3,4]])").asString() == "[[1, 2], [3, 4]]");
 }
 
@@ -653,15 +700,31 @@ TEST_CASE("Interp:vector add/sub length mismatch is undef", "[interp]") {
 }
 
 // ---------------------------------------------------------------------------
-// Math domain errors return undef instead of NaN/Inf (issue #43)
+// Math domain errors propagate nan/inf like real OpenSCAD, not undef.
+// Verified against a live OpenSCAD 2021.01 binary and OpenSCAD's own
+// inf-tests.scad/norm-tests.scad/cross-tests.scad regression corpus: e.g.
+// sqrt(-1) => nan, log(0) => -inf there, not undef.
 // ---------------------------------------------------------------------------
-TEST_CASE("Interp:math domain errors return undef", "[interp]") {
-    REQUIRE(evalVal("sqrt(-1)").isUndef());
-    REQUIRE(evalVal("log(-1)").isUndef());
-    REQUIRE(evalVal("log(0)").isUndef());
-    REQUIRE(evalVal("asin(2)").isUndef());
-    REQUIRE(evalVal("acos(2)").isUndef());
+TEST_CASE("Interp:math domain errors return nan/inf, matching OpenSCAD", "[interp]") {
+    // evalVal (raw Value, as echo()/str() see it) — not evalNum, which
+    // routes through evalNumber()'s deliberate finite-only clamp for
+    // geometry-parameter consumers (see evalNumber's doc comment).
+    REQUIRE(std::isnan(evalVal("sqrt(-1)").asNumber()));
+    REQUIRE(std::isnan(evalVal("log(-1)").asNumber()));
+    REQUIRE(evalVal("log(0)").asNumber() == -std::numeric_limits<double>::infinity());
+    REQUIRE(std::isnan(evalVal("asin(2)").asNumber()));
+    REQUIRE(std::isnan(evalVal("acos(2)").asNumber()));
     REQUIRE(evalNum("sqrt(4)") == Approx(2.0));
+}
+
+TEST_CASE("Interp:evalNumber (geometry-parameter path) folds nan/inf to 0.0", "[interp]") {
+    // Unlike the raw language-level Value (previous test), a value consumed
+    // as a CSG leaf/range parameter via evalNumber must never be nan/inf —
+    // that would reach Manifold, which evalNumber's non-finite guard
+    // exists specifically to prevent.
+    REQUIRE(evalNum("sqrt(-1)") == 0.0);
+    REQUIRE(evalNum("1/0") == 0.0);
+    REQUIRE(evalNum("0/0") == 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -691,9 +754,12 @@ TEST_CASE("Interp:index with huge index returns undef", "[interp]") {
 }
 
 TEST_CASE("Interp:str never leaks nan text with a sign glitch", "[interp]") {
-    // sqrt(-1) is now undef (see domain-error fix), so str() sees Undef,
-    // not a raw NaN payload.
-    REQUIRE(evalVal("str(sqrt(-1))").asString() == "undef");
+    // sqrt(-1) is a real nan Value (matching OpenSCAD), and str() must
+    // print plain "nan" — never "-nan", which C++'s 0.0/0.0 can produce via
+    // an implementation-defined negative sign bit that isn't meaningful for
+    // NaN.
+    REQUIRE(evalVal("str(sqrt(-1))").asString() == "nan");
+    REQUIRE(evalVal("str(0/0)").asString() == "nan");
 }
 
 TEST_CASE("Interp:chr rejects huge/non-finite codepoints", "[interp]") {
@@ -1186,11 +1252,16 @@ TEST_CASE("Interp:search single character returns a flat index vector", "[interp
 }
 
 TEST_CASE("Interp:search with num_returns_per_match=0 returns every match", "[interp][v35]") {
+    // A non-default num_returns_per_match nests even a single-character
+    // match_value's results in its own sub-vector (verified against a live
+    // OpenSCAD 2021.01 binary: search("a", "abcdabcd", 0) == [[0, 4]]).
     Value v = evalVal("search(\"a\", \"abcdabcd\", 0)");
     REQUIRE(v.isVector());
-    REQUIRE(v.asVec().size() == 2);
-    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0));
-    REQUIRE(v.asVec()[1].asNumber() == Approx(4.0));
+    REQUIRE(v.asVec().size() == 1);
+    REQUIRE(v.asVec()[0].isVector());
+    REQUIRE(v.asVec()[0].asVec().size() == 2);
+    REQUIRE(v.asVec()[0].asVec()[0].asNumber() == Approx(0.0));
+    REQUIRE(v.asVec()[0].asVec()[1].asNumber() == Approx(4.0));
 }
 
 TEST_CASE("Interp:search with no match returns an empty vector", "[interp][v35]") {
@@ -1199,8 +1270,22 @@ TEST_CASE("Interp:search with no match returns an empty vector", "[interp][v35]"
     REQUIRE(v.asVec().empty());
 }
 
-TEST_CASE("Interp:search with a multi-character match_value nests one result per character", "[interp][v35]") {
+TEST_CASE("Interp:search with a multi-character match_value inlines one index per character at the default num_returns_per_match", "[interp][v35]") {
+    // At the default num_returns_per_match=1, each character's single match
+    // is inlined directly into the outer vector, not nested in its own
+    // sub-vector (verified against a live OpenSCAD 2021.01 binary:
+    // search("abc", "abcdabcd") == [0, 1, 2], matching OpenSCAD's own
+    // search-tests.scad regression file: search("abe", table) == [0, 1, 8]).
     Value v = evalVal("search(\"abc\", \"abcdabcd\")");
+    REQUIRE(v.isVector());
+    REQUIRE(v.asVec().size() == 3);
+    REQUIRE(v.asVec()[0].asNumber() == Approx(0.0)); // 'a' -> 0
+    REQUIRE(v.asVec()[1].asNumber() == Approx(1.0)); // 'b' -> 1
+    REQUIRE(v.asVec()[2].asNumber() == Approx(2.0)); // 'c' -> 2
+}
+
+TEST_CASE("Interp:search with num_returns_per_match != 1 nests one sub-vector per character", "[interp][v35]") {
+    Value v = evalVal("search(\"abc\", \"abcdabcd\", 0)");
     REQUIRE(v.isVector());
     REQUIRE(v.asVec().size() == 3);
     for (const auto& e : v.asVec()) REQUIRE(e.isVector());

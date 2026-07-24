@@ -3,6 +3,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 
 using Catch::Approx;
 
@@ -156,6 +157,23 @@ TEST_CASE("Lexer:exponent with signed digits", "[lexer]") {
     auto t = lex("5e+3");
     REQUIRE(t.size() == 1);
     REQUIRE(t[0].numberValue() == Approx(5000.0));
+}
+
+TEST_CASE("Lexer:out-of-range numeric literal saturates instead of throwing", "[lexer][bugfix]") {
+    // Token::numberValue() used std::stod, which throws std::out_of_range
+    // (uncaught -> process abort) for a literal like 1e400 that overflows
+    // double range. strtod instead saturates to +/-HUGE_VAL, matching how
+    // a real C/C++ number parser (and OpenSCAD's own lexer) handles this —
+    // a malformed-but-syntactically-valid literal must never crash the
+    // whole process.
+    auto t = lex("1e400");
+    REQUIRE(t.size() == 1);
+    REQUIRE(t[0].kind == TokenKind::Number);
+    REQUIRE(std::isinf(t[0].numberValue()));
+    REQUIRE(t[0].numberValue() > 0.0);
+
+    auto tNeg = lex("-1e400");
+    REQUIRE(std::isinf(tNeg[1].numberValue()));
 }
 
 TEST_CASE("Lexer:bare 'e' after number is not consumed as exponent", "[lexer]") {

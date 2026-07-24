@@ -139,8 +139,8 @@ static std::string formatValueRec(const Value& v) {
         return s + "]";
     }
     if (v.isRange())
-        return "[" + formatValueRec(Value::fromNumber(v.rangeStart)) + ":" +
-               formatValueRec(Value::fromNumber(v.rangeStep)) + ":" +
+        return "[" + formatValueRec(Value::fromNumber(v.rangeStart)) + " : " +
+               formatValueRec(Value::fromNumber(v.rangeStep)) + " : " +
                formatValueRec(Value::fromNumber(v.rangeEnd)) + "]";
     if (v.isFunction()) {
         std::string s = "function(";
@@ -273,10 +273,12 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 case BinaryExpr::Op::Add: return Value::fromNumber(l + r);
                 case BinaryExpr::Op::Sub: return Value::fromNumber(l - r);
                 case BinaryExpr::Op::Mul: return Value::fromNumber(l * r);
-                case BinaryExpr::Op::Div: return r != 0.0
-                        ? Value::fromNumber(l / r) : Value::undef();
-                case BinaryExpr::Op::Mod: return r != 0.0
-                        ? Value::fromNumber(std::fmod(l, r)) : Value::undef();
+                // IEEE 754 division/fmod already produce the right result for
+                // r == 0 (+/-inf or nan) and non-finite operands — matching
+                // real OpenSCAD, which lets these propagate as nan/inf rather
+                // than collapsing them to undef.
+                case BinaryExpr::Op::Div: return Value::fromNumber(l / r);
+                case BinaryExpr::Op::Mod: return Value::fromNumber(std::fmod(l, r));
                 case BinaryExpr::Op::Eq:  return Value::fromBool(l == r);
                 case BinaryExpr::Op::Ne:  return Value::fromBool(l != r);
                 case BinaryExpr::Op::Lt:  return Value::fromBool(l <  r);
@@ -522,11 +524,17 @@ Value Interpreter::evaluate(const ExprNode& expr) {
 }
 
 // ---------------------------------------------------------------------------
-// evalNumber — evaluate and coerce to double
+// evalNumber — evaluate and coerce to double, for consumers that feed the
+// result straight into geometry (CsgLeaf/extrusion params, range bounds):
+// arithmetic can legitimately produce nan/inf as a real Number now (see
+// evaluate()'s BinaryExpr::Div/Mod and callBuiltin()'s math functions,
+// which match OpenSCAD's own IEEE 754 propagation), but those aren't safe
+// to hand to Manifold or a range expansion, so this boundary — unlike
+// evaluate() itself — folds them down to 0.0 same as any other non-number.
 // ---------------------------------------------------------------------------
 double Interpreter::evalNumber(const ExprNode& expr) {
     Value v = evaluate(expr);
-    if (v.isNumber()) return v.asNumber();
+    if (v.isNumber()) return std::isfinite(v.asNumber()) ? v.asNumber() : 0.0;
     if (v.isBool())   return v.asBool() ? 1.0 : 0.0;
     return 0.0;
 }
@@ -666,24 +674,21 @@ Value Interpreter::callBuiltin(const std::string& name,
     };
 
     // ---- Math ----
-    // Wrap a possibly domain-erroring math result: NaN/Inf becomes undef,
-    // matching the Div/Mod convention of returning undef on error rather
-    // than letting NaN/Inf silently poison downstream arithmetic.
-    auto finite = [](double v) -> Value {
-        return std::isfinite(v) ? Value::fromNumber(v) : Value::undef();
-    };
-
+    // A domain-erroring math result (e.g. sqrt(-1), ln(0)) is a legitimate
+    // nan/inf Number, not undef — matching real OpenSCAD, which lets these
+    // propagate as IEEE 754 values (confirmed against a live 2021.01 build:
+    // sqrt(-1) => nan, ln(0) => -inf, etc.), not collapse to undef.
     if (name == "abs")   return args.size() >= 1 ? Value::fromNumber(std::abs(num(0)))  : Value::undef();
-    if (name == "sqrt")  return args.size() >= 1 ? finite(std::sqrt(num(0))) : Value::undef();
-    if (name == "pow")   return args.size() >= 2 ? finite(std::pow(num(0), num(1))) : Value::undef();
+    if (name == "sqrt")  return args.size() >= 1 ? Value::fromNumber(std::sqrt(num(0))) : Value::undef();
+    if (name == "pow")   return args.size() >= 2 ? Value::fromNumber(std::pow(num(0), num(1))) : Value::undef();
     if (name == "floor") return args.size() >= 1 ? Value::fromNumber(std::floor(num(0))) : Value::undef();
     if (name == "ceil")  return args.size() >= 1 ? Value::fromNumber(std::ceil(num(0)))  : Value::undef();
     if (name == "round") return args.size() >= 1 ? Value::fromNumber(std::round(num(0))) : Value::undef();
-    if (name == "exp")   return args.size() >= 1 ? finite(std::exp(num(0)))  : Value::undef();
+    if (name == "exp")   return args.size() >= 1 ? Value::fromNumber(std::exp(num(0)))  : Value::undef();
     // OpenSCAD's log() is base-10; natural log is the separate ln() builtin
     // (easy to get backwards since C's log() is natural log).
-    if (name == "log")   return args.size() >= 1 ? finite(std::log10(num(0))): Value::undef();
-    if (name == "ln")    return args.size() >= 1 ? finite(std::log(num(0)))  : Value::undef();
+    if (name == "log")   return args.size() >= 1 ? Value::fromNumber(std::log10(num(0))): Value::undef();
+    if (name == "ln")    return args.size() >= 1 ? Value::fromNumber(std::log(num(0)))  : Value::undef();
     if (name == "sign")  return args.size() >= 1
                                ? Value::fromNumber(num(0) > 0.0 ? 1.0 : num(0) < 0.0 ? -1.0 : 0.0)
                                : Value::undef();
@@ -692,8 +697,8 @@ Value Interpreter::callBuiltin(const std::string& name,
     if (name == "sin")   return args.size() >= 1 ? Value::fromNumber(std::sin(num(0) * kDeg2Rad)) : Value::undef();
     if (name == "cos")   return args.size() >= 1 ? Value::fromNumber(std::cos(num(0) * kDeg2Rad)) : Value::undef();
     if (name == "tan")   return args.size() >= 1 ? Value::fromNumber(std::tan(num(0) * kDeg2Rad)) : Value::undef();
-    if (name == "asin")  return args.size() >= 1 ? finite(std::asin(num(0)) * kRad2Deg) : Value::undef();
-    if (name == "acos")  return args.size() >= 1 ? finite(std::acos(num(0)) * kRad2Deg) : Value::undef();
+    if (name == "asin")  return args.size() >= 1 ? Value::fromNumber(std::asin(num(0)) * kRad2Deg) : Value::undef();
+    if (name == "acos")  return args.size() >= 1 ? Value::fromNumber(std::acos(num(0)) * kRad2Deg) : Value::undef();
     if (name == "atan")  return args.size() >= 1 ? Value::fromNumber(std::atan(num(0)) * kRad2Deg) : Value::undef();
     if (name == "atan2") return args.size() >= 2 ? Value::fromNumber(std::atan2(num(0), num(1)) * kRad2Deg) : Value::undef();
 
@@ -729,21 +734,32 @@ Value Interpreter::callBuiltin(const std::string& name,
 
     // ---- Vector ----
     if (name == "norm") {
+        // Every element must be a number (nan/inf are numbers and
+        // contribute normally — only a non-number element like a string,
+        // list, or range makes the whole result undef).
         if (args.size() >= 1 && args[0].isVector()) {
             double sum = 0.0;
-            for (const auto& e : args[0].asVec())
-                if (e.isNumber()) sum += e.asNumber() * e.asNumber();
+            for (const auto& e : args[0].asVec()) {
+                if (!e.isNumber()) return Value::undef();
+                sum += e.asNumber() * e.asNumber();
+            }
             return Value::fromNumber(std::sqrt(sum));
         }
         return Value::undef();
     }
     if (name == "cross") {
+        // Unlike most arithmetic, cross() requires every component to be a
+        // *finite* number — nan/inf components make the whole result undef
+        // rather than propagating, matching OpenSCAD.
+        auto finiteComponents = [](const std::vector<Value>& v, std::size_t n) {
+            for (std::size_t i = 0; i < n; ++i)
+                if (!v[i].isNumber() || !std::isfinite(v[i].asNumber())) return false;
+            return true;
+        };
         if (args.size() >= 2 && args[0].isVector() && args[1].isVector()) {
             const auto& a = args[0].asVec();
             const auto& b = args[1].asVec();
-            if (a.size() >= 3 && b.size() >= 3 &&
-                a[0].isNumber() && a[1].isNumber() && a[2].isNumber() &&
-                b[0].isNumber() && b[1].isNumber() && b[2].isNumber()) {
+            if (a.size() == 3 && b.size() == 3 && finiteComponents(a, 3) && finiteComponents(b, 3)) {
                 double ax = a[0].asNumber(), ay = a[1].asNumber(), az = a[2].asNumber();
                 double bx = b[0].asNumber(), by = b[1].asNumber(), bz = b[2].asNumber();
                 return Value::fromVec({
@@ -751,6 +767,12 @@ Value Interpreter::callBuiltin(const std::string& name,
                     Value::fromNumber(az * bx - ax * bz),
                     Value::fromNumber(ax * by - ay * bx)
                 });
+            }
+            // 2D cross product: a scalar, ax*by - ay*bx.
+            if (a.size() == 2 && b.size() == 2 && finiteComponents(a, 2) && finiteComponents(b, 2)) {
+                double ax = a[0].asNumber(), ay = a[1].asNumber();
+                double bx = b[0].asNumber(), by = b[1].asNumber();
+                return Value::fromNumber(ax * by - ay * bx);
             }
         }
         return Value::undef();
@@ -901,12 +923,17 @@ Value Interpreter::callBuiltin(const std::string& name,
         if (args.size() >= 4 && args[3].isNumber()) indexCol = static_cast<int>(args[3].asNumber());
 
         std::size_t targetSize = target.isString() ? target.asString().size() : target.asVec().size();
-        auto elementAt = [&](std::size_t i) -> Value {
+        // needleIsVector: a vector needle (as opposed to a scalar/string
+        // char) is compared against the *whole* row rather than a single
+        // extracted column, even at the default index_col_num=0 — matching
+        // OpenSCAD: search([[1,2]], [[0,1],[1,2],[2,3]]) finds [1,2] at
+        // index 1 by comparing whole rows, not row[0].
+        auto elementAt = [&](std::size_t i, bool needleIsVector) -> Value {
             if (target.isString())
                 return Value::fromString(std::string(1, target.asString()[i]));
             const Value& e = target.asVec()[i];
             if (e.isVector()) {
-                if (indexCol == -1) return e; // compare against the whole row
+                if (indexCol == -1 || needleIsVector) return e; // compare against the whole row
                 if (indexCol >= 0 && static_cast<std::size_t>(indexCol) < e.asVec().size())
                     return e.asVec()[static_cast<std::size_t>(indexCol)];
                 return Value::undef();
@@ -915,8 +942,9 @@ Value Interpreter::callBuiltin(const std::string& name,
         };
         auto searchOne = [&](const Value& needle) -> std::vector<Value> {
             std::vector<Value> matches;
+            bool needleIsVector = needle.isVector();
             for (std::size_t i = 0; i < targetSize; ++i) {
-                if (valEqRec(needle, elementAt(i))) {
+                if (valEqRec(needle, elementAt(i, needleIsVector))) {
                     matches.push_back(Value::fromNumber(static_cast<double>(i)));
                     if (numReturns > 0 && static_cast<int>(matches.size()) >= numReturns) break;
                 }
@@ -925,27 +953,46 @@ Value Interpreter::callBuiltin(const std::string& name,
         };
 
         const Value& matchVal = args[0];
-        // A multi-character string or a vector match_value normally searches
-        // once per element and nests each element's matches in its own
-        // sub-vector; a single scalar/character match_value returns its
-        // matches directly (matching OpenSCAD: search("a","abcdabcd") ==
-        // [0], but search("abc","abcdabcd") == [[0],[1],[2]]).
+        // A vector match_value always searches once per element, decomposed
+        // into the outer result — even a single-element vector (verified
+        // against a live OpenSCAD 2021.01 binary: search([[9,9]], table) ==
+        // [[]], not []). A string only decomposes per-character when it's
+        // either more than one character, or num_returns_per_match != 1: a
+        // single-char string under the *default* num_returns_per_match (1)
+        // instead takes the same flat path as a bare scalar match_value
+        // (search("e", "abcdabcd") == [], not [[]] — same binary, confirmed
+        // against search("e", "abcdabcd", 0) == [[]] for the nested case).
+        //
+        // With the default num_returns_per_match=1, each decomposed element's
+        // result is inlined directly into the outer vector — a found index,
+        // or [] if that element had no match (matching OpenSCAD:
+        // search("abe", table) == [0, 1, 8], search([1,3,1000], table) ==
+        // [0, 1, []]). Any other num_returns_per_match (0 = all matches, or
+        // >1) instead nests each element's matches in its own sub-vector
+        // (search("abe", table, 0) == [[0,4,9,10], [1,5], [8]]).
         //
         // index_col_num == -1 is the exception: it means "compare match_value
         // whole against each entire row", specifically so a *vector*
         // match_value can be matched as one unit against table rows rather
-        // than decomposed per-element — so the per-element nesting above
-        // must not kick in for it.
-        if (indexCol != -1 && matchVal.isString() && matchVal.asString().size() > 1) {
+        // than decomposed per-element — so the per-element decomposition
+        // above must not kick in for it.
+        bool decomposeString = matchVal.isString() &&
+            (matchVal.asString().size() > 1 || numReturns != 1);
+        bool decompose = indexCol != -1 && (decomposeString || matchVal.isVector());
+        if (decompose) {
             std::vector<Value> outer;
-            for (char c : matchVal.asString())
-                outer.push_back(Value::fromVec(searchOne(Value::fromString(std::string(1, c)))));
-            return Value::fromVec(std::move(outer));
-        }
-        if (indexCol != -1 && matchVal.isVector()) {
-            std::vector<Value> outer;
-            for (const auto& needle : matchVal.asVec())
-                outer.push_back(Value::fromVec(searchOne(needle)));
+            auto pushNeedle = [&](const Value& needle) {
+                auto matches = searchOne(needle);
+                if (numReturns == 1)
+                    outer.push_back(matches.empty() ? Value::fromVec({}) : matches[0]);
+                else
+                    outer.push_back(Value::fromVec(std::move(matches)));
+            };
+            if (matchVal.isString()) {
+                for (char c : matchVal.asString()) pushNeedle(Value::fromString(std::string(1, c)));
+            } else {
+                for (const auto& needle : matchVal.asVec()) pushNeedle(needle);
+            }
             return Value::fromVec(std::move(outer));
         }
         return Value::fromVec(searchOne(matchVal));

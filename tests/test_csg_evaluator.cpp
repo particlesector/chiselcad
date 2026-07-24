@@ -964,11 +964,13 @@ TEST_CASE("CsgEval:echo formats number", "[csg][tier-c]") {
     REQUIRE(s.echoMessages[0].find("3.14") != std::string::npos);
 }
 
-TEST_CASE("CsgEval:echo formats a range literal as [start:step:end], not an expanded list",
+TEST_CASE("CsgEval:echo formats a range literal as [start : step : end], not an expanded list",
           "[csg][bugfix]") {
+    // Spaced colons match OpenSCAD's own formatting (verified against a
+    // live OpenSCAD 2021.01 binary: echo([0:2:10]) => "[0 : 2 : 10]").
     auto s = evaluate("echo([0:2:10]);");
     REQUIRE(!s.echoMessages.empty());
-    REQUIRE(s.echoMessages[0].find("[0:2:10]") != std::string::npos);
+    REQUIRE(s.echoMessages[0].find("[0 : 2 : 10]") != std::string::npos);
 }
 
 TEST_CASE("CsgEval:list comprehension builds polygon() points end-to-end", "[csg][bugfix]") {

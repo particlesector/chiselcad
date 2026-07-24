@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 namespace chisel::lang {
@@ -149,8 +150,11 @@ struct Token {
     SourceLoc loc;
     std::string text; // raw source text of the token (number digits, ident name, etc.)
 
-    // Convenience: return numeric value for Number tokens
-    double numberValue() const { return std::stod(text); }
+    // Convenience: return numeric value for Number tokens. Uses strtod
+    // rather than std::stod: a literal outside double range (e.g. 1e400)
+    // must saturate to +/-HUGE_VAL like real OpenSCAD's own lexer, not throw
+    // std::out_of_range and crash the whole process.
+    double numberValue() const { return std::strtod(text.c_str(), nullptr); }
 };
 
 } // namespace chisel::lang
