@@ -1194,12 +1194,30 @@ TEST_CASE("Interp:curried function literal invoked twice in one expression", "[i
 }
 
 TEST_CASE("Interp:calling the closure result of a named function call", "[interp][currying]") {
-    // f(2) itself returns a closure (not a number); f(2)(5) calls that
-    // result. Exercises CallExpr chained directly onto a FunctionCall,
-    // not just onto a parenthesised FunctionLit.
-    auto ctx = loadEnvWithFuncs(
-        "function adder(x) = function(y) x + y; jj = adder(2)(5);");
-    REQUIRE(ctx.interp.getVar("jj").asNumber() == Approx(7.0));
+    // adder(2) itself returns a closure (not a number); adder(2)(5) calls
+    // that result. Exercises CallExpr chained directly onto a FunctionCall,
+    // not just onto a parenthesised FunctionLit. Built as a manual AST
+    // (like the neighboring named-function tests above) rather than via a
+    // top-level source assignment: loadAssignments() runs before
+    // loadFunctions() in every call site (see loadEnvWithFuncs below), so a
+    // *source-level* `jj = adder(2)(5);` assignment would evaluate before
+    // "adder" is registered — an unrelated pre-existing load-order quirk
+    // that would otherwise make this test collide with, rather than
+    // exercise, the currying feature itself.
+    auto ctx = loadEnvWithFuncs("function adder(x) = function(y) x + y;");
+
+    FunctionCall innerCall;
+    innerCall.name = "adder";
+    FunctionArg xArg; xArg.value = makeExpr(NumberLit{2.0, {}});
+    innerCall.args.push_back(std::move(xArg));
+
+    CallExpr outerCall;
+    outerCall.callee = makeExpr(std::move(innerCall));
+    FunctionArg yArg; yArg.value = makeExpr(NumberLit{5.0, {}});
+    outerCall.args.push_back(std::move(yArg));
+
+    ExprNode call = std::move(outerCall);
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(7.0));
 }
 
 TEST_CASE("Interp:calling a non-function expression's result yields undef", "[interp][currying]") {
