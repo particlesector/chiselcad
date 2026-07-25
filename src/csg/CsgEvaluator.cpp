@@ -609,6 +609,11 @@ std::string CsgEvaluator::formatValue(const Value& v) {
     if (v.isNumber()) {
         char buf[64];
         double n = v.asNumber();
+        // NaN's sign bit isn't meaningful per IEEE 754 (and C++'s 0.0/0.0
+        // can produce either), but %g would print "-nan" for a negative
+        // sign bit; OpenSCAD always prints plain "nan" regardless.
+        if (std::isnan(n)) return "nan";
+        if (std::isinf(n)) return n < 0 ? "-inf" : "inf";
         if (n == static_cast<double>(static_cast<long long>(n)) && n > -1e15 && n < 1e15)
             std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(n));
         else
@@ -632,8 +637,8 @@ std::string CsgEvaluator::formatValue(const Value& v) {
         return s;
     }
     if (v.isRange()) {
-        return "[" + formatValue(Value::fromNumber(v.rangeStart)) + ":" +
-               formatValue(Value::fromNumber(v.rangeStep)) + ":" +
+        return "[" + formatValue(Value::fromNumber(v.rangeStart)) + " : " +
+               formatValue(Value::fromNumber(v.rangeStep)) + " : " +
                formatValue(Value::fromNumber(v.rangeEnd)) + "]";
     }
     if (v.isFunction()) {

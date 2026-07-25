@@ -1090,6 +1090,18 @@ TEST_CASE("Parser:let binding named after a builtin boolean op", "[parser]") {
     REQUIRE(letNode.children.size() == 1);
 }
 
+TEST_CASE("Parser:let statement binding a $special variable", "[parser][bugfix]") {
+    // let($fn=...) { ... } previously failed with "expected variable name"
+    // — parseLetNode only accepted TokenKind::Ident, not SpecialVar, the
+    // same gap parseLetExpr had (see the matching Interp test).
+    auto r = parse("let($fn = 64) sphere(1);");
+    REQUIRE(r.roots.size() == 1);
+    const auto& letNode = std::get<LetNode>(*r.roots[0]);
+    REQUIRE(letNode.bindings.size() == 1);
+    REQUIRE(letNode.bindings[0].first == "$fn");
+    REQUIRE(letNode.children.size() == 1);
+}
+
 TEST_CASE("Parser:named module-call argument named after a builtin transform", "[parser]") {
     // Previously 'scale=' here would fail to parse as a named argument
     // because 'scale' lexed as TokenKind::Scale, not Ident.

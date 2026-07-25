@@ -1038,7 +1038,12 @@ AstNodePtr Parser::parseLetNode() {
 
     expect(TokenKind::LParen, "expected '(' after 'let'");
     while (!check(TokenKind::RParen) && !atEnd()) {
-        std::string name = expect(TokenKind::Ident, "expected variable name").text;
+        // Binding name: ident or $special (e.g. let($fn=64) ...) — see the
+        // matching ModuleCallNode comment for why $special must be accepted
+        // here too.
+        std::string name = (check(TokenKind::Ident) || check(TokenKind::SpecialVar))
+            ? advance().text
+            : expect(TokenKind::Ident, "expected variable name").text;
         expect(TokenKind::Equals, "expected '='");
         auto val = parseExpr();
         node.bindings.push_back({std::move(name), std::move(val)});
@@ -1060,7 +1065,12 @@ ExprPtr Parser::parseLetExpr() {
 
     expect(TokenKind::LParen, "expected '(' after 'let'");
     while (!check(TokenKind::RParen) && !atEnd()) {
-        std::string name = expect(TokenKind::Ident, "expected variable name").text;
+        // Binding name: ident or $special (e.g. let($fn=64) ...) — see the
+        // matching ModuleCallNode comment for why $special must be accepted
+        // here too.
+        std::string name = (check(TokenKind::Ident) || check(TokenKind::SpecialVar))
+            ? advance().text
+            : expect(TokenKind::Ident, "expected variable name").text;
         expect(TokenKind::Equals, "expected '='");
         auto val = parseExpr();
         expr.bindings.push_back({std::move(name), std::move(val)});
