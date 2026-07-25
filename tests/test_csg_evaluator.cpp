@@ -873,30 +873,38 @@ TEST_CASE("CsgEval:unbound module parameter is undef, not the caller's/global sa
     REQUIRE(asLeaf(s.roots[0]).params.at("r") == Approx(0.0));
 }
 
-TEST_CASE("CsgEval:parent_module(0) returns the immediate caller's module name", "[csg][v35]") {
-    auto s = evaluate("module inner() { echo(parent_module(0)); }"
+TEST_CASE("CsgEval:parent_module(1) returns the immediate caller's module name", "[csg][v35][bugfix]") {
+    // parent_module(0) is the *current* module (verified against a live
+    // OpenSCAD 2021.01 binary via parent_module-tests.scad); the immediate
+    // caller is idx=1, not idx=0.
+    auto s = evaluate("module inner() { echo(parent_module(1)); }"
                       "module outer() { inner(); }"
                       "outer();");
     REQUIRE(s.echoMessages.size() == 1);
     REQUIRE(s.echoMessages[0].find("outer") != std::string::npos);
 }
 
-TEST_CASE("CsgEval:$parent_modules counts the ancestor module chain", "[csg][v35]") {
+TEST_CASE("CsgEval:$parent_modules counts the ancestor module chain", "[csg][v35][bugfix]") {
+    // $parent_modules counts the *current* module too (3 deep: outer, mid,
+    // inner), not just the ancestors above it — verified against a live
+    // OpenSCAD 2021.01 binary via parent_module-tests.scad.
     auto s = evaluate("module inner() { echo($parent_modules); }"
                       "module mid() { inner(); }"
                       "module outer() { mid(); }"
                       "outer();");
     REQUIRE(s.echoMessages.size() == 1);
-    REQUIRE(s.echoMessages[0].find("2") != std::string::npos);
+    REQUIRE(s.echoMessages[0].find("3") != std::string::npos);
 }
 
 TEST_CASE("CsgEval:parent_module/$parent_modules at the top of the call chain has no parent",
-          "[csg][v35]") {
-    auto s = evaluate("module solo() { echo($parent_modules); echo(parent_module(0)); }"
+          "[csg][v35][bugfix]") {
+    auto s = evaluate("module solo() { echo($parent_modules); echo(parent_module(0));"
+                      " echo(parent_module(1)); }"
                       "solo();");
-    REQUIRE(s.echoMessages.size() == 2);
-    REQUIRE(s.echoMessages[0].find("0") != std::string::npos);
-    REQUIRE(s.echoMessages[1].find("undef") != std::string::npos);
+    REQUIRE(s.echoMessages.size() == 3);
+    REQUIRE(s.echoMessages[0].find("1") != std::string::npos);      // $parent_modules: just solo itself
+    REQUIRE(s.echoMessages[1].find("solo") != std::string::npos);   // parent_module(0): solo itself
+    REQUIRE(s.echoMessages[2].find("undef") != std::string::npos);  // parent_module(1): no caller
 }
 
 TEST_CASE("CsgEval:children() evaluates caller-authored geometry in the caller's scope, not the "
@@ -1887,4 +1895,106 @@ TEST_CASE("CsgEval:module recursion limit inside an included file carries that f
     REQUIRE(s.evalDiags[0].message.find("recursion limit") != std::string::npos);
     REQUIRE(std::filesystem::path(s.evalDiags[0].filePath) ==
             fixture("eval_diag/recursion_child.scad"));
+}
+
+// ---------------------------------------------------------------------------
+// A called module/function never sees the caller's local variables — only
+// its own parameters, top-level globals, and $-specials (verified against a
+// live OpenSCAD 2021.01 binary via variable-scope-tests.scad's "special
+// variable inheritance" case).
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:a module call does not leak the caller's locals into the callee", "[csg][bugfix]") {
+    auto s = evaluate("module callee() { echo(a); }"
+                      "module caller(a) { callee(); }"
+                      "caller(23);");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("undef") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:a module call still sees top-level globals", "[csg][bugfix]") {
+    auto s = evaluate("g = 42;"
+                      "module callee() { echo(g); }"
+                      "module caller(g) { callee(); }" // caller's own `g` param must not leak either
+                      "caller(1);");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("42") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:$fn set by an outer caller is dynamically visible many calls deep", "[csg][bugfix]") {
+    auto s = evaluate("module inner() { echo($fn); }"
+                      "module mid() { inner(); }"
+                      "mid($fn=17);");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("17") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:a named function call does not leak the caller's locals either", "[csg][bugfix]") {
+    auto s = evaluate("function callee() = a;"
+                      "function caller(a) = callee();"
+                      "echo(caller(23));");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("undef") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Nested module/function definitions (a module/function defined inside
+// another module's body) — previously silently dropped by the parser
+// entirely. See LocalModuleDefStmt/LocalFunctionDefStmt in AST.h.
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:a module can define and call a locally-scoped helper module", "[csg][bugfix]") {
+    auto s = evaluate("module outer() {"
+                      "  module inner() { echo(\"called\"); }"
+                      "  inner();"
+                      "}"
+                      "outer();");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("called") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:a locally-scoped helper module is callable before its own textual definition "
+          "(hoisted within the body)", "[csg][bugfix]") {
+    auto s = evaluate("module outer() {"
+                      "  inner();"
+                      "  module inner() { echo(\"called\"); }"
+                      "}"
+                      "outer();");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("called") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:a locally-scoped helper module does not leak into sibling/later module calls",
+          "[csg][bugfix]") {
+    auto s = evaluate("module outer() {"
+                      "  module inner() { echo(\"from outer\"); }"
+                      "  inner();"
+                      "}"
+                      "outer();"
+                      "inner();"); // undefined at this scope: outer()'s local `inner` already ended
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("from outer") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:a module can define and call a locally-scoped helper function", "[csg][bugfix]") {
+    auto s = evaluate("module outer() {"
+                      "  function double(x) = x * 2;"
+                      "  echo(double(21));"
+                      "}"
+                      "outer();");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("42") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Top-level module/function redefinition: OpenSCAD always uses the *last*
+// definition of a name in the file, regardless of the call's position
+// relative to the redefinitions (verified against a live OpenSCAD 2021.01
+// binary via redefinition.scad).
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:a module call before its final redefinition still uses the last definition",
+          "[csg][bugfix]") {
+    auto s = evaluate("m();"
+                      "module m() { echo(\"first\"); }"
+                      "module m() { echo(\"second\"); }");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("second") != std::string::npos);
 }

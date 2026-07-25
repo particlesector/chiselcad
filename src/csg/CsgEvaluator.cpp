@@ -154,6 +154,14 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform,
                 m_interp->assignVar(n.name, *n.value);
                 return nullptr;
             }
+            else if constexpr (std::is_same_v<T, LocalModuleDefStmt> ||
+                                std::is_same_v<T, LocalFunctionDefStmt>) {
+                // No-op here: evalModuleCall's pre-pass over the enclosing
+                // body already registered every local def (hoisted, like
+                // file-scope defs) before this loop started. Produces no
+                // geometry.
+                return nullptr;
+            }
             return nullptr;
         },
         node);
@@ -742,18 +750,30 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
 
     const ModuleDef& def = *it->second;
 
-    // Snapshot the interpreter env so we can restore it after the call
-    auto savedEnv = m_interp->snapshotEnv();
+    // Argument *values* are evaluated in the caller's scope (so e.g.
+    // `foo(x)` sees the caller's local `x`) — must happen before
+    // beginCallScope() switches m_env away from it. The values themselves
+    // are bound into the callee's fresh scope afterward.
+    std::vector<std::pair<std::string, Value>> argValues;
+    argValues.reserve(call.args.size());
+    for (const auto& arg : call.args)
+        argValues.push_back({arg.name, m_interp->evaluate(*arg.value)});
+
+    // Fresh call scope: only $-specials and top-level globals carry over
+    // from the caller — not the caller's own local variables (matches
+    // OpenSCAD; see Interpreter::beginCallScope's doc comment).
+    auto savedEnv = m_interp->beginCallScope();
 
     // Bind positional and named arguments to module parameters
     std::size_t posIdx = 0;
-    for (const auto& arg : call.args) {
+    for (std::size_t argI = 0; argI < call.args.size(); ++argI) {
+        const auto& arg = call.args[argI];
         if (arg.name.empty()) {
             if (posIdx < def.params.size())
-                m_interp->setVar(def.params[posIdx].name, m_interp->evaluate(*arg.value));
+                m_interp->setVar(def.params[posIdx].name, argValues[argI].second);
             ++posIdx;
         } else {
-            m_interp->setVar(arg.name, m_interp->evaluate(*arg.value));
+            m_interp->setVar(arg.name, argValues[argI].second);
         }
     }
 
@@ -783,6 +803,34 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     m_childrenStack.push_back({&call.children, &savedEnv});
     m_interp->pushModuleName(call.name);
 
+    // Local module/function definitions (see LocalModuleDefStmt/
+    // LocalFunctionDefStmt in AST.h) are hoisted: register every one found
+    // directly in this body (last-wins for a duplicate name, same as
+    // file-scope defs) *before* running the body, so a call earlier in the
+    // body's textual order can still reach a def written later — matching
+    // OpenSCAD (confirmed against parent_module-tests.scad/redefinition.scad
+    // corpus files). Only descends into this body's own top-level
+    // statements, not into nested if/for/etc. bodies within it.
+    bool hasLocalDefs = false;
+    for (const auto& child : def.body) {
+        if (std::holds_alternative<LocalModuleDefStmt>(*child) ||
+            std::holds_alternative<LocalFunctionDefStmt>(*child)) {
+            hasLocalDefs = true;
+            break;
+        }
+    }
+    auto savedModuleDefs = hasLocalDefs ? m_moduleDefs : decltype(m_moduleDefs){};
+    auto savedFuncDefs = hasLocalDefs ? m_interp->snapshotFuncDefs()
+                                       : std::unordered_map<std::string, const FunctionDef*>{};
+    if (hasLocalDefs) {
+        for (const auto& child : def.body) {
+            if (auto* m = std::get_if<LocalModuleDefStmt>(child.get()))
+                m_moduleDefs[m->def.name] = &m->def;
+            else if (auto* f = std::get_if<LocalFunctionDefStmt>(child.get()))
+                m_interp->registerFunction(f->def);
+        }
+    }
+
     // Evaluate the module body and collect geometry
     std::vector<CsgNodePtr> all;
     ++m_moduleDepth;
@@ -791,6 +839,11 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
             all.push_back(std::move(c));
     }
     --m_moduleDepth;
+
+    if (hasLocalDefs) {
+        m_moduleDefs = std::move(savedModuleDefs);
+        m_interp->restoreFuncDefs(std::move(savedFuncDefs));
+    }
 
     m_interp->popModuleName();
     m_childrenStack.pop_back();

@@ -53,6 +53,15 @@ private:
     // ---- module / function definitions ------------------------------------
     void parseModuleDef(ParseResult& result);
     void parseFunctionDef(ParseResult& result);
+    // Core parsing shared by the file-scope forms above (which push into
+    // ParseResult) and the nested forms below (a module/function definition
+    // appearing inside another module's body — see LocalModuleDefStmt/
+    // LocalFunctionDefStmt in AST.h). The leading 'module'/'function' keyword
+    // must not yet be consumed.
+    ModuleDef   parseModuleDefCore();
+    FunctionDef parseFunctionDefCore();
+    AstNodePtr  parseLocalModuleDef();
+    AstNodePtr  parseLocalFunctionDef();
 
     // ---- let statement ---------------------------------------------------
     AstNodePtr parseLetNode();

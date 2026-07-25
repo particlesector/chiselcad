@@ -1102,6 +1102,46 @@ TEST_CASE("Parser:let statement binding a $special variable", "[parser][bugfix]"
     REQUIRE(letNode.children.size() == 1);
 }
 
+TEST_CASE("Parser:module definition with a $special parameter", "[parser][bugfix]") {
+    // module m($b) { ... } previously failed with "expected parameter name"
+    // — same gap as let($x=...), this time in parseModuleDefCore's
+    // parameter list. Found via OpenSCAD's own variable-scope-tests.scad
+    // corpus file (a "user-defined special variables as parameter" test).
+    auto r = parse("module m($b) { echo($b); }");
+    REQUIRE(r.moduleDefs.size() == 1);
+    REQUIRE(r.moduleDefs[0].params.size() == 1);
+    REQUIRE(r.moduleDefs[0].params[0].name == "$b");
+}
+
+TEST_CASE("Parser:function definition with a $special parameter", "[parser][bugfix]") {
+    auto r = parse("function f($b) = $b * 2;");
+    REQUIRE(r.functionDefs.size() == 1);
+    REQUIRE(r.functionDefs[0].params.size() == 1);
+    REQUIRE(r.functionDefs[0].params[0].name == "$b");
+}
+
+TEST_CASE("Parser:nested module definition inside another module's body", "[parser][bugfix]") {
+    // module xxx() { ... } nested inside module test() { ... } previously
+    // fell through parseNodeInner's default case and got silently
+    // synchronize()'d away — found via OpenSCAD's own
+    // parent_module-tests.scad/redefinition.scad corpus files.
+    auto r = parse("module test() { module xxx() { echo(\"x\"); } xxx(); }");
+    REQUIRE(r.moduleDefs.size() == 1);
+    REQUIRE(r.moduleDefs[0].name == "test");
+    REQUIRE(r.moduleDefs[0].body.size() == 2);
+    const auto& localDef = std::get<LocalModuleDefStmt>(*r.moduleDefs[0].body[0]);
+    REQUIRE(localDef.def.name == "xxx");
+}
+
+TEST_CASE("Parser:nested function definition inside a module's body", "[parser][bugfix]") {
+    auto r = parse("module test() { function double(x) = x * 2; echo(double(1)); }");
+    REQUIRE(r.moduleDefs.size() == 1);
+    REQUIRE(r.moduleDefs[0].body.size() == 2);
+    const auto& localDef = std::get<LocalFunctionDefStmt>(*r.moduleDefs[0].body[0]);
+    REQUIRE(localDef.def.name == "double");
+    REQUIRE(localDef.def.params.size() == 1);
+}
+
 TEST_CASE("Parser:named module-call argument named after a builtin transform", "[parser]") {
     // Previously 'scale=' here would fail to parse as a named argument
     // because 'scale' lexed as TokenKind::Scale, not Ident.

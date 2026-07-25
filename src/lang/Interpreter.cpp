@@ -182,13 +182,51 @@ static bool valEqRec(const Value& a, const Value& b) {
 // Environment loading
 // ---------------------------------------------------------------------------
 void Interpreter::loadAssignments(const ParseResult& result) {
-    for (const auto& stmt : result.assignments)
-        assignVar(stmt.name, *stmt.value);
+    // Top-level redefinition is *not* plain sequential overwrite: a
+    // variable reassigned more than once keeps its last RHS expression, but
+    // that expression is evaluated "in place of" the first occurrence, not
+    // where it's textually written — so it can't see any other variable's
+    // own reassignment that comes later in the file, even though that
+    // reassignment is textually between the first and last occurrence.
+    // Verified against a live OpenSCAD 2021.01 binary via
+    // value-reassignment-tests.scad/value-reassignment-tests2.scad:
+    //   myval=2; i=2;      myval=i*2;  // => myval=undef (i isn't visible
+    //                                  //    yet at myval's first-occurrence
+    //                                  //    position), i=2
+    //   myval=2; i=myval;  myval=3;    // => myval=3, i=3 (myval's *last*
+    //                                  //    RHS "3" replaces "2" in place,
+    //                                  //    so i=myval sees 3)
+    // Implemented as: reduce to one (name, last RHS) pair per name, keeping
+    // each name's first-occurrence position, then evaluate that reduced
+    // list in position order.
+    std::vector<const AssignStmt*> reduced;
+    std::unordered_map<std::string, std::size_t> indexOf;
+    for (const auto& stmt : result.assignments) {
+        auto it = indexOf.find(stmt.name);
+        if (it != indexOf.end())
+            reduced[it->second] = &stmt;
+        else {
+            indexOf[stmt.name] = reduced.size();
+            reduced.push_back(&stmt);
+        }
+    }
+    for (const auto* stmt : reduced)
+        assignVar(stmt->name, *stmt->value);
+    m_globalEnv = m_env;
 }
 
 void Interpreter::loadFunctions(const ParseResult& result) {
     for (const auto& def : result.functionDefs)
         m_funcDefs[def.name] = &def;
+}
+
+std::unordered_map<std::string, Value> Interpreter::beginCallScope() {
+    auto saved = m_env;
+    std::unordered_map<std::string, Value> fresh = m_globalEnv;
+    for (const auto& [k, v] : m_env)
+        if (!k.empty() && k[0] == '$') fresh[k] = v; // dynamic scoping: most recent caller's $-value wins
+    m_env = std::move(fresh);
+    return saved;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,8 +272,12 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             if (node.name == "$preview") return Value::fromBool(true); // no separate export-render pass exists yet
             if (node.name == "$t")       return Value::fromNumber(0.0); // no animation/scrubbing yet (see roadmap v4)
             if (node.name == "$parent_modules")
-                return Value::fromNumber(m_moduleNameStack.empty() ? 0.0
-                    : static_cast<double>(m_moduleNameStack.size() - 1));
+                // The number of modules in the instantiation stack,
+                // including the currently-running one (verified against a
+                // live OpenSCAD 2021.01 binary via parent_module-tests.scad:
+                // depth 2 inside a module called directly from another
+                // module, not 1).
+                return Value::fromNumber(static_cast<double>(m_moduleNameStack.size()));
             if (node.name == "$vpr")
                 return Value::fromVec({Value::fromNumber(m_vpr[0]), Value::fromNumber(m_vpr[1]),
                                         Value::fromNumber(m_vpr[2])});
@@ -498,7 +540,7 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 if (m_callDepth >= kMaxCallDepth) return Value::undef();
 
                 const FunctionDef& def = *fit->second;
-                auto savedEnv = snapshotEnv();
+                auto savedEnv = beginCallScope();
 
                 bindOrderedArgs(def.params, orderedArgs);
 
@@ -902,9 +944,14 @@ Value Interpreter::callBuiltin(const std::string& name,
     // ---- parent_module(idx) — name of the module idx levels up the current
     // module-call chain (0 = immediate caller). See m_moduleNameStack. ----
     if (name == "parent_module") {
+        // idx=1 is the immediate caller of the currently-running module,
+        // idx=2 its caller, etc. (idx=0 is the current module itself) —
+        // verified against a live OpenSCAD 2021.01 binary via
+        // parent_module-tests.scad, which 1-indexes from the caller, not
+        // 0-indexes.
         if (args.size() >= 1 && args[0].isNumber()) {
             int idx = static_cast<int>(args[0].asNumber());
-            int i   = static_cast<int>(m_moduleNameStack.size()) - 2 - idx;
+            int i   = static_cast<int>(m_moduleNameStack.size()) - 1 - idx;
             if (idx >= 0 && i >= 0)
                 return Value::fromString(m_moduleNameStack[static_cast<std::size_t>(i)]);
         }

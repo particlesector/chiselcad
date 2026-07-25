@@ -143,6 +143,35 @@ TEST_CASE("Interp:multiple variables", "[interp]") {
     REQUIRE(interp.evalNumber(eh) == Approx(3.0));
 }
 
+TEST_CASE("Interp:top-level variable redefinition uses the last RHS at the first occurrence's "
+          "position, not sequential overwrite", "[interp][bugfix]") {
+    // OpenSCAD's top-level (file-scope) redefinition is not plain sequential
+    // execution: a name assigned more than once keeps only its *last* RHS
+    // expression, but that expression is evaluated as if written at the
+    // name's *first* occurrence — so it can't see another variable's own
+    // reassignment that comes later in the file, even though that
+    // reassignment sits textually between the first and last occurrence.
+    // Verified against a live OpenSCAD 2021.01 binary via
+    // value-reassignment-tests.scad/value-reassignment-tests2.scad.
+    {
+        // myval=2; i=2; myval=i*2;  =>  myval=undef (i isn't visible yet at
+        // myval's first-occurrence position, before i=2), i=2.
+        auto interp = loadEnv("myval = 2; i = 2; myval = i * 2;");
+        ExprNode eMyval = VarRef{"myval", {}};
+        ExprNode eI = VarRef{"i", {}};
+        REQUIRE(interp.evaluate(eMyval).isUndef());
+        REQUIRE(interp.evalNumber(eI) == Approx(2.0));
+    }
+    {
+        // myval=2; i=myval; myval=3;  =>  myval=3 (last RHS "3" replaces "2"
+        // in place, at myval's first-occurrence position), i=3 (i=myval,
+        // evaluated after myval's reduced "3" is already bound).
+        auto interp = loadEnv("myval = 2; i = myval; myval = 3;");
+        REQUIRE(interp.evalNumber(VarRef{"myval", {}}) == Approx(3.0));
+        REQUIRE(interp.evalNumber(VarRef{"i", {}}) == Approx(3.0));
+    }
+}
+
 TEST_CASE("Interp:undefined variable returns 0", "[interp]") {
     Interpreter interp;
     ExprNode e = VarRef{"nothing", {}};
