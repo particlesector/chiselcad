@@ -825,8 +825,9 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     for (const auto& child : def.body) {
         if (auto* m = std::get_if<LocalModuleDefStmt>(child.get())) {
             if (!alreadySaved(savedModuleDefs, m->def.name)) {
-                auto it = m_moduleDefs.find(m->def.name);
-                savedModuleDefs.push_back({m->def.name, it != m_moduleDefs.end() ? it->second : nullptr});
+                auto existingIt = m_moduleDefs.find(m->def.name);
+                savedModuleDefs.push_back({m->def.name,
+                    existingIt != m_moduleDefs.end() ? existingIt->second : nullptr});
             }
             m_moduleDefs[m->def.name] = &m->def;
         } else if (auto* f = std::get_if<LocalFunctionDefStmt>(child.get())) {
