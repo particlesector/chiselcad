@@ -25,12 +25,23 @@ public:
     // Register a single function definition (non-owning pointer — def must
     // outlive this interpreter instance) — used for a *local* function
     // definition nested inside a module body (see LocalFunctionDefStmt in
-    // AST.h), as opposed to loadFunctions()'s file-scope batch. Paired with
-    // snapshotFuncDefs()/restoreFuncDefs() so CsgEvaluator can register a
-    // module body's local defs only for the duration of that call.
+    // AST.h), as opposed to loadFunctions()'s file-scope batch.
     void registerFunction(const FunctionDef& def) { m_funcDefs[def.name] = &def; }
-    std::unordered_map<std::string, const FunctionDef*> snapshotFuncDefs() const { return m_funcDefs; }
-    void restoreFuncDefs(std::unordered_map<std::string, const FunctionDef*> defs) { m_funcDefs = std::move(defs); }
+
+    // Fine-grained lookup/restore for a single function-def entry, paired
+    // with registerFunction() above: CsgEvaluator saves lookupFunctionDef's
+    // result for just the handful of names a module body locally redefines
+    // (not a full-map copy, since only those specific names are ever
+    // touched), then calls setFunctionDef() to put each one back once the
+    // module call returns.
+    const FunctionDef* lookupFunctionDef(const std::string& name) const {
+        auto it = m_funcDefs.find(name);
+        return it != m_funcDefs.end() ? it->second : nullptr;
+    }
+    void setFunctionDef(const std::string& name, const FunctionDef* def) {
+        if (def) m_funcDefs[name] = def;
+        else     m_funcDefs.erase(name);
+    }
 
     // Evaluate an expression to a Value.
     Value evaluate(const ExprNode& expr);

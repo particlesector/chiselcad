@@ -811,23 +811,28 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     // OpenSCAD (confirmed against parent_module-tests.scad/redefinition.scad
     // corpus files). Only descends into this body's own top-level
     // statements, not into nested if/for/etc. bodies within it.
-    bool hasLocalDefs = false;
+    //
+    // Only the specific names a local def shadows are saved/restored (not a
+    // full m_moduleDefs/function-table copy) — local defs are rare, but a
+    // module with one that recurses would otherwise pay a full-map-copy cost
+    // on every recursive call.
+    std::vector<std::pair<std::string, const ModuleDef*>>   savedModuleDefs;
+    std::vector<std::pair<std::string, const FunctionDef*>> savedFuncDefs;
+    auto alreadySaved = [](const auto& saved, const std::string& name) {
+        for (const auto& [n, _] : saved) if (n == name) return true;
+        return false;
+    };
     for (const auto& child : def.body) {
-        if (std::holds_alternative<LocalModuleDefStmt>(*child) ||
-            std::holds_alternative<LocalFunctionDefStmt>(*child)) {
-            hasLocalDefs = true;
-            break;
-        }
-    }
-    auto savedModuleDefs = hasLocalDefs ? m_moduleDefs : decltype(m_moduleDefs){};
-    auto savedFuncDefs = hasLocalDefs ? m_interp->snapshotFuncDefs()
-                                       : std::unordered_map<std::string, const FunctionDef*>{};
-    if (hasLocalDefs) {
-        for (const auto& child : def.body) {
-            if (auto* m = std::get_if<LocalModuleDefStmt>(child.get()))
-                m_moduleDefs[m->def.name] = &m->def;
-            else if (auto* f = std::get_if<LocalFunctionDefStmt>(child.get()))
-                m_interp->registerFunction(f->def);
+        if (auto* m = std::get_if<LocalModuleDefStmt>(child.get())) {
+            if (!alreadySaved(savedModuleDefs, m->def.name)) {
+                auto it = m_moduleDefs.find(m->def.name);
+                savedModuleDefs.push_back({m->def.name, it != m_moduleDefs.end() ? it->second : nullptr});
+            }
+            m_moduleDefs[m->def.name] = &m->def;
+        } else if (auto* f = std::get_if<LocalFunctionDefStmt>(child.get())) {
+            if (!alreadySaved(savedFuncDefs, f->def.name))
+                savedFuncDefs.push_back({f->def.name, m_interp->lookupFunctionDef(f->def.name)});
+            m_interp->registerFunction(f->def);
         }
     }
 
@@ -840,10 +845,12 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     }
     --m_moduleDepth;
 
-    if (hasLocalDefs) {
-        m_moduleDefs = std::move(savedModuleDefs);
-        m_interp->restoreFuncDefs(std::move(savedFuncDefs));
+    for (const auto& [name, ptr] : savedModuleDefs) {
+        if (ptr) m_moduleDefs[name] = ptr;
+        else     m_moduleDefs.erase(name);
     }
+    for (const auto& [name, ptr] : savedFuncDefs)
+        m_interp->setFunctionDef(name, ptr);
 
     m_interp->popModuleName();
     m_childrenStack.pop_back();

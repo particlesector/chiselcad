@@ -1984,6 +1984,28 @@ TEST_CASE("CsgEval:a module can define and call a locally-scoped helper function
     REQUIRE(s.echoMessages[0].find("42") != std::string::npos);
 }
 
+TEST_CASE("CsgEval:recursive module with a local def restores correctly at each depth",
+          "[csg][bugfix]") {
+    // evalModuleCall saves/restores only the specific names a local def
+    // shadows (not a full map copy) — this exercises that restore staying
+    // correct across nested/recursive calls of the *same* module, where
+    // each call level pushes and pops its own local `helper` registration.
+    auto s = evaluate(
+        "function double(x) = x * 100;" // file-scope def of the same name, shadowed locally
+        "module recur(n) {"
+        "  function double(x) = x * 2;" // local def, same name as the file-scope one above
+        "  echo(n, double(n));"
+        "  if (n < 3) recur(n + 1);"
+        "}"
+        "recur(1);"
+        "echo(double(1));"); // back at file scope: the file-scope def must be intact
+    REQUIRE(s.echoMessages.size() == 4);
+    REQUIRE(s.echoMessages[0].find("1, 2") != std::string::npos);
+    REQUIRE(s.echoMessages[1].find("2, 4") != std::string::npos);
+    REQUIRE(s.echoMessages[2].find("3, 6") != std::string::npos);
+    REQUIRE(s.echoMessages[3].find("100") != std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // Top-level module/function redefinition: OpenSCAD always uses the *last*
 // definition of a name in the file, regardless of the call's position
