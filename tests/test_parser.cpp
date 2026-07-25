@@ -529,6 +529,26 @@ TEST_CASE("Parser:function literal passed directly as a call argument", "[parser
     REQUIRE(std::holds_alternative<FunctionLit>(*call.args[0].value));
 }
 
+TEST_CASE("Parser:calling a parenthesised function-literal expression directly (IIFE)", "[parser][currying]") {
+    auto r = parse("y = (function(x) x + 1)(10);");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& call = std::get<CallExpr>(*r.assignments[0].value);
+    REQUIRE(call.args.size() == 1);
+    REQUIRE(std::holds_alternative<FunctionLit>(*call.callee));
+}
+
+TEST_CASE("Parser:chained calls on a curried function literal's result", "[parser][currying]") {
+    // (function(x) function(y) x + y)(2)(5) — a curried IIFE: the outer
+    // call's result (itself a closure) gets called again with (5).
+    auto r = parse("jj = (function(x) function(y) x + y)(2)(5);");
+    REQUIRE(r.assignments.size() == 1);
+    const auto& outerCall = std::get<CallExpr>(*r.assignments[0].value);
+    REQUIRE(outerCall.args.size() == 1);
+    const auto& innerCall = std::get<CallExpr>(*outerCall.callee);
+    REQUIRE(innerCall.args.size() == 1);
+    REQUIRE(std::holds_alternative<FunctionLit>(*innerCall.callee));
+}
+
 TEST_CASE("Parser:named function definition is unaffected by function-literal parsing", "[parser][v36]") {
     // Statement-level `function name(...) = expr;` must still work exactly
     // as before now that `function` also starts an expression-level literal.

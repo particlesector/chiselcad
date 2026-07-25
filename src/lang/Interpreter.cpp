@@ -561,6 +561,19 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             return callBuiltin(node.name, allArgs);
         }
 
+        // ---- Call on an arbitrary expression's result (currying/IIFE) ----
+        else if constexpr (std::is_same_v<T, CallExpr>) {
+            Value callee = evaluate(*node.callee);
+            if (!callee.isFunction()) return Value::undef();
+
+            std::vector<std::pair<std::string, Value>> orderedArgs;
+            orderedArgs.reserve(node.args.size());
+            for (const auto& arg : node.args)
+                orderedArgs.push_back({arg.name, evaluate(*arg.value)});
+
+            return callClosure(std::move(callee), orderedArgs);
+        }
+
         return Value::undef();
     }, expr);
 }
