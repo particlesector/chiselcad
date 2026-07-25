@@ -22,6 +22,27 @@ public:
     // result must outlive this interpreter instance.
     void loadFunctions(const ParseResult& result);
 
+    // Register a single function definition (non-owning pointer — def must
+    // outlive this interpreter instance) — used for a *local* function
+    // definition nested inside a module body (see LocalFunctionDefStmt in
+    // AST.h), as opposed to loadFunctions()'s file-scope batch.
+    void registerFunction(const FunctionDef& def) { m_funcDefs[def.name] = &def; }
+
+    // Fine-grained lookup/restore for a single function-def entry, paired
+    // with registerFunction() above: CsgEvaluator saves lookupFunctionDef's
+    // result for just the handful of names a module body locally redefines
+    // (not a full-map copy, since only those specific names are ever
+    // touched), then calls setFunctionDef() to put each one back once the
+    // module call returns.
+    const FunctionDef* lookupFunctionDef(const std::string& name) const {
+        auto it = m_funcDefs.find(name);
+        return it != m_funcDefs.end() ? it->second : nullptr;
+    }
+    void setFunctionDef(const std::string& name, const FunctionDef* def) {
+        if (def) m_funcDefs[name] = def;
+        else     m_funcDefs.erase(name);
+    }
+
     // Evaluate an expression to a Value.
     Value evaluate(const ExprNode& expr);
 
@@ -77,6 +98,28 @@ public:
     std::unordered_map<std::string, Value> snapshotEnv() const { return m_env; }
     void restoreEnv(std::unordered_map<std::string, Value> env) { m_env = std::move(env); }
 
+    // Begin a fresh call scope for a *named* module/function call (as
+    // opposed to a closure call, which already gets this right via its own
+    // captured ClosureEnv — see callClosure). Matches OpenSCAD: a callee
+    // never sees the caller's ordinary local variables (module/function
+    // parameters, let-bindings, etc.) — only its own parameters, top-level
+    // globals, and $-prefixed special variables, which are dynamically
+    // scoped and do inherit down the whole call chain (verified against a
+    // live OpenSCAD 2021.01 binary via variable-scope-tests.scad: a plain
+    // variable set in one module is undef in a module it calls, but a $fn
+    // override passed at the outermost call is still visible many calls
+    // deep). Swaps m_env to (global env) + (current $-vars) and returns the
+    // caller's full env for restoreEnv() to reinstate afterward.
+    //
+    // Caveat: "global env" here means the env as of loadAssignments()'s
+    // return, so this is exact for top-level module/function definitions
+    // (the common case) but only an approximation for a definition nested
+    // inside another module's body (see the new LocalModuleDefStmt/
+    // LocalFunctionDefStmt in AST.h) — such a nested definition's true
+    // lexical parent is its enclosing call's scope, not the file's global
+    // scope, which this doesn't currently reconstruct.
+    std::unordered_map<std::string, Value> beginCallScope();
+
     // Module-call-name stack backing parent_module()/$parent_modules. Module
     // calls are evaluated by CsgEvaluator, not here, so CsgEvaluator pushes/
     // pops around each user-module call (mirroring how it already sets
@@ -102,6 +145,11 @@ public:
 
 private:
     std::unordered_map<std::string, Value>             m_env;
+    // Snapshot of m_env taken at the end of loadAssignments() — the file's
+    // top-level variables, before any call has added its own locals on top.
+    // Backs beginCallScope()'s "globals are visible, callers' locals aren't"
+    // rule.
+    std::unordered_map<std::string, Value>             m_globalEnv;
     std::unordered_map<std::string, const FunctionDef*> m_funcDefs;
     std::vector<std::string>                           m_moduleNameStack;
 

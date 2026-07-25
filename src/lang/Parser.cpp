@@ -321,6 +321,17 @@ AstNodePtr Parser::parseNodeInner() {
     case TokenKind::Let:
         return parseLetNode();
 
+    // A module/function definition nested inside another module's body
+    // (e.g. `module test() { module xxx() { ... } xxx(); }`) — see
+    // LocalModuleDefStmt/LocalFunctionDefStmt in AST.h. The file-scope form
+    // is intercepted earlier by parseStatement(), so reaching here always
+    // means a nested definition.
+    case TokenKind::Module:
+        return parseLocalModuleDef();
+
+    case TokenKind::Function:
+        return parseLocalFunctionDef();
+
     case TokenKind::Ident: {
         // Builtin construct called by name: cube(...), translate(...) {...},
         // etc. These names aren't reserved keywords (see kBuiltinNodeNames
@@ -952,6 +963,20 @@ ExprPtr Parser::parsePrimary() {
 // module — module name(param, param = default, ...) { body }
 // ---------------------------------------------------------------------------
 void Parser::parseModuleDef(ParseResult& result) {
+    ModuleDef def = parseModuleDefCore();
+    result.moduleDefs.push_back(std::move(def));
+}
+
+// AstNodePtr wrapper for parseModuleDefCore() — a module definition nested
+// inside another module's body (see LocalModuleDefStmt in AST.h). Reachable
+// from parseNodeInner() when a 'module' keyword appears inside a brace
+// block; the file-scope form above (parseStatement()'s dispatch) intercepts
+// 'module' before parseNodeInner ever sees it, so the two never collide.
+AstNodePtr Parser::parseLocalModuleDef() {
+    return makeLocalModuleDef(parseModuleDefCore());
+}
+
+ModuleDef Parser::parseModuleDefCore() {
     const Token& kw = advance(); // consume 'module'
     ModuleDef def;
     def.loc  = kw.loc;
@@ -960,7 +985,12 @@ void Parser::parseModuleDef(ParseResult& result) {
     expect(TokenKind::LParen, "expected '(' after module name");
     while (!check(TokenKind::RParen) && !atEnd()) {
         ModuleParam param;
-        param.name = expect(TokenKind::Ident, "expected parameter name").text;
+        // Parameter name: ident or $special (e.g. module m($fn) { ... }) —
+        // see the matching ModuleCallNode comment for why $special must be
+        // accepted here too.
+        param.name = (check(TokenKind::Ident) || check(TokenKind::SpecialVar))
+            ? advance().text
+            : expect(TokenKind::Ident, "expected parameter name").text;
         if (match(TokenKind::Equals))
             param.defaultVal = parseExpr();
         def.params.push_back(std::move(param));
@@ -973,13 +1003,24 @@ void Parser::parseModuleDef(ParseResult& result) {
     def.body = parseBraceBlock();
     expect(TokenKind::RBrace, "expected '}' to close module body");
 
-    result.moduleDefs.push_back(std::move(def));
+    return def;
 }
 
 // ---------------------------------------------------------------------------
 // function definition — function name(params) = expr;
 // ---------------------------------------------------------------------------
 void Parser::parseFunctionDef(ParseResult& result) {
+    FunctionDef def = parseFunctionDefCore();
+    result.functionDefs.push_back(std::move(def));
+}
+
+// AstNodePtr wrapper for parseFunctionDefCore() — see parseLocalModuleDef's
+// matching comment.
+AstNodePtr Parser::parseLocalFunctionDef() {
+    return makeLocalFunctionDef(parseFunctionDefCore());
+}
+
+FunctionDef Parser::parseFunctionDefCore() {
     const Token& kw = advance(); // consume 'function'
     FunctionDef def;
     def.loc  = kw.loc;
@@ -988,7 +1029,11 @@ void Parser::parseFunctionDef(ParseResult& result) {
     expect(TokenKind::LParen, "expected '(' after function name");
     while (!check(TokenKind::RParen) && !atEnd()) {
         FunctionParam param;
-        param.name = expect(TokenKind::Ident, "expected parameter name").text;
+        // Parameter name: ident or $special — see parseModuleDef's matching
+        // comment.
+        param.name = (check(TokenKind::Ident) || check(TokenKind::SpecialVar))
+            ? advance().text
+            : expect(TokenKind::Ident, "expected parameter name").text;
         if (match(TokenKind::Equals))
             param.defaultVal = parseExpr();
         def.params.push_back(std::move(param));
@@ -999,7 +1044,7 @@ void Parser::parseFunctionDef(ParseResult& result) {
     def.body = parseExpr();
     match(TokenKind::Semicolon);
 
-    result.functionDefs.push_back(std::move(def));
+    return def;
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,7 +1061,11 @@ ExprPtr Parser::parseFunctionLit() {
     expect(TokenKind::LParen, "expected '(' after 'function'");
     while (!check(TokenKind::RParen) && !atEnd()) {
         FunctionLitParam param;
-        param.name = expect(TokenKind::Ident, "expected parameter name").text;
+        // Parameter name: ident or $special — see parseModuleDef's matching
+        // comment.
+        param.name = (check(TokenKind::Ident) || check(TokenKind::SpecialVar))
+            ? advance().text
+            : expect(TokenKind::Ident, "expected parameter name").text;
         if (match(TokenKind::Equals))
             param.defaultVal = parseExpr();
         lit.params.push_back(std::move(param));

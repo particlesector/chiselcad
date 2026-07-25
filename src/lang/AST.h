@@ -33,6 +33,8 @@ struct LetNode;
 struct ColorNode;
 struct OffsetNode;
 struct ProjectionNode;
+struct LocalModuleDefStmt;
+struct LocalFunctionDefStmt;
 
 // ---------------------------------------------------------------------------
 // AssignStmt — a variable assignment: x = expr;
@@ -52,7 +54,7 @@ struct AssignStmt {
 // ---------------------------------------------------------------------------
 // AstNode — the top-level variant
 // ---------------------------------------------------------------------------
-using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode, ColorNode, OffsetNode, ProjectionNode, AssignStmt>;
+using AstNode    = std::variant<PrimitiveNode, BooleanNode, TransformNode, IfNode, ForNode, ModuleCallNode, ExtrusionNode, LetNode, ColorNode, OffsetNode, ProjectionNode, AssignStmt, LocalModuleDefStmt, LocalFunctionDefStmt>;
 using AstNodePtr = std::unique_ptr<AstNode>;
 
 // ---------------------------------------------------------------------------
@@ -184,6 +186,28 @@ struct ModuleDef {
 };
 
 // ---------------------------------------------------------------------------
+// LocalModuleDefStmt — a module definition nested inside another module's
+// body (as opposed to a file-scope ModuleDef, collected into
+// ParseResult::moduleDefs instead). Evaluated by CsgEvaluator::evalModuleCall
+// via a pre-pass over the enclosing module's body: like file-scope
+// definitions, a duplicate name within the same body is last-wins and
+// visible to every statement in that body regardless of textual position
+// (OpenSCAD hoists definitions), not just from its own position onward.
+// ---------------------------------------------------------------------------
+struct LocalModuleDefStmt {
+    ModuleDef def;
+    SourceLoc loc;
+    uint8_t   modifiers = ModNone; // meaningless here; present for uniform std::visit access
+};
+
+inline AstNodePtr makeLocalModuleDef(ModuleDef def) {
+    LocalModuleDefStmt stmt;
+    stmt.loc = def.loc;
+    stmt.def = std::move(def);
+    return std::make_unique<AstNode>(std::move(stmt));
+}
+
+// ---------------------------------------------------------------------------
 // ModuleArg — one actual argument in a module call
 // ---------------------------------------------------------------------------
 struct ModuleArg {
@@ -242,6 +266,25 @@ struct FunctionDef {
     ExprPtr                   body; // expression — not a geometry block
     SourceLoc                 loc;
 };
+
+// ---------------------------------------------------------------------------
+// LocalFunctionDefStmt — a function definition nested inside a module's
+// body. See LocalModuleDefStmt's comment; same hoisting-within-the-body
+// semantics, registered into the Interpreter's function table for the
+// duration of that module call.
+// ---------------------------------------------------------------------------
+struct LocalFunctionDefStmt {
+    FunctionDef def;
+    SourceLoc   loc;
+    uint8_t     modifiers = ModNone; // meaningless here; present for uniform std::visit access
+};
+
+inline AstNodePtr makeLocalFunctionDef(FunctionDef def) {
+    LocalFunctionDefStmt stmt;
+    stmt.loc = def.loc;
+    stmt.def = std::move(def);
+    return std::make_unique<AstNode>(std::move(stmt));
+}
 
 // ---------------------------------------------------------------------------
 // LetNode — statement-level let: let(x = expr) { children }
