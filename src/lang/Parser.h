@@ -81,6 +81,11 @@ private:
     void parseParamList(std::unordered_map<std::string, ExprPtr>& params,
                         bool& center);
     void parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& params);
+    // Parses `(arg, name=arg, ...)` up to and including the closing ')' —
+    // shared by parsePrimary's `ident(...)` FunctionCall and parsePostfix's
+    // `expr(...)` CallExpr, which accept the identical argument grammar
+    // (including a call-site `$special=value` override).
+    std::vector<FunctionArg> parseCallArgs();
 
     // ---- child body ------------------------------------------------------
     std::vector<AstNodePtr> parseBody();

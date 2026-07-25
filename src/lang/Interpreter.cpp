@@ -561,6 +561,24 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             return callBuiltin(node.name, allArgs);
         }
 
+        // ---- Call on an arbitrary expression's result (currying/IIFE) ----
+        else if constexpr (std::is_same_v<T, CallExpr>) {
+            Value callee = evaluate(*node.callee);
+
+            // Args are always evaluated, even for a non-function callee —
+            // matching FunctionCall above, which evaluates orderedArgs
+            // unconditionally before any dispatch decision. Keeps a
+            // side-effecting arg (assert()/echo() inside an expression)
+            // consistent regardless of what's being called.
+            std::vector<std::pair<std::string, Value>> orderedArgs;
+            orderedArgs.reserve(node.args.size());
+            for (const auto& arg : node.args)
+                orderedArgs.push_back({arg.name, evaluate(*arg.value)});
+
+            if (!callee.isFunction()) return Value::undef();
+            return callClosure(std::move(callee), orderedArgs);
+        }
+
         return Value::undef();
     }, expr);
 }

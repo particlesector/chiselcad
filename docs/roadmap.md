@@ -236,11 +236,19 @@ environment has no vcpkg/Manifold/Vulkan).
 Confirmed via the same corpus run but **not yet fixed** — real gaps, ranked
 roughly by expected real-world impact:
 
-- [ ] **Calling the result of an arbitrary expression** (issue #80), e.g.
+- [x] **Calling the result of an arbitrary expression** (issue #80), e.g.
   `(function(x) function(y) x+y)(2)(5)` (currying/IIFE). `FunctionCall`
-  (Expr.h) is name-keyed (`std::string name`) — it can only represent
-  "call the thing named `name`", not "call this expression's result". Needs
-  a distinct callee-expression AST shape, not just a grammar tweak.
+  (Expr.h) is name-keyed (`std::string name`) — it could only represent
+  "call the thing named `name`", not "call this expression's result".
+  Added a distinct `CallExpr` node (`callee: ExprPtr` + args) produced by
+  `parsePostfix` whenever `(args)` follows any primary expression (not just
+  a bare identifier, which `parsePrimary` already consumes directly into a
+  `FunctionCall`) — so `f(2)(5)`, `(function(x) ...)(2)(5)`, and chains of
+  either now parse. Evaluated in `Interpreter::evaluate` by evaluating the
+  callee to a `Value` and requiring it to already be a function (closure);
+  there's no name to fall back to a builtin/`function` def by, so a
+  non-function callee yields `undef` rather than erroring. Covered by
+  `tests/test_parser.cpp` and `tests/test_interpreter.cpp`.
 - [ ] Possible UTF-8/Unicode string-handling gaps (issue #82) (`unicode-tests`,
   `utf8-tests`, `nbsp-latin1-test`, `string-unicode`, `search-tests-unicode`
   all mismatch) — `Value::str` is a raw `std::string`; `len()`/indexing/

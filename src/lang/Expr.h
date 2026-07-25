@@ -24,13 +24,14 @@ struct IndexExpr;
 struct MemberExpr;
 struct LetExpr;
 struct FunctionCall;
+struct CallExpr;
 struct RangeLit;
 struct ListCompExpr;
 struct FunctionLit;
 
 using ExprNode = std::variant<NumberLit, BoolLit, UndefLit, StringLit, VectorLit, VarRef,
                                BinaryExpr, UnaryExpr, TernaryExpr, IndexExpr, MemberExpr,
-                               LetExpr, FunctionCall, RangeLit, ListCompExpr, FunctionLit>;
+                               LetExpr, FunctionCall, CallExpr, RangeLit, ListCompExpr, FunctionLit>;
 using ExprPtr  = std::unique_ptr<ExprNode>;
 
 template<typename T>
@@ -140,6 +141,19 @@ struct FunctionArg {
 
 struct FunctionCall {
     std::string              name;
+    std::vector<FunctionArg> args;
+    SourceLoc                loc;
+};
+
+// Calls the result of an arbitrary expression rather than a bare identifier
+// — currying/IIFE, e.g. `(function(x) function(y) x + y)(2)(5)`. FunctionCall
+// above only covers "call the thing named `name`" (reachable from a bare
+// identifier token in parsePrimary); this covers "call this expression's
+// result", produced by parsePostfix when `(args)` follows any primary
+// expression. Evaluation requires callee to evaluate to a function (closure)
+// value — there's no name to fall back to a builtin or `function` def by.
+struct CallExpr {
+    ExprPtr                  callee;
     std::vector<FunctionArg> args;
     SourceLoc                loc;
 };

@@ -799,7 +799,7 @@ ExprPtr Parser::parseUnary() {
     return parsePostfix();
 }
 
-// Postfix operators applied to any primary: expr[index], expr.member
+// Postfix operators applied to any primary: expr[index], expr.member, expr(args)
 ExprPtr Parser::parsePostfix() {
     auto expr = parsePrimary();
     for (;;) {
@@ -824,9 +824,49 @@ ExprPtr Parser::parsePostfix() {
             expr = makeExpr(std::move(me));
             continue;
         }
+        if (check(TokenKind::LParen)) {
+            // Calling the result of an arbitrary expression — currying/IIFE
+            // (e.g. `(function(x) ...)(2)(5)`, or `f(2)(5)` calling the
+            // closure that `f(2)` returned). A bare `ident(...)` never
+            // reaches here: parsePrimary's Ident branch already consumes its
+            // own immediately-following '(' as a name-keyed FunctionCall, so
+            // this only fires for a *second* call directly chained onto that
+            // result, or a call following `[...]`/`.member`/`(...)`.
+            SourceLoc loc = advance().loc; // consume '('
+            CallExpr ce;
+            ce.callee = std::move(expr);
+            ce.args   = parseCallArgs();
+            ce.loc    = loc;
+            expr = makeExpr(std::move(ce));
+            continue;
+        }
         break;
     }
     return expr;
+}
+
+// Parses `arg, name=arg, ...)` — the '(' must already be consumed by the
+// caller. Shared grammar for name-keyed FunctionCall (parsePrimary) and
+// expression-keyed CallExpr (parsePostfix).
+std::vector<FunctionArg> Parser::parseCallArgs() {
+    std::vector<FunctionArg> args;
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        FunctionArg arg;
+        // Named arg: ident = expr, or $special = expr (e.g. f($fn=64, 1))
+        // — a call-site special-variable override, valid on any call (not
+        // just primitives), so must be recognized here rather than only
+        // erroring out like an unrecognized token would.
+        if ((check(TokenKind::Ident) || check(TokenKind::SpecialVar)) &&
+            peek(1).kind == TokenKind::Equals) {
+            arg.name = advance().text; // consume ident/$special
+            advance();                 // consume '='
+        }
+        arg.value = parseExpr();
+        args.push_back(std::move(arg));
+        if (!match(TokenKind::Comma)) break;
+    }
+    expect(TokenKind::RParen, "expected ')' after function arguments");
+    return args;
 }
 
 ExprPtr Parser::parsePrimary() {
@@ -935,22 +975,7 @@ ExprPtr Parser::parsePrimary() {
             FunctionCall fc;
             fc.name = name_tok.text;
             fc.loc  = name_tok.loc;
-            while (!check(TokenKind::RParen) && !atEnd()) {
-                FunctionArg arg;
-                // Named arg: ident = expr, or $special = expr (e.g. f($fn=64, 1))
-                // — a call-site special-variable override, valid on any call
-                // (not just primitives), so must be recognized here rather
-                // than only erroring out like an unrecognized token would.
-                if ((check(TokenKind::Ident) || check(TokenKind::SpecialVar)) &&
-                    peek(1).kind == TokenKind::Equals) {
-                    arg.name = advance().text; // consume ident/$special
-                    advance();                 // consume '='
-                }
-                arg.value = parseExpr();
-                fc.args.push_back(std::move(arg));
-                if (!match(TokenKind::Comma)) break;
-            }
-            expect(TokenKind::RParen, "expected ')' after function arguments");
+            fc.args = parseCallArgs();
             return makeExpr(std::move(fc));
         }
         return makeExpr(VarRef{name_tok.text, name_tok.loc});

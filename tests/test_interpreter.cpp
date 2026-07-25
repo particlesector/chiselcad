@@ -1181,6 +1181,50 @@ TEST_CASE("Interp:function literal passed as a higher-order argument", "[interp]
     REQUIRE(ctx.interp.evalNumber(call) == Approx(11.0));
 }
 
+TEST_CASE("Interp:calling a parenthesised function-literal expression directly (IIFE)", "[interp][currying]") {
+    auto ctx = loadEnvWithFuncs("y = (function(x) x + 1)(10);");
+    REQUIRE(ctx.interp.getVar("y").asNumber() == Approx(11.0));
+}
+
+TEST_CASE("Interp:curried function literal invoked twice in one expression", "[interp][currying]") {
+    // Mirrors OpenSCAD's own misc/allexpressions.scad regression case.
+    auto ctx = loadEnvWithFuncs(
+        "jj = (function(x) function(y) x + y)(2)(5);");
+    REQUIRE(ctx.interp.getVar("jj").asNumber() == Approx(7.0));
+}
+
+TEST_CASE("Interp:calling the closure result of a named function call", "[interp][currying]") {
+    // adder(2) itself returns a closure (not a number); adder(2)(5) calls
+    // that result. Exercises CallExpr chained directly onto a FunctionCall,
+    // not just onto a parenthesised FunctionLit. Built as a manual AST
+    // (like the neighboring named-function tests above) rather than via a
+    // top-level source assignment: loadAssignments() runs before
+    // loadFunctions() in every call site (see loadEnvWithFuncs below), so a
+    // *source-level* `jj = adder(2)(5);` assignment would evaluate before
+    // "adder" is registered — an unrelated pre-existing load-order quirk
+    // that would otherwise make this test collide with, rather than
+    // exercise, the currying feature itself.
+    auto ctx = loadEnvWithFuncs("function adder(x) = function(y) x + y;");
+
+    FunctionCall innerCall;
+    innerCall.name = "adder";
+    FunctionArg xArg; xArg.value = makeExpr(NumberLit{2.0, {}});
+    innerCall.args.push_back(std::move(xArg));
+
+    CallExpr outerCall;
+    outerCall.callee = makeExpr(std::move(innerCall));
+    FunctionArg yArg; yArg.value = makeExpr(NumberLit{5.0, {}});
+    outerCall.args.push_back(std::move(yArg));
+
+    ExprNode call = std::move(outerCall);
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(7.0));
+}
+
+TEST_CASE("Interp:calling a non-function expression's result yields undef", "[interp][currying]") {
+    auto ctx = loadEnvWithFuncs("y = (1 + 1)(5);");
+    REQUIRE_FALSE(bool(ctx.interp.getVar("y")));
+}
+
 TEST_CASE("Interp:function literal bound directly to a name can recurse by that name", "[interp][v36]") {
     // `name = function(...) ... name(...) ...;` seeds the closure's own
     // captured environment with `name -> itself`, so this doesn't need a
