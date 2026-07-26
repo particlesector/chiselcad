@@ -80,6 +80,12 @@ private:
     // ---- argument helpers ------------------------------------------------
     void parseParamList(std::unordered_map<std::string, ExprPtr>& params,
                         bool& center);
+    // polygon(points, paths, convexity) — unlike parseParamList's generic
+    // positional-vector case (which assumes an [x,y,z]-shaped triple and
+    // decomposes it into "x"/"y"/"z" keys), polygon's positional arguments
+    // are whole point/path LISTS that CsgEvaluator needs intact under
+    // "points"/"paths" keys — see parsePrimitive.
+    void parsePolygonParams(std::unordered_map<std::string, ExprPtr>& params);
     void parseExtrusionParams(std::unordered_map<std::string, ExprPtr>& params);
     // Parses `(arg, name=arg, ...)` up to and including the closing ')' —
     // shared by parsePrimary's `ident(...)` FunctionCall and parsePostfix's

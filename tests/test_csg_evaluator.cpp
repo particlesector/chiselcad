@@ -285,6 +285,86 @@ TEST_CASE("CsgEval:mirror [0,0,0] is identity", "[csg]") {
 }
 
 // ---------------------------------------------------------------------------
+// scale(scalar) broadcasts uniformly, and empty-argument-list transforms
+// (bugfix — issue #90's rotate-parameters.scad / scale-mirror2D-3D-tests.scad)
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:scale(scalar) broadcasts to all three axes", "[csg][bugfix]") {
+    // Confirmed against real OpenSCAD's builtin_scale(): when the argument
+    // isn't a vector but is a plain number, it falls back to
+    // `scalevec.setConstant(num)` — a uniform scale — not the "scalar means
+    // Z axis only" rule that's correct for rotate(angle) but was previously
+    // (incorrectly) shared by scale/translate/mirror's argument decoding too.
+    auto s = evaluate("scale(2) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.transform[0][0] == Approx(2.0f));
+    REQUIRE(leaf.transform[1][1] == Approx(2.0f));
+    REQUIRE(leaf.transform[2][2] == Approx(2.0f));
+}
+
+TEST_CASE("CsgEval:rotate() with no arguments is identity", "[csg][bugfix]") {
+    auto s = evaluate("rotate() cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    const glm::mat4 I{1.0f};
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            REQUIRE(leaf.transform[c][r] == Approx(I[c][r]).margin(1e-5));
+}
+
+TEST_CASE("CsgEval:mirror() with no arguments defaults to axis [1,0,0]", "[csg][bugfix]") {
+    // Confirmed against real OpenSCAD's builtin_mirror(): x/y/z are
+    // pre-initialized to 1.0/0.0/0.0 before attempting to convert the
+    // (here, absent) 'v' argument, so a totally bare mirror() mirrors
+    // across the X axis, same as mirror([1,0,0]).
+    auto s = evaluate("mirror() cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.transform[0][0] == Approx(-1.0f));
+    REQUIRE(leaf.transform[1][1] == Approx(1.0f));
+    REQUIRE(leaf.transform[2][2] == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:rotate(a, v) rotates by angle a around an arbitrary axis v",
+          "[csg][bugfix]") {
+    // rotate(90, [0,0,1]) — 90-degree rotation around Z, expressed via the
+    // angle+axis form rather than the [x,y,z] Euler form. Previously
+    // unparseable at all (parseTransform only accepted one argument); now
+    // implemented via glm::rotate(angle, axis), matching real OpenSCAD's
+    // angle_axis_degrees(a, v).
+    auto s = evaluate("rotate(90, [0,0,1]) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.transform[0][0] == Approx(0.0f).margin(1e-4));
+    REQUIRE(leaf.transform[0][1] == Approx(1.0f).margin(1e-4));
+    REQUIRE(leaf.transform[1][0] == Approx(-1.0f).margin(1e-4));
+    REQUIRE(leaf.transform[1][1] == Approx(0.0f).margin(1e-4));
+    REQUIRE(leaf.transform[2][2] == Approx(1.0f).margin(1e-4));
+}
+
+TEST_CASE("CsgEval:rotate(a=..., v=...) named arguments work in either order",
+          "[csg][bugfix]") {
+    auto s1 = evaluate("rotate(a=90, v=[0,0,1]) cube([1,1,1]);");
+    auto s2 = evaluate("rotate(v=[0,0,1], a=90) cube([1,1,1]);");
+    const auto& l1 = asLeaf(s1.roots[0]);
+    const auto& l2 = asLeaf(s2.roots[0]);
+    for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r)
+            REQUIRE(l1.transform[c][r] == Approx(l2.transform[c][r]).margin(1e-5));
+    REQUIRE(l1.transform[1][0] == Approx(-1.0f).margin(1e-4));
+}
+
+TEST_CASE("CsgEval:rotate([x,y,z] vector) ignores a 'v' axis argument", "[csg][bugfix]") {
+    // Matches real OpenSCAD: "when deg_a is an array, the 'v' argument is
+    // ignored" — a two-positional-argument rotate() where the first
+    // argument is a 3-element vector should fall back to the Euler form,
+    // never the angle-axis form.
+    auto withV    = evaluate("rotate([0,0,90], [1,0,0]) cube([1,1,1]);");
+    auto withoutV = evaluate("rotate([0,0,90]) cube([1,1,1]);");
+    const auto& a = asLeaf(withV.roots[0]);
+    const auto& b = asLeaf(withoutV.roots[0]);
+    for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r)
+            REQUIRE(a.transform[c][r] == Approx(b.transform[c][r]).margin(1e-5));
+}
+
+// ---------------------------------------------------------------------------
 // multmatrix() folds the given 4x4 rows straight into the leaf transform
 // ---------------------------------------------------------------------------
 TEST_CASE("CsgEval:multmatrix translation column", "[csg]") {
@@ -719,6 +799,53 @@ TEST_CASE("CsgEval:for() with no arguments under a transform still yields no geo
     REQUIRE(s.roots.empty());
 }
 
+TEST_CASE("CsgEval:multi-variable for() iterates the Cartesian product of all clauses",
+          "[csg][bugfix]") {
+    // for (x=[0:1], y=[0:1], z=[0:1]) — real OpenSCAD's multi-variable
+    // for-loop form (upstream corpus for-nested-tests.scad/mirror-tests.scad/
+    // edge-cases.scad). 2 x 2 x 2 = 8 children, nested outer-to-inner in the
+    // order the clauses were written (x slowest, z fastest).
+    auto s = evaluate("for (x=[0:1], y=[0:1], z=[0:1]) translate([x,y,z]) sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 8);
+    REQUIRE(asLeaf(b.children[0]).transform[3][2] == Approx(0.0f)); // x=0,y=0,z=0
+    REQUIRE(asLeaf(b.children[1]).transform[3][2] == Approx(1.0f)); // x=0,y=0,z=1
+    REQUIRE(asLeaf(b.children[2]).transform[3][1] == Approx(1.0f)); // x=0,y=1,z=0
+    REQUIRE(asLeaf(b.children[4]).transform[3][0] == Approx(1.0f)); // x=1,y=0,z=0
+    REQUIRE(asLeaf(b.children[7]).transform[3][0] == Approx(1.0f)); // x=1,y=1,z=1
+    REQUIRE(asLeaf(b.children[7]).transform[3][1] == Approx(1.0f));
+    REQUIRE(asLeaf(b.children[7]).transform[3][2] == Approx(1.0f));
+}
+
+TEST_CASE("CsgEval:multi-variable for() later clause can reference an earlier clause's variable",
+          "[csg][bugfix]") {
+    // for (i=[0:2], j=[0:i]) — j's range depends on i, which must already be
+    // bound by the time j's clause runs (matches real OpenSCAD). i=0 → j
+    // has 1 value (0); i=1 → 2 values (0,1); i=2 → 3 values (0,1,2). Total
+    // children: 1 + 2 + 3 = 6.
+    auto s = evaluate("for (i=[0:2], j=[0:i]) sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 6);
+}
+
+TEST_CASE("CsgEval:multi-variable for() restores outer variable between outer iterations",
+          "[csg][bugfix]") {
+    // A body-local assignment or inner-clause binding must not leak into
+    // the next outer iteration — same guarantee the single-variable case
+    // already had, now checked across nesting levels.
+    auto s = evaluate("for (x=[0:1], y=[10,20]) translate([x,y,0]) sphere(r=1);");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.children.size() == 4);
+    REQUIRE(asLeaf(b.children[0]).transform[3][0] == Approx(0.0f));
+    REQUIRE(asLeaf(b.children[0]).transform[3][1] == Approx(10.0f));
+    REQUIRE(asLeaf(b.children[1]).transform[3][0] == Approx(0.0f));
+    REQUIRE(asLeaf(b.children[1]).transform[3][1] == Approx(20.0f));
+    REQUIRE(asLeaf(b.children[2]).transform[3][0] == Approx(1.0f));
+    REQUIRE(asLeaf(b.children[2]).transform[3][1] == Approx(10.0f));
+}
+
 TEST_CASE("CsgEval:for over bracketed point-list literal iterates per-point, not flattened",
           "[csg]") {
     // Regression test: a bracketed list literal whose own elements are
@@ -1002,6 +1129,35 @@ TEST_CASE("CsgEval:list comprehension builds polygon() points end-to-end", "[csg
     REQUIRE(leaf.polyPoints.size() == 4);
     REQUIRE(leaf.polyPoints[2].x == Approx(2.0f));
     REQUIRE(leaf.polyPoints[2].y == Approx(4.0f));
+}
+
+TEST_CASE("CsgEval:polygon with a positional (unnamed) 4+ point list", "[csg][bugfix]") {
+    // Previously misparsed entirely — see the matching Parser-level bugfix
+    // tests. A positional polygon() point list is the overwhelmingly common
+    // real-world form (upstream test corpus's scale-mirror2D-3D-tests.scad
+    // uses exactly this, with 4 points).
+    auto s = evaluate("polygon([[-0.5,-0.5],[1,-0.5],[1,1],[-0.5,0.5]]);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Polygon2D);
+    REQUIRE(leaf.polyPoints.size() == 4);
+    REQUIRE(leaf.polyPoints[0].x == Approx(-0.5f));
+    REQUIRE(leaf.polyPoints[0].y == Approx(-0.5f));
+    REQUIRE(leaf.polyPoints[3].x == Approx(-0.5f));
+    REQUIRE(leaf.polyPoints[3].y == Approx(0.5f));
+}
+
+TEST_CASE("CsgEval:polygon with exactly 3 positional points (previous accidental pass-through)",
+          "[csg][bugfix]") {
+    // A 3-point positional polygon used to parse without error but land its
+    // points under "x"/"y"/"z" (parseParamList's generic vector-decompose
+    // case) instead of "points" — CsgEvaluator's `p.params.count("points")`
+    // was always false, so it silently produced zero points.
+    auto s = evaluate("polygon([[0,0],[10,0],[5,8]]);");
+    REQUIRE(s.roots.size() == 1);
+    const auto& leaf = asLeaf(s.roots[0]);
+    REQUIRE(leaf.kind == CsgLeaf::Kind::Polygon2D);
+    REQUIRE(leaf.polyPoints.size() == 3);
 }
 
 TEST_CASE("CsgEval:for over a variable holding a range literal expands it", "[csg][bugfix]") {
