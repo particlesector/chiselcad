@@ -554,6 +554,15 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform,
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform,
                                  const ColorAttr& color) {
+    // `for()` with no arguments at all (Parser::parseFor leaves node.var
+    // empty in this case, which is otherwise unreachable since a parsed
+    // loop variable is always a non-empty identifier). Matches real
+    // OpenSCAD's builtin_for(), which never instantiates the body when the
+    // module call's argument list is empty — there's no iteration set for
+    // zero variables, not a single vacuous pass.
+    if (node.var.empty())
+        return nullptr;
+
     // Build the sequence of iteration values
     std::vector<Value> values;
 

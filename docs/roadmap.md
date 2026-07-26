@@ -437,6 +437,48 @@ run through this so far — `2D`, `bugs`, `bugs2D`, `misc`, `issues` are
 still unexamined. This should become a standing regression suite (rerun
 after any geometry-affecting change), not a one-time audit.
 
+## v3.10 — Follow-up on the oracle-version caveat (issue #91) + a parser fix (issue #90)
+
+- [x] **Resolved the v3.9 oracle-version question for `linear_extrude(h=...)`
+  and `segments=`.** Checked real OpenSCAD's current `master` source
+  (`src/core/LinearExtrudeNode.cc`) directly rather than the outdated
+  `apt` 2021.01 binary: `parameters[{"height", "h"}]` confirms `h` genuinely
+  is a real, current alias for `height` — ChiselCAD's support for it is
+  correct, not a ChiselCAD invention, and not something to "fix" back to
+  2021.01 behavior. `segments=` is also a genuine, distinct current
+  parameter (`node->segments`, validated separately from `slices`) — but
+  unlike `h=`, ChiselCAD doesn't implement it **at all** (no `segments`
+  param is read anywhere in `MeshEvaluator::evalExtrusion`). Per
+  `src/geometry/linear_extrude.cc`, real OpenSCAD only acts on it when a
+  twist or non-uniform scale is active: it subdivides each outline edge
+  (`Discretizer::splitOutline(outline, twist, scale_x, scale_y, num_slices,
+  segments)`) before extruding, so a twisted/scaled `linear_extrude` gets a
+  smoother swept surface instead of faceting along the profile's original
+  edges. This is a real, previously-unidentified gap and likely explains
+  some fraction of `linear_extrude-tests.scad`'s remaining ~13.6% error —
+  filed as a follow-up rather than implemented blind here, since matching
+  `splitOutline`'s exact per-edge subdivision behavior needs bisecting
+  against a live OpenSCAD build the same way the v3.9 fixes were, not a
+  guess.
+- [x] **`for()` with a completely empty argument list failed to parse**
+  (part of issue #90's `for-tests.scad`, which opens with exactly this on
+  line 2: `for();`). `Parser::parseFor()` unconditionally expected an
+  `Ident '='` right after `(`, so a bare `for()` — valid OpenSCAD, since the
+  argument list is a generic module-call argument list that's allowed to be
+  empty — aborted parsing of the entire file. Fixed by skipping
+  variable/range parsing when `)` immediately follows `(`, leaving
+  `ForNode::var` empty as a sentinel (never otherwise possible, since a
+  parsed loop variable is always a non-empty identifier).
+  `CsgEvaluator::evalFor()` treats that sentinel as zero iterations,
+  matching real OpenSCAD's `builtin_for()` (`src/core/control.cc`), which
+  checks `if (!inst->arguments.empty())` and skips the body entirely rather
+  than running it once vacuously. Regression tests added at both the parser
+  level (`tests/test_parser.cpp`) and the CSG-evaluator level
+  (`tests/test_csg_evaluator.cpp`, including a wrapping-transform case).
+  This resolves one of issue #90's 11 files; the rest (multi-variable
+  `for`, other transform-argument edge cases) are still open and need the
+  same per-file bisection.
+
 ## v4 — Tooling & Visual Quality
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)

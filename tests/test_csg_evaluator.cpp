@@ -706,6 +706,19 @@ TEST_CASE("CsgEval:for empty range yields no geometry", "[csg]") {
     REQUIRE(s.roots.empty());
 }
 
+TEST_CASE("CsgEval:for() with no arguments yields no geometry", "[csg][bugfix]") {
+    // Matches real OpenSCAD's builtin_for(), which skips the body entirely
+    // when the for()'s argument list is empty (no variable to iterate means
+    // no iterations, not one vacuous pass).
+    auto s = evaluate("for() sphere(r=1);");
+    REQUIRE(s.roots.empty());
+}
+
+TEST_CASE("CsgEval:for() with no arguments under a transform still yields no geometry", "[csg][bugfix]") {
+    auto s = evaluate("translate([1,0,0]) for() cube(1);");
+    REQUIRE(s.roots.empty());
+}
+
 TEST_CASE("CsgEval:for over bracketed point-list literal iterates per-point, not flattened",
           "[csg]") {
     // Regression test: a bracketed list literal whose own elements are

@@ -453,6 +453,21 @@ TEST_CASE("Parser:for with brace body", "[parser]") {
     REQUIRE(f.children.size() == 2);
 }
 
+TEST_CASE("Parser:for() with no arguments parses with an empty loop variable", "[parser][bugfix]") {
+    // Real OpenSCAD accepts a bare for() (seen in its own test corpus,
+    // for-tests.scad's `for();`) — the argument list is a generic module-call
+    // argument list, which is legitimately allowed to be empty. Previously
+    // ChiselCAD's parser unconditionally expected an identifier right after
+    // '(', so this failed to parse at all and took the whole file down with
+    // it. node.var stays empty as the sentinel CsgEvaluator::evalFor checks
+    // for zero-iterations.
+    auto r = parse("for() sphere(r=1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.var.empty());
+    REQUIRE(f.children.size() == 1);
+}
+
 // ---------------------------------------------------------------------------
 // General range-literal expressions (usable outside `for`)
 // ---------------------------------------------------------------------------
