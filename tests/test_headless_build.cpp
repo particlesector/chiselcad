@@ -131,6 +131,59 @@ TEST_CASE("runBuild: non-planar polyhedron() under scale(<bare scalar>) matches 
     CHECK(result.volume == Approx(1.6544281372).margin(1e-5));
 }
 
+// ---------------------------------------------------------------------------
+// issue #87 — rotate_extrude() volume mismatches. Found via volumetric
+// corpus comparison against a live OpenSCAD 2021.01 + Manifold v3.5.2 oracle
+// (docs/roadmap.md v3.9/v3.12): a profile entirely on the -X side used to be
+// rejected outright (only a straddling profile is actually invalid); a
+// negative angle= produced inside-out (negative-volume) geometry because
+// Manifold::Revolve() only winds correctly for a positive sweep; and the
+// segment count used a fixed proxy radius (10) plus the full-circle count
+// even for a partial sweep, instead of the profile's own X-extent scaled by
+// angle/360 the way real OpenSCAD's Calc::get_fragments_from_r() does.
+// ---------------------------------------------------------------------------
+TEST_CASE("runBuild: rotate_extrude() of a profile entirely on -X matches Pappus's theorem",
+          "[headless][v87][bugfix]") {
+    // translate([-20,0]) square([10,10]): area 100, centroid at x=-15 (15
+    // from the axis), entirely on the -X side (doesn't straddle) — a full
+    // revolution sweeps volume = 2*pi*area*centroidDistance (Pappus), same
+    // as if the profile were mirrored onto +X. This used to be rejected as
+    // "crosses the rotation axis" (any x<0 point, not just a straddling
+    // profile) and produced no geometry at all.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/rotate_extrude_negative_x.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    constexpr double kExpectedVolume = 2.0 * 3.14159265358979323846 * 100.0 * 15.0;
+    CHECK(result.volume == Approx(kExpectedVolume).margin(1.0));
+}
+
+TEST_CASE("runBuild: rotate_extrude() with a negative angle= has positive volume",
+          "[headless][v87][bugfix]") {
+    // translate([10,0]) square([10,10]): area 100, centroid at x=15, swept
+    // through |angle|=90 degrees (pi/2 rad) gives volume =
+    // area*centroidDistance*angleRadians (Pappus, partial sweep). A
+    // negative angle used to come out with exactly this magnitude but
+    // negated (inside-out geometry from Manifold::Revolve()'s winding for a
+    // literal negative revolveDegrees), so this also pins the *sign*.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/rotate_extrude_negative_angle.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    constexpr double kExpectedVolume = 100.0 * 15.0 * (3.14159265358979323846 / 2.0);
+    CHECK(result.volume == Approx(kExpectedVolume).margin(1.0));
+    CHECK(result.volume > 0.0);
+}
+
+TEST_CASE("runBuild: rotate_extrude(angle=0) produces no geometry",
+          "[headless][v87][bugfix]") {
+    // Real OpenSCAD's rotatePolygon() returns no geometry at all for a
+    // literal angle=0 (not a degenerate zero-volume sweep) — distinct from
+    // an *unspecified* angle, which means a full 360 circle.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/rotate_extrude_angle_zero.scad"), {}, {}, cache);
+    CHECK(result.volume == 0.0);
+    CHECK(result.triCount == 0);
+}
+
 TEST_CASE("runBuild honors AbortFn by returning early", "[headless]") {
     chisel::csg::MeshCache cache;
     auto alwaysAbort = [] { return true; };

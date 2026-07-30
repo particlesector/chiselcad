@@ -405,12 +405,12 @@ fixed**:
   The same applies to `segments=` (also unrecognized by 2021.01). This
   caveat likely explains some fraction of the other still-open mismatches
   below too, not just `linear_extrude`.
-- [ ] **`rotate_extrude` volume mismatches** (issue #87): `rotate_extrude-tests` (27%),
+- [x] **`rotate_extrude` volume mismatches** (issue #87): `rotate_extrude-tests` (27%),
   `rotate_extrude-angle` (71%) — contrast with `rotate_extrude-touch-vertex`/
   `rotate_extrude-touch-edge`, which pass at floating-point-noise level, so
   this is parameter-specific (likely the `angle=` partial-revolution case
   given `-angle` is the worse of the two) rather than a blanket
-  `rotate_extrude` bug.
+  `rotate_extrude` bug. Fixed — see v3.12.
 - [ ] (issue #88) `intersection-tests` (6.4%), `cylinder-tests` (13%, improved from
   totally-blocked but still a real remaining gap after the harness fix
   above), `primitive-inf-tests` (83%), `ifelse-tests` (175%),
@@ -626,6 +626,125 @@ checks only.
   each construct individually (as this pass and the original v3.9 harness-
   bug triage both did) is worth doing before writing a fix for the wrong
   code path.
+
+## v3.12 — issue #87 (`rotate_extrude()` volume mismatches) fixed
+
+Built a live oracle for this pass rather than reasoning from source alone:
+`apt-get install openscad` (2021.01, matching every prior pass) plus a
+standalone Manifold v3.5.2 build (`tests/tools/README.md`'s documented
+recipe), then `cmake -DCHISELCAD_BUILD_GUI=OFF -DCMAKE_PREFIX_PATH=...` to
+get `chiselcad_core`/`chiselcad_tests` linked against real Manifold, and
+`scad_to_stl`/`stl_diff` built straight against the resulting
+`libchiselcad_core.a`. Cross-checked every fix below against 2021.01's own
+`src/rotateextrude.cc`/`GeometryEvaluator.cc` source (cloned at the
+`openscad-2021.01` tag) in addition to the live binary, since the corpus
+files are cloned from `openscad/openscad`'s current `master` and exercise
+some constructs 2021.01 doesn't actually support the way `master` does (see
+v3.9's oracle-version caveat) — bisected each `rotate_extrude(...)` call
+from both corpus files into its own `.scad` file and compared against the
+live 2021.01 binary throughout, not just the whole-file totals. Found and
+fixed five real bugs in `MeshEvaluator::evalExtrusion`'s `rotate_extrude`
+branch, all in `src/csg/MeshEvaluator.cpp` (plus one in
+`src/csg/CsgEvaluator.cpp::evalExtrusion`):
+
+- [x] **A profile entirely on the -X side was rejected outright.** The
+  axis-crossing check flagged *any* point with `x<0`, but real OpenSCAD
+  (`GeometryEvaluator.cc`'s `rotatePolygon`) only rejects a profile that
+  actually *straddles* the axis (`min_x<0 && max_x>0`) — a profile fully on
+  -X is valid, it just revolves mirrored back onto +X. Since Manifold's own
+  `Revolve()` clips away `x<0` input rather than mirroring it, fixed by
+  detecting this case, mirroring the profile onto +X (negating each point's
+  `x` and reversing polygon winding, since negating `x` alone flips it),
+  revolving normally, then rotating the *result* 180° about Z to reproduce
+  the original sweep. Confirmed against `rotate_extrude-tests.scad`'s
+  "Object in negative X" case (`rel_error` 1→0).
+- [x] **A negative `angle=` produced inside-out (negative-volume) geometry.**
+  `Manifold::Revolve()` winds its side faces correctly for a positive sweep
+  but backwards for a literal negative `revolveDegrees` — confirmed by
+  isolating `rotate_extrude-angle.scad`'s `angle=-5`/`angle=-45` cases
+  individually (positive-angle siblings matched immediately; negative ones
+  came back with `volume_b` exactly negated). Fixed by always sweeping with
+  `Revolve(polys, segs, abs(angle))` and mirroring the *result* across the
+  XZ plane (`Mirror({0,1,0})`, Y→-Y) for an originally-negative angle
+  instead — algebraically `x*cos(-a)=x*cos(a)`, `x*sin(-a)=-x*sin(a)`, i.e.
+  exactly the +a sweep with Y negated — and unlike `Revolve()`,
+  `Mirror()`/`Transform()` keep winding correct on their own.
+- [x] **Segment count used a fixed proxy radius (10) instead of the
+  profile's own extent.** `resolveSegments()` was called with a hardcoded
+  `10.0` "good enough" placeholder regardless of the actual profile's
+  distance from the axis, rather than real OpenSCAD's
+  `Calc::get_fragments_from_r(max_x-min_x, ...)` (the profile's full X-span,
+  confirmed from 2021.01's own `rotateextrude.cc`/`GeometryEvaluator.cc`
+  source — not the near edge, not the centroid).
+- [x] **A partial sweep was tessellated at full-circle density.** Real
+  OpenSCAD scales the full-circle fragment count down for a partial angle
+  (`fragments = floor(get_fragments_from_r(...) * |angle|/360)`, minimum 1)
+  rather than using that many segments across the whole (shorter) arc —
+  `MeshEvaluator` was passing the full-circle count straight through,
+  over-tessellating any `angle<360` sweep relative to real OpenSCAD's
+  actual, coarser output. Fixed by applying the same floor-and-scale
+  formula before calling `Revolve()` — with one deviation from the literal
+  formula: floored to a minimum of **3**, not 1. `Manifold::Revolve()` only
+  honors an explicit `circularSegments` when it's `>2`; passing 1 or 2
+  silently falls back to Manifold's own internal auto-quality segment count
+  (unrelated to our angle/profile), which for a small enough angle produced
+  *zero* triangles outright — confirmed via `rotate_extrude-angle.scad`'s
+  `angle=5`/`angle=-5` "render a single segment" cases, which the
+  formula's literal `fragments=1` maps to.
+- [x] **`angle=`'s `NaN`/`Infinity` handling was lost before `MeshEvaluator`
+  ever saw it.** Real OpenSCAD treats a non-finite `angle=` as "not given"
+  (full 360° circle, confirmed against a live 2021.01 run of
+  `rotate_extrude-angle.scad`'s `0/0`/`1/0`/`-1/0` cases). `MeshEvaluator`
+  already special-cased this correctly, but by the time its value arrived
+  there `CsgEvaluator`'s generic `evalNumber()` had already collapsed any
+  non-finite number to `0.0` — indistinguishable from a *literal* `angle=0`
+  (a real, distinct "no geometry at all" case straight from 2021.01's
+  `rotatePolygon()`: `if (angle==0) return nullptr`). Fixed by special-
+  casing `"angle"` in `CsgEvaluator::evalExtrusion` (alongside the existing
+  `"scale"`/`"center"` special cases) to resolve non-finite values to 360
+  before that collapse can happen, rather than losing the distinction.
+  Regression test at the IR level (`CsgEval:rotate_extrude angle keeps
+  NaN/Infinity distinct from a literal 0`, doesn't need Manifold) plus three
+  Manifold-level ones (`[v87][bugfix]` in `test_headless_build.cpp`,
+  volumes pinned against Pappus's centroid theorem for the mirror/negative-
+  angle cases).
+
+Net effect on the two originally-reported files: `rotate_extrude-tests.scad`
+27%→13.0% (now an exact volume match — `sym_diff_volume` is entirely the
+`$fn=1`/3-segment "minimal fragments" case's residual rotational-phase
+misalignment, an extreme, deliberately-adversarial edge case not chased
+further this pass) and `rotate_extrude-angle.scad` 71%→16.7% (every
+"real" partial-angle/negative-angle/edge-case construct in the file now
+matches to floating-point noise in isolation; the remainder is
+`rotate_extrude(45) face(10)` — a positional first argument, which current
+`master`'s test corpus intends as `angle` but 2021.01 doesn't support
+positionally at all, instead treating it as the deprecated `file=` DXF-
+import parameter and silently discarding the children when that "file"
+isn't found. Left unfixed per v3.9's own oracle-version caution: matching
+either interpretation (2021.01's DXF quirk, or `master`'s positional
+`angle`) without a newer real OpenSCAD build to check against would just be
+guessing which oracle to match).
+
+Two phase-alignment leads investigated and *not* pursued further, both
+because a genuine fix requires matching Manifold's `Revolve()` ring-start
+convention to OpenSCAD's own (`-90°`/`+90°`-offset, direction-dependent)
+one exactly, and an incorrect guess measurably regressed already-passing
+cases:
+- A uniform `-90°` post-rotation for full-circle sweeps (reasoning that
+  `rotatePolygon`'s legacy `-90°`-start convention should apply) fixed
+  the deliberately-coarse `$fn=1` case somewhat (`rel_error` 1.33→1.14) but
+  *broke* every previously-exact full-circle case (`rotate_extrude-tests`
+  case 1, `rotate_extrude-touch-vertex`/`-touch-edge`, all 0→~0.008) —
+  reverted. Fine tessellations are insensitive to phase (an N-gon
+  approximation of a full circle converges to the same smooth solid
+  regardless of starting angle as N→∞), which is why this was invisible
+  until measured directly against the coarse case.
+- Empirically measuring the actual ring angles used (comparing STL vertex
+  `atan2` positions between the two engines for matching `(radius, height)`
+  profile points) found a consistent offset for the `$fn=1` case, but not
+  one matching any clean closed-form guess tried against 2021.01's own
+  ring-angle formula — left as a known, low-priority gap rather than
+  guessed at further.
 
 ## v4 — Tooling & Visual Quality
 
