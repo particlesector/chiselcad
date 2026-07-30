@@ -98,9 +98,21 @@ struct TransformNode {
 
     Kind kind;
     // [x, y, z] vector argument — stored as a VectorLit expression so
-    // that variable references like translate([dx, 0, 0]) work.
-    // Unused (nullptr) for Kind::Identity.
+    // that variable references like translate([dx, 0, 0]) work. Also
+    // rotate()'s angle argument ('a': a scalar degrees value, or a 3-element
+    // [x,y,z] Euler-angle vector). nullptr when the argument list is
+    // completely empty (a bare `translate()`/`rotate()`/`mirror()`, all
+    // valid OpenSCAD — CsgEvaluator::makeMatrix falls back to each
+    // transform's own OpenSCAD-documented default in that case) or for
+    // Kind::Identity.
     ExprPtr vec;
+    // rotate(a, v) / rotate(a=..., v=...)'s axis-vector argument — only
+    // meaningful for Kind::Rotate when `vec` ('a') evaluates to a scalar
+    // rather than the 3-element Euler-angle vector form (matching real
+    // OpenSCAD: "when deg_a is an array, the 'v' argument is ignored").
+    // nullptr when not given, in which case rotate()'s axis defaults to the
+    // Z axis [0,0,1]. Unused for every other Kind.
+    ExprPtr axis;
     std::vector<AstNodePtr> children;
     SourceLoc loc;
     uint8_t   modifiers = ModNone;
@@ -151,9 +163,24 @@ struct ForRange {
     bool             isBracketedList = false;
 };
 
+// One `var = range` binding in a for()'s (possibly multi-variable) argument
+// list: `for (i = [0:3], j = [0:1])` has two clauses, evaluated as nested
+// loops (Cartesian product, outermost = first clause) — matching real
+// OpenSCAD, where a later clause's range expression may reference an
+// earlier clause's already-bound variable (e.g. `for (i=[0:3], j=[0:i])`).
+struct ForClause {
+    std::string var;
+    ForRange    range;
+};
+
 struct ForNode {
-    std::string             var;
-    ForRange                range;
+    // Empty means `for()` — a completely empty argument list, which is
+    // valid OpenSCAD (its argument list is a generic module-call argument
+    // list, allowed to be empty) but has no variable to iterate.
+    // CsgEvaluator::evalFor treats this as zero iterations, matching real
+    // OpenSCAD's builtin_for(), which skips the body entirely rather than
+    // running it once vacuously.
+    std::vector<ForClause>  clauses;
     std::vector<AstNodePtr> children;
     SourceLoc               loc;
     uint8_t                 modifiers = ModNone;

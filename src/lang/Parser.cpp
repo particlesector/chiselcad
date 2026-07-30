@@ -435,8 +435,22 @@ AstNodePtr Parser::parsePrimitive(TokenKind k) {
     }
 
     expect(TokenKind::LParen, "expected '(' after primitive name");
-    parseParamList(node.params, node.center);
+    if (node.kind == PrimitiveNode::Kind::Polygon2D)
+        parsePolygonParams(node.params);
+    else
+        parseParamList(node.params, node.center);
     expect(TokenKind::RParen, "expected ')' after primitive arguments");
+
+    // A leaf primitive can still be followed by a trailing child
+    // statement/block syntactically — every OpenSCAD module instantiation
+    // accepts one, even though a leaf primitive's own semantics have no use
+    // for it (upstream test corpus's scale-mirror2D-3D-tests.scad:
+    // `module obj2D() polygon(...) square(...);` — square() is bound as
+    // polygon()'s syntactic child and simply has no effect). Parse and
+    // discard it so the file keeps parsing instead of erroring out here —
+    // matches how union()/translate()/etc. already tolerate a bare `;` with
+    // no child via this same parseBody() call.
+    parseBody();
 
     return makePrimitive(std::move(node));
 }
@@ -458,8 +472,17 @@ AstNodePtr Parser::parseBoolean(TokenKind k) {
     default: break;
     }
 
-    expect(TokenKind::LParen,  "expected '(' after boolean operator");
-    expect(TokenKind::RParen,  "expected ')' after boolean operator");
+    expect(TokenKind::LParen, "expected '(' after boolean operator");
+    // union/difference/intersection/hull() take no arguments in real
+    // OpenSCAD, but minkowski() accepts a `convexity=` hint (upstream test
+    // corpus: `minkowski(convexity=2) { ... }`) — like render()'s
+    // convexity, a preview-only concept ChiselCAD always fully evaluates
+    // past, so parse and discard whatever's given rather than requiring an
+    // empty argument list outright.
+    std::unordered_map<std::string, ExprPtr> discardedParams;
+    bool unusedCenter = false;
+    parseParamList(discardedParams, unusedCenter);
+    expect(TokenKind::RParen, "expected ')' after boolean operator");
 
     node.children = parseBody();
     return makeBoolean(std::move(node));
@@ -483,7 +506,44 @@ AstNodePtr Parser::parseTransform(TokenKind k) {
     }
 
     expect(TokenKind::LParen, "expected '(' after transform name");
-    node.vec = parseExpr(); // [x,y,z] literal, 4x4 matrix literal, or any expression yielding one
+
+    if (node.kind == TransformNode::Kind::Rotate) {
+        // rotate(a) / rotate(a, v) / rotate(a=..., v=...) / rotate() — 'a'
+        // (angle: scalar degrees, or a 3-element [x,y,z] Euler-angle vector)
+        // and 'v' (axis vector, only meaningful when 'a' is a scalar) bind
+        // like any other named/positional OpenSCAD argument list, matching
+        // real OpenSCAD's Parameters::parse(arguments, {"a", "v"}). Both are
+        // optional: a bare rotate() is valid (identity — angle 0).
+        bool sawPositional = false;
+        while (!check(TokenKind::RParen) && !atEnd()) {
+            const size_t prevPos = m_pos; // guard against zero-progress infinite loops
+
+            if (peek(1).kind == TokenKind::Equals && isParamNameToken(peek())) {
+                std::string name = peek().text;
+                advance(); // name
+                advance(); // '='
+                if (name == "v") node.axis = parseExpr();
+                else             node.vec  = parseExpr(); // "a" (or any other name — discarded)
+            } else if (!sawPositional) {
+                node.vec = parseExpr();
+                sawPositional = true;
+            } else {
+                node.axis = parseExpr();
+            }
+
+            match(TokenKind::Comma);
+            if (m_pos == prevPos) break;
+        }
+    } else if (!check(TokenKind::RParen)) {
+        // translate([x,y,z]) / scale(...) / mirror([x,y,z]) / multmatrix(m)
+        // — a single positional argument. An empty argument list (e.g.
+        // mirror(), matching OpenSCAD) leaves node.vec unset, so
+        // CsgEvaluator::makeMatrix falls back to each transform's own
+        // OpenSCAD-documented default (translate: [0,0,0]; scale: [1,1,1];
+        // mirror: [1,0,0]).
+        node.vec = parseExpr(); // [x,y,z] literal, 4x4 matrix literal, or any expression yielding one
+    }
+
     expect(TokenKind::RParen, "expected ')' after transform argument");
 
     node.children = parseBody();
@@ -583,7 +643,13 @@ AstNodePtr Parser::parseIf() {
 }
 
 // ---------------------------------------------------------------------------
-// for — for (var = [start:step:end]) or for (var = [v0, v1, ...])
+// for — for (var = [start:step:end]) or for (var = [v0, v1, ...]), or the
+// multi-variable form for (var1 = ..., var2 = ..., ...) — a comma-separated
+// list of independent clauses evaluated as nested loops (Cartesian product,
+// outermost = first clause; see ForClause in AST.h). `for()` with a
+// completely empty argument list is also valid OpenSCAD (seen e.g. in the
+// upstream test corpus's for-tests.scad) — node.clauses stays empty in that
+// case.
 // ---------------------------------------------------------------------------
 AstNodePtr Parser::parseFor() {
     const Token& kw = advance(); // consume 'for'
@@ -591,46 +657,57 @@ AstNodePtr Parser::parseFor() {
     node.loc = kw.loc;
 
     expect(TokenKind::LParen, "expected '(' after 'for'");
-    node.var = expect(TokenKind::Ident, "expected loop variable").text;
-    expect(TokenKind::Equals, "expected '=' after loop variable");
 
-    if (check(TokenKind::LBracket)) {
-        advance(); // consume '['
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        const size_t prevPos = m_pos; // guard against zero-progress infinite loops
 
-        // Parse first expression — determines range vs list form
-        auto first = parseExpr();
+        ForClause clause;
+        clause.var = expect(TokenKind::Ident, "expected loop variable").text;
+        expect(TokenKind::Equals, "expected '=' after loop variable");
 
-        if (check(TokenKind::Colon)) {
-            // Range form: [start : end] or [start : step : end]
-            advance(); // consume ':'
-            auto second = parseExpr();
+        if (check(TokenKind::LBracket)) {
+            advance(); // consume '['
+
+            // Parse first expression — determines range vs list form
+            auto first = parseExpr();
+
             if (check(TokenKind::Colon)) {
+                // Range form: [start : end] or [start : step : end]
                 advance(); // consume ':'
-                auto third = parseExpr();
-                node.range.isRange = true;
-                node.range.start   = std::move(first);
-                node.range.step    = std::move(second);
-                node.range.end     = std::move(third);
+                auto second = parseExpr();
+                if (check(TokenKind::Colon)) {
+                    advance(); // consume ':'
+                    auto third = parseExpr();
+                    clause.range.isRange = true;
+                    clause.range.start   = std::move(first);
+                    clause.range.step    = std::move(second);
+                    clause.range.end     = std::move(third);
+                } else {
+                    clause.range.isRange = true;
+                    clause.range.start   = std::move(first);
+                    clause.range.end     = std::move(second);
+                }
             } else {
-                node.range.isRange = true;
-                node.range.start   = std::move(first);
-                node.range.end     = std::move(second);
+                // List form: [first, ...]
+                clause.range.isRange = false;
+                clause.range.isBracketedList = true;
+                clause.range.list.push_back(std::move(first));
+                while (match(TokenKind::Comma)) {
+                    if (check(TokenKind::RBracket)) break;
+                    clause.range.list.push_back(parseExpr());
+                }
             }
+            expect(TokenKind::RBracket, "expected ']' after range/list");
         } else {
-            // List form: [first, ...]
-            node.range.isRange = false;
-            node.range.isBracketedList = true;
-            node.range.list.push_back(std::move(first));
-            while (match(TokenKind::Comma)) {
-                if (check(TokenKind::RBracket)) break;
-                node.range.list.push_back(parseExpr());
-            }
+            // Expression form: for (var = expr) — expr must evaluate to a vector
+            clause.range.isRange = false;
+            clause.range.list.push_back(parseExpr());
         }
-        expect(TokenKind::RBracket, "expected ']' after range/list");
-    } else {
-        // Expression form: for (var = expr) — expr must evaluate to a vector
-        node.range.isRange = false;
-        node.range.list.push_back(parseExpr());
+
+        node.clauses.push_back(std::move(clause));
+
+        if (m_pos == prevPos) break; // no token consumed — stop to avoid infinite loop
+        if (!match(TokenKind::Comma)) break;
     }
 
     expect(TokenKind::RParen, "expected ')' after for header");
@@ -705,6 +782,51 @@ void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
         }
 
         if (m_pos == prevPos) break; // no token consumed — stop to avoid infinite loop
+    }
+}
+
+// ---------------------------------------------------------------------------
+// parsePolygonParams — polygon(points, paths, convexity)
+//
+// parseParamList's generic "positional vector" case (used by cube/square/
+// etc.) assumes a bracketed positional argument is an [x,y,z]-shaped triple
+// and decomposes it into "x"/"y"/"z" keys, capping at 3 elements. polygon()'s
+// positional arguments are structurally different — "points" is a whole
+// list of [x,y] points (almost always more than 3 of them) and "paths" a
+// whole list of index lists — that CsgEvaluator needs intact under the
+// "points"/"paths" keys to evaluate as one vector value each. Reusing the
+// generic case here silently broke every unnamed polygon() call: a point
+// list with exactly 3 points parsed without error but the points ended up
+// under "x"/"y"/"z" (never read by CsgEvaluator's polygon handling, which
+// only looks at "points"), and 4+ points hit the loop's hardcoded 3-element
+// cap and failed to parse at all ("expected ']'") — the latter is what
+// upstream's scale-mirror2D-3D-tests.scad (issue #90) tripped over.
+// ---------------------------------------------------------------------------
+void Parser::parsePolygonParams(std::unordered_map<std::string, ExprPtr>& params) {
+    static const char* posKeys[] = {"points", "paths"};
+    int posIdx = 0;
+
+    while (!check(TokenKind::RParen) && !atEnd()) {
+        const size_t prevPos = m_pos; // guard against zero-progress infinite loops
+
+        // Named param: any token (Ident or keyword) followed by '='
+        if (peek(1).kind == TokenKind::Equals && isParamNameToken(peek())) {
+            std::string name = advance().text;
+            advance(); // '='
+            params[name] = parseExpr();
+        } else if (posIdx < 2) {
+            // First positional = points, second = paths — matches real
+            // OpenSCAD's declared polygon(points, paths, convexity) order.
+            params[posKeys[posIdx++]] = parseExpr();
+        } else {
+            // Third positional (convexity) or beyond — a preview-only hint
+            // ChiselCAD always fully evaluates past; parse and discard,
+            // same as render()/minkowski()'s convexity.
+            parseExpr();
+        }
+
+        match(TokenKind::Comma);
+        if (m_pos == prevPos) break;
     }
 }
 
@@ -1023,10 +1145,13 @@ ModuleDef Parser::parseModuleDefCore() {
     }
     expect(TokenKind::RParen, "expected ')' after parameter list");
 
-    // Body must be a brace block for module definitions
-    expect(TokenKind::LBrace, "expected '{' for module body");
-    def.body = parseBraceBlock();
-    expect(TokenKind::RBrace, "expected '}' to close module body");
+    // Module body: a brace block `{ ... }`, or — matching real OpenSCAD
+    // (e.g. upstream test corpus's `module obj3D() cylinder(r=1, ...);`) —
+    // a single statement with no braces at all. Every other body (for/if/
+    // transform/boolean/...) already accepts both forms via parseBody();
+    // module definitions had been hard-requiring a brace block, which
+    // rejected this extremely common one-liner module idiom outright.
+    def.body = parseBody();
 
     return def;
 }

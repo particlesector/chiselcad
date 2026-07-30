@@ -171,6 +171,34 @@ TEST_CASE("Parser:minkowski", "[parser]") {
     REQUIRE(b.children.size() == 2);
 }
 
+TEST_CASE("Parser:minkowski(convexity=...) parses and discards the hint", "[parser][bugfix]") {
+    // Real OpenSCAD's minkowski() accepts a convexity= preview hint (upstream
+    // test corpus: `minkowski(convexity=2) { ... }`). Previously
+    // parseBoolean unconditionally expected ')' immediately after '(' for
+    // every boolean op, so any argument at all — even minkowski's legitimate
+    // one — failed to parse. Parsed and discarded, same as render()'s
+    // convexity, since ChiselCAD always fully evaluates.
+    auto r = parse("minkowski(convexity=2) { cube(1); sphere(1); }");
+    REQUIRE(r.roots.size() == 1);
+    auto& b = asBool(r.roots[0]);
+    REQUIRE(b.op == BooleanNode::Op::Minkowski);
+    REQUIRE(b.children.size() == 2);
+}
+
+TEST_CASE("Parser:a leaf primitive tolerates a trailing child statement", "[parser][bugfix]") {
+    // Every OpenSCAD module instantiation — including leaf primitives that
+    // have no real use for children — syntactically accepts a trailing
+    // child statement (upstream test corpus's scale-mirror2D-3D-tests.scad:
+    // `module obj2D() polygon(...) square(...);`, where square() is
+    // polygon()'s syntactic child and has no effect). Previously
+    // parsePrimitive never called parseBody(), so a primitive followed by
+    // anything other than ';' or end-of-block took the parse down.
+    auto r = parse("cube(1) sphere(1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& c = asPrim(r.roots[0]);
+    REQUIRE(c.kind == PrimitiveNode::Kind::Cube);
+}
+
 TEST_CASE("Parser:hull empty", "[parser]") {
     auto r = parse("hull() {}");
     REQUIRE(r.roots.size() == 1);
@@ -427,30 +455,112 @@ TEST_CASE("Parser:for range [start:end]", "[parser]") {
     auto r = parse("for (i = [0:4]) sphere(r=1);");
     REQUIRE(r.roots.size() == 1);
     auto& f = asFor(r.roots[0]);
-    REQUIRE(f.var == "i");
-    REQUIRE(f.range.isRange == true);
-    REQUIRE(f.range.step == nullptr); // implicit step
+    REQUIRE(f.clauses.size() == 1);
+    REQUIRE(f.clauses[0].var == "i");
+    REQUIRE(f.clauses[0].range.isRange == true);
+    REQUIRE(f.clauses[0].range.step == nullptr); // implicit step
     REQUIRE(f.children.size() == 1);
 }
 
 TEST_CASE("Parser:for range [start:step:end]", "[parser]") {
     auto r = parse("for (i = [0:2:8]) sphere(r=1);");
     auto& f = asFor(r.roots[0]);
-    REQUIRE(f.range.isRange == true);
-    REQUIRE(f.range.step != nullptr);
+    REQUIRE(f.clauses[0].range.isRange == true);
+    REQUIRE(f.clauses[0].range.step != nullptr);
 }
 
 TEST_CASE("Parser:for list", "[parser]") {
     auto r = parse("for (v = [1, 3, 7]) sphere(r=1);");
     auto& f = asFor(r.roots[0]);
-    REQUIRE(f.range.isRange == false);
-    REQUIRE(f.range.list.size() == 3);
+    REQUIRE(f.clauses[0].range.isRange == false);
+    REQUIRE(f.clauses[0].range.list.size() == 3);
 }
 
 TEST_CASE("Parser:for with brace body", "[parser]") {
     auto r = parse("for (i = [0:2]) { cube([5,5,5]); sphere(r=2); }");
     auto& f = asFor(r.roots[0]);
     REQUIRE(f.children.size() == 2);
+}
+
+TEST_CASE("Parser:for() with no arguments parses with zero clauses", "[parser][bugfix]") {
+    // Real OpenSCAD accepts a bare for() (seen in its own test corpus,
+    // for-tests.scad's `for();`) — the argument list is a generic module-call
+    // argument list, which is legitimately allowed to be empty. Previously
+    // ChiselCAD's parser unconditionally expected an identifier right after
+    // '(', so this failed to parse at all and took the whole file down with
+    // it. node.clauses stays empty as the sentinel CsgEvaluator::evalFor
+    // checks for zero-iterations.
+    auto r = parse("for() sphere(r=1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.clauses.empty());
+    REQUIRE(f.children.size() == 1);
+}
+
+TEST_CASE("Parser:multi-variable for() parses one clause per comma-separated binding",
+          "[parser][bugfix]") {
+    // `for (x = ..., y = ..., z = ...)` — real OpenSCAD's multi-variable
+    // for-loop form (seen e.g. in the upstream test corpus's
+    // for-nested-tests.scad/mirror-tests.scad/edge-cases.scad). Previously
+    // Parser::parseFor only ever parsed a single `var = ...` clause and then
+    // unconditionally expected ')', so a second comma-separated clause took
+    // the whole file down with a parse error.
+    auto r = parse("for (x = [0:3], y = [0:0.5:1], z = [0,2,3]) sphere(1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.clauses.size() == 3);
+    REQUIRE(f.clauses[0].var == "x");
+    REQUIRE(f.clauses[0].range.isRange == true);
+    REQUIRE(f.clauses[1].var == "y");
+    REQUIRE(f.clauses[1].range.isRange == true);
+    REQUIRE(f.clauses[2].var == "z");
+    REQUIRE(f.clauses[2].range.isRange == false);
+    REQUIRE(f.clauses[2].range.list.size() == 3);
+}
+
+TEST_CASE("Parser:rotate() with no arguments parses", "[parser][bugfix]") {
+    // Real OpenSCAD accepts a bare rotate() (seen in the upstream test
+    // corpus's rotate-parameters.scad: "rotate() //same as undef").
+    // Previously Parser::parseTransform unconditionally called parseExpr()
+    // for exactly one required argument, so this failed to parse.
+    auto r = parse("rotate() cube(1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& t = asTrans(r.roots[0]);
+    REQUIRE(t.vec == nullptr);
+}
+
+TEST_CASE("Parser:rotate(a, v) two-positional-argument form parses", "[parser][bugfix]") {
+    // rotate(angle, axis) — real OpenSCAD's arbitrary-axis rotation form
+    // (upstream corpus rotate-parameters.scad: "rotate(30,[0,1,0])").
+    // Previously unparseable: parseTransform's single parseExpr() consumed
+    // just the angle, then expected ')' but found ',' next.
+    auto r = parse("rotate(30,[0,1,0]) cube(1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& t = asTrans(r.roots[0]);
+    REQUIRE(t.vec != nullptr);
+    REQUIRE(t.axis != nullptr);
+}
+
+TEST_CASE("Parser:rotate(v=..., a=...) named-argument form parses in either order",
+          "[parser][bugfix]") {
+    // Upstream corpus transform-tests.scad: "rotate(v=[-1,0,0], a=45)".
+    auto r1 = parse("rotate(v=[-1,0,0], a=45) cube(1);");
+    auto& t1 = asTrans(r1.roots[0]);
+    REQUIRE(t1.vec != nullptr);
+    REQUIRE(t1.axis != nullptr);
+
+    auto r2 = parse("rotate(a=45, v=[-1,0,0]) cube(1);");
+    auto& t2 = asTrans(r2.roots[0]);
+    REQUIRE(t2.vec != nullptr);
+    REQUIRE(t2.axis != nullptr);
+}
+
+TEST_CASE("Parser:mirror() with no arguments parses", "[parser][bugfix]") {
+    // Upstream corpus scale-mirror2D-3D-tests.scad: "mirror() obj2D();".
+    auto r = parse("mirror() cube(1);");
+    REQUIRE(r.roots.size() == 1);
+    auto& t = asTrans(r.roots[0]);
+    REQUIRE(t.vec == nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +736,22 @@ TEST_CASE("Parser:module definition stored in moduleDefs", "[parser]") {
     REQUIRE(r.moduleDefs[0].body.size() == 1);
 }
 
+TEST_CASE("Parser:module definition with a single-statement body (no braces)",
+          "[parser][bugfix]") {
+    // Real OpenSCAD allows a module body to be one statement with no braces
+    // at all — an extremely common one-liner idiom (upstream test corpus:
+    // `module obj3D() cylinder(r=1, center=true, $fn=8);`). Previously
+    // parseModuleDefCore hard-required a '{' for every module body, which
+    // rejected this outright even though every other body (for/if/
+    // transform/boolean/...) already accepted it via parseBody().
+    auto r = parse("module obj3D() cylinder(r=1, center=true, $fn=8);");
+    REQUIRE(r.moduleDefs.size() == 1);
+    REQUIRE(r.moduleDefs[0].name == "obj3D");
+    REQUIRE(r.moduleDefs[0].body.size() == 1);
+    auto& c = asPrim(r.moduleDefs[0].body[0]);
+    REQUIRE(c.kind == PrimitiveNode::Kind::Cylinder);
+}
+
 TEST_CASE("Parser:module-local variable assignment is kept, not discarded", "[parser][bugfix]") {
     auto r = parse("module box(r) { d = r * 2; cube(d); }");
     REQUIRE(r.moduleDefs.size() == 1);
@@ -757,6 +883,44 @@ TEST_CASE("Parser:polygon with points", "[parser]") {
     const auto& p = asPrim(r.roots[0]);
     REQUIRE(p.kind == PrimitiveNode::Kind::Polygon2D);
     REQUIRE(p.params.count("points") == 1);
+}
+
+TEST_CASE("Parser:polygon with a positional (unnamed) points list of any length",
+          "[parser][bugfix]") {
+    // parseParamList's generic "positional vector [x,y,z]" case (used by
+    // cube/square/etc.) assumed a bracketed positional argument was a
+    // <=3-element x/y/z triple and decomposed it into "x"/"y"/"z" keys —
+    // completely wrong for polygon()'s positional points list, which
+    // CsgEvaluator needs intact under the "points" key. A 3-point polygon
+    // silently ended up with no "points" key at all (points landed under
+    // "x"/"y"/"z" instead, never read); a 4+ point polygon (the overwhelming
+    // common case — upstream test corpus's scale-mirror2D-3D-tests.scad
+    // uses a 4-point positional polygon) failed to parse outright, since the
+    // old loop's hardcoded 3-element cap left a dangling ',' where ']' was
+    // expected.
+    auto r3 = parse("polygon([[0,0],[10,0],[5,8]]);");
+    const auto& p3 = asPrim(r3.roots[0]);
+    REQUIRE(p3.params.count("points") == 1);
+
+    auto r4 = parse("polygon([[-0.5,-0.5],[1,-0.5],[1,1],[-0.5,0.5]]);");
+    REQUIRE(r4.roots.size() == 1);
+    const auto& p4 = asPrim(r4.roots[0]);
+    REQUIRE(p4.kind == PrimitiveNode::Kind::Polygon2D);
+    REQUIRE(p4.params.count("points") == 1);
+    Interpreter interp;
+    Value pts = interp.evaluate(*p4.params.at("points"));
+    REQUIRE(pts.isVector());
+    REQUIRE(pts.asVec().size() == 4);
+}
+
+TEST_CASE("Parser:polygon with positional points and paths", "[parser][bugfix]") {
+    // polygon(points, paths, convexity) — real OpenSCAD's declared
+    // positional argument order; the third (convexity) is a preview-only
+    // hint, parsed and discarded like render()'s.
+    auto r = parse("polygon([[0,0],[1,0],[1,1],[0,1]], [[0,1,2,3]], 4);");
+    const auto& p = asPrim(r.roots[0]);
+    REQUIRE(p.params.count("points") == 1);
+    REQUIRE(p.params.count("paths") == 1);
 }
 
 TEST_CASE("Parser:linear_extrude with height", "[parser]") {
@@ -1098,7 +1262,7 @@ TEST_CASE("Parser:for-loop variable named after a builtin primitive", "[parser]"
     auto r = parse("for (cube = [0:2]) { translate([cube, 0, 0]) sphere(1); }");
     REQUIRE(r.roots.size() == 1);
     const auto& f = asFor(r.roots[0]);
-    REQUIRE(f.var == "cube");
+    REQUIRE(f.clauses[0].var == "cube");
 }
 
 TEST_CASE("Parser:let binding named after a builtin boolean op", "[parser]") {

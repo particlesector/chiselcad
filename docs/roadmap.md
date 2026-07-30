@@ -437,6 +437,151 @@ run through this so far — `2D`, `bugs`, `bugs2D`, `misc`, `issues` are
 still unexamined. This should become a standing regression suite (rerun
 after any geometry-affecting change), not a one-time audit.
 
+## v3.10 — All 11 issue #90 parse failures fixed; issue #91's oracle-version question resolved
+
+Environment note: this pass had no access to a live OpenSCAD oracle or a
+buildable Manifold (network egress in this session is scoped to
+`particlesector/chiselcad` only, so `vcpkg`/other-repo downloads used by the
+usual build are blocked). All of the parser/grammar fixes below were instead
+verified for real: the language+CSG subsystem (`src/lang`, `src/csg`, and
+the GPU/Manifold-free import loaders — the same set `tests/tools/README.md`
+already documents as buildable with plain `g++ -lz`, no vcpkg needed) was
+compiled and linked against real `glm`/`nlohmann-json`/`zlib`/a
+from-source-built Catch2, and the *actual* `tests/test_parser.cpp` /
+`tests/test_csg_evaluator.cpp` suites were run — 344 test cases / 1758
+assertions, all passing, including new regression tests for every fix below.
+Each of issue #90's 11 originally-listed files was also fed through the real
+`Lexer`/`Parser`/`CsgEvaluator` directly (fetched fresh from
+`openscad/openscad`'s current corpus) and confirmed to both parse and
+fully evaluate without error. What's still unverified against a live
+OpenSCAD binary is exact geometric/volumetric correctness (the v3.9-style
+`sym_diff_volume` comparison) — that needs the oracle this environment
+doesn't have.
+
+- [x] **Resolved the v3.9 oracle-version question for `linear_extrude(h=...)`
+  and `segments=`** (issue #91). Checked real OpenSCAD's current `master`
+  source (`src/core/LinearExtrudeNode.cc`) directly rather than the outdated
+  `apt` 2021.01 binary: `parameters[{"height", "h"}]` confirms `h` genuinely
+  is a real, current alias for `height` — ChiselCAD's support for it is
+  correct, not a ChiselCAD invention, and not something to "fix" back to
+  2021.01 behavior. `segments=` is also a genuine, distinct current
+  parameter (`node->segments`, validated separately from `slices`) — but
+  unlike `h=`, ChiselCAD doesn't implement it **at all** (no `segments`
+  param is read anywhere in `MeshEvaluator::evalExtrusion`). Per
+  `src/geometry/linear_extrude.cc`, real OpenSCAD only acts on it when a
+  twist or non-uniform scale is active: it subdivides each outline edge
+  (`Discretizer::splitOutline(outline, twist, scale_x, scale_y, num_slices,
+  segments)`) before extruding, so a twisted/scaled `linear_extrude` gets a
+  smoother swept surface instead of faceting along the profile's original
+  edges. This is a real, previously-unidentified gap and likely explains
+  some fraction of `linear_extrude-tests.scad`'s remaining ~13.6% error —
+  filed as a follow-up rather than implemented blind here (see
+  `tests/tools/README.md`), since matching `splitOutline`'s exact per-edge
+  subdivision behavior needs bisecting against a live modern OpenSCAD build,
+  not a guess with no way to check the result.
+- [x] **`for()` with a completely empty argument list failed to parse**
+  (`for-tests.scad`, issue #90 — opens with exactly this on line 2:
+  `for();`). `Parser::parseFor()` unconditionally expected an `Ident '='`
+  right after `(`. Real OpenSCAD's `for()` argument list is a generic
+  module-call argument list, legitimately allowed to be empty. Fixed by
+  making `ForNode` hold a `std::vector<ForClause>` (see next item) that's
+  simply empty in this case; `CsgEvaluator::evalFor()` treats an empty
+  clause list as zero iterations, matching real OpenSCAD's `builtin_for()`
+  (`src/core/control.cc`'s `if (!inst->arguments.empty())` guard) — it skips
+  the body entirely rather than running it once vacuously.
+- [x] **Multi-variable `for (i=..., j=..., k=...)` wasn't supported at all**
+  (`for-nested-tests.scad`, `mirror-tests.scad`, `edge-cases.scad` — 3 of
+  issue #90's 11 files). `ForNode` only ever held one `var`/`range` pair, so
+  `Parser::parseFor` parsed the first clause then unconditionally expected
+  `)`, erroring on the comma before a second clause. Restructured `ForNode`
+  to hold a list of `ForClause`s; `CsgEvaluator::evalFor` now recurses one
+  clause at a time as nested loops (Cartesian product, outermost = first
+  clause), evaluating each clause's range expression only once its own turn
+  comes up — so a later clause can reference an earlier one's already-bound
+  variable (`for (i=[0:3], j=[0:i])`), matching real OpenSCAD.
+- [x] **`rotate(a, v)` — the angle+arbitrary-axis form — wasn't supported at
+  all**, and neither were `rotate()`/`mirror()` with zero arguments
+  (`rotate-parameters.scad`, `transform-tests.scad`,
+  `scale-mirror2D-3D-tests.scad` — 3 of issue #90's 11 files).
+  `Parser::parseTransform` called `parseExpr()` exactly once for a single
+  required argument, for all of translate/rotate/scale/mirror/multmatrix —
+  so `rotate(30, [0,1,0])` (two positional args), `rotate(v=..., a=...)`
+  (named), and a bare `rotate()`/`mirror()` (zero args) all failed to parse.
+  Added a dedicated argument-list parser for `rotate` (positional/named `a`
+  and `v`, matching real OpenSCAD's `Parameters::parse(arguments, {"a",
+  "v"})`) and made the single-positional-argument case optional for the
+  rest. `CsgEvaluator::makeMatrix` now implements the angle+axis rotation
+  itself via `glm::rotate(angle, axis)` (falling back to the Z axis when `v`
+  isn't given — mathematically identical to the old hard-coded Z-only
+  scalar case, so existing scalar `rotate(angle)` callers are unaffected),
+  and gives each transform its own OpenSCAD-documented default for a
+  missing/non-numeric argument (confirmed against real OpenSCAD's
+  `TransformNode.cc`: translate → `[0,0,0]`, scale → `[1,1,1]`, mirror →
+  `[1,0,0]`) instead of the one-size-fits-all `{0,0,0}` (or, for a scalar,
+  `{0,0,n}`) every transform previously shared.
+- [x] **`scale(2)` (a bare scalar) scaled only the Z axis by 2, leaving X/Y
+  untouched, instead of scaling uniformly** — a real, silent correctness bug
+  found while fixing the above (the same shared "scalar → Z axis" decoding
+  rule is correct for `rotate(angle)` but was wrong for `scale`/`translate`/
+  `mirror`, which never had their own scalar handling). Confirmed against
+  real OpenSCAD's `builtin_scale()`: a non-vector numeric argument falls
+  back to `scalevec.setConstant(num)` — uniform. Fixed for `Scale`
+  specifically (`transform-tests.scad`'s `scale(0.5) mycyl()` and
+  `scale3D-tests.scad`'s `scale(2) obj3D()` both exercise this).
+- [x] **`union`/`difference`/`intersection`/`hull`/`minkowski` couldn't take
+  any arguments at all**, even `minkowski(convexity=2)`, a real OpenSCAD
+  parameter (`minkowski3-difference-test.scad`, issue #90).
+  `Parser::parseBoolean` called `expect(RParen)` immediately after `(` with
+  no attempt to parse anything in between. Now parses (and discards) a
+  generic param list first, same treatment `render()`'s `convexity=` already
+  got.
+- [x] **Module definitions required a brace-block body — a single-statement
+  body with no braces (e.g. `module obj3D() cylinder(r=1, ...);`, an
+  extremely common one-liner idiom) failed to parse** (`scale3D-tests.scad`,
+  `scale-mirror2D-3D-tests.scad`, issue #90). Every *other* body (for/if/
+  transform/boolean/...) already accepted both forms via the shared
+  `parseBody()` helper; module definitions had their own hard-coded
+  `expect(LBrace)` instead. Now uses `parseBody()` like everything else.
+- [x] **A leaf primitive (cube/sphere/.../polygon) followed by a trailing
+  child statement failed to parse** (`scale-mirror2D-3D-tests.scad`'s
+  `module obj2D() polygon(...) square(...);` — `square()` is bound as
+  `polygon()`'s syntactic child, which OpenSCAD's grammar allows for *any*
+  module instantiation even though a leaf primitive's semantics ignore it).
+  `Parser::parsePrimitive` never called `parseBody()` at all. Now does, and
+  discards the result — matching how `union()`/`translate()`/etc. already
+  tolerate a bare `;` with no child via the very same call.
+- [x] **`polygon()`'s positional (unnamed) points list was fundamentally
+  broken for any point count** — found while root-causing the item above,
+  not itself one of the original 11 files, but the same corpus file
+  (`scale-mirror2D-3D-tests.scad`) also exercises it, and it's a
+  significant, previously-unnoticed correctness bug independent of issue
+  #90. `parseParamList`'s generic "positional vector" case assumes any
+  bracketed positional argument is an `[x,y,z]`-shaped triple and
+  decomposes it into `"x"`/`"y"`/`"z"` keys, capped at 3 elements. For
+  `polygon([[x,y],...])` this is wrong in two different ways depending on
+  point count: **exactly 3 points** parsed without error but landed under
+  `"x"`/`"y"`/`"z"` instead of `"points"` — the key `CsgEvaluator`'s
+  polygon handling actually reads — so the polygon silently got *zero*
+  points; **4 or more points** (the overwhelmingly common real case) failed
+  to parse outright, since the loop's hard-coded 3-element cap left a
+  dangling `,` where `)`'s matching `]` was expected. Added a dedicated
+  `Parser::parsePolygonParams` (first positional → `points`, second →
+  `paths`, matching real OpenSCAD's declared `polygon(points, paths,
+  convexity)` order; third positional/`convexity` parsed and discarded).
+  Every unnamed `polygon([...])` call in the wild — likely most real-world
+  `.scad` files that use `polygon()` at all — was affected by one of these
+  two failure modes before this fix.
+
+All of the above have regression tests in `tests/test_parser.cpp` and/or
+`tests/test_csg_evaluator.cpp` (tagged `[bugfix]`), verified passing against
+the real compiled `Lexer`/`Parser`/`Interpreter`/`CsgEvaluator` (see the
+environment note above) — not just read for syntactic plausibility.
+
+Issue #90's remaining scope: only the `3D/features` corpus subdirectory has
+been checked (matching v3.9's existing note); `2D`, `bugs`, `bugs2D`,
+`misc`, `issues` are still unexamined and may turn up further parse
+failures of their own.
+
 ## v4 — Tooling & Visual Quality
 
 - [ ] VS Code LSP extension (syntax highlighting, error squiggles, completions)

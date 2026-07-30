@@ -194,3 +194,31 @@ fixed/open list, including a note on a **test-tool** bug (not a ChiselCAD
 bug) in `scad_to_stl` itself that was masking several more files' results —
 only one corpus subdirectory (`tests/data/scad/3D/features`) has been run
 through this so far.
+
+## Known caveat: the installed oracle is older than the corpus (v3.10)
+
+The only easily-available oracle in this environment is `apt`'s OpenSCAD
+2021.01. The corpus above is cloned from `openscad/openscad`'s current
+`master` branch, which assumes some features 2021.01 predates — so a
+mismatch against the 2021.01 oracle is not automatically a ChiselCAD bug.
+
+Confirmed case: `linear_extrude(h=10, ...)` — the corpus file's own comment
+says `h` is an alias for `height`, but 2021.01 rejects it
+(`WARNING: variable h not specified as parameter`). Checking real OpenSCAD's
+current source directly (`src/core/LinearExtrudeNode.cc`,
+`parameters[{"height", "h"}]`) confirms `h` genuinely is a current alias —
+ChiselCAD supporting it is correct, not a bug to "fix" back to 2021.01
+behavior. `segments=` is also a genuine current `linear_extrude` parameter
+(`src/geometry/linear_extrude.cc`: it subdivides the profile's outline edges
+before extruding, distinct from `slices`, and only takes effect when a twist
+or non-uniform scale is active) — but unlike `h=`, ChiselCAD doesn't
+implement `segments=` at all yet. That's a real, currently-unfixed gap
+(likely explains some of `linear_extrude-tests.scad`'s remaining error), not
+implemented here since matching `splitOutline`'s exact per-edge subdivision
+behavior needs bisecting against a live modern OpenSCAD build the same way
+the v3.9 fixes were, not a guess.
+
+Before treating any other corpus mismatch as a confirmed ChiselCAD bug,
+check whether it could be a similar version-mismatch case first — especially
+anything involving a parameter or feature that could plausibly have been
+added to OpenSCAD after 2021.01.

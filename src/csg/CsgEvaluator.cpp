@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace chisel::csg {
@@ -439,7 +440,7 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
     // Rows are read directly into the matrix; glm is column-major, so
     // element [row][col] of the OpenSCAD matrix goes to m[col][row].
     if (t.kind == TransformNode::Kind::Matrix) {
-        Value matVal = m_interp->evaluate(*t.vec);
+        Value matVal = t.vec ? m_interp->evaluate(*t.vec) : Value::undef();
         glm::mat4 m{1.0f};
         if (matVal.isVector()) {
             const auto& rows = matVal.asVec();
@@ -456,7 +457,13 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
         return m;
     }
 
-    Value rotVal = m_interp->evaluate(*t.vec); // evaluate once, share result
+    // Evaluate once, share result. t.vec is null for a completely empty
+    // argument list (e.g. bare `mirror()`/`rotate()`), which is distinct
+    // from evaluating to a non-vector/non-number value (e.g. `scale(undef)`
+    // or a typo'd string) — both fall through to the same "not vector, not
+    // number" default below, matching OpenSCAD's own behavior of falling
+    // back to its pre-conversion default in either case.
+    Value rotVal = t.vec ? m_interp->evaluate(*t.vec) : Value::undef();
     auto vec = [&]() -> std::array<double, 3> {
         if (rotVal.isVector()) {
             std::array<double, 3> r = {0.0, 0.0, 0.0};
@@ -465,8 +472,26 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
                     r[i] = rotVal.asVec()[i].asNumber();
             return r;
         }
-        if (rotVal.isNumber())
-            return {0.0, 0.0, rotVal.asNumber()}; // scalar → Z axis
+        if (rotVal.isNumber()) {
+            double n = rotVal.asNumber();
+            // scale(2) broadcasts uniformly to all three axes — confirmed
+            // against real OpenSCAD's builtin_scale(), which falls back to
+            // `scalevec.setConstant(num)` when the argument isn't a vector
+            // but is a plain number. rotate(angle) still means "around Z"
+            // here; its scalar case is actually handled by its own branch
+            // below now, not this shared helper.
+            if (t.kind == TransformNode::Kind::Scale)
+                return {n, n, n};
+            return {0.0, 0.0, n};
+        }
+        // Argument missing entirely, or present but not a number/vector
+        // (undef, string, ...) — each transform's own OpenSCAD-documented
+        // pre-conversion default (see TransformNode.cc upstream):
+        //   translate → [0,0,0] (no-op)
+        //   scale     → [1,1,1] (no-op)
+        //   mirror    → [1,0,0]
+        if (t.kind == TransformNode::Kind::Scale)  return {1.0, 1.0, 1.0};
+        if (t.kind == TransformNode::Kind::Mirror) return {1.0, 0.0, 0.0};
         return {0.0, 0.0, 0.0};
     }();
     const double vx = vec[0], vy = vec[1], vz = vec[2];
@@ -480,13 +505,41 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
         break;
 
     case TransformNode::Kind::Rotate: {
-        // scalar rotate(angle) → Z-axis; vector → XYZ Euler
-        float rx = static_cast<float>(vx * kDeg2Rad);
-        float ry = static_cast<float>(vy * kDeg2Rad);
-        float rz = static_cast<float>(vz * kDeg2Rad);
-        m = glm::rotate(m, rx, glm::vec3(1.0f, 0.0f, 0.0f));
-        m = glm::rotate(m, ry, glm::vec3(0.0f, 1.0f, 0.0f));
-        m = glm::rotate(m, rz, glm::vec3(0.0f, 0.0f, 1.0f));
+        if (rotVal.isVector()) {
+            // rotate([x,y,z]) (or a 1/2-element prefix of it) — XYZ Euler
+            // angles; 'v' is ignored here, matching real OpenSCAD ("when
+            // deg_a is an array, the 'v' argument is ignored").
+            float rx = static_cast<float>(vx * kDeg2Rad);
+            float ry = static_cast<float>(vy * kDeg2Rad);
+            float rz = static_cast<float>(vz * kDeg2Rad);
+            m = glm::rotate(m, rx, glm::vec3(1.0f, 0.0f, 0.0f));
+            m = glm::rotate(m, ry, glm::vec3(0.0f, 1.0f, 0.0f));
+            m = glm::rotate(m, rz, glm::vec3(0.0f, 0.0f, 1.0f));
+        } else {
+            // rotate(a) / rotate(a, v) / rotate(a=..., v=...) / rotate() —
+            // 'a' is a scalar angle in degrees (0 if absent or not a
+            // number) around axis 'v' (default the Z axis if 'v' is absent
+            // or degenerate), matching real OpenSCAD's
+            // angle_axis_degrees(a, v) path. A scalar-only rotate(angle)
+            // (no 'v') is the same rotation as the Z-axis case this used to
+            // hard-code, so existing scalar callers are unaffected.
+            double angle = rotVal.isNumber() ? rotVal.asNumber() : 0.0;
+            glm::vec3 axis(0.0f, 0.0f, 1.0f);
+            if (t.axis) {
+                Value axisVal = m_interp->evaluate(*t.axis);
+                if (axisVal.isVector()) {
+                    std::array<double, 3> a3 = {0.0, 0.0, 0.0};
+                    for (std::size_t i = 0; i < 3 && i < axisVal.asVec().size(); ++i)
+                        if (axisVal.asVec()[i].isNumber())
+                            a3[i] = axisVal.asVec()[i].asNumber();
+                    glm::vec3 candidate(static_cast<float>(a3[0]), static_cast<float>(a3[1]),
+                                         static_cast<float>(a3[2]));
+                    if (glm::dot(candidate, candidate) > 1e-12f)
+                        axis = candidate;
+                }
+            }
+            m = glm::rotate(m, static_cast<float>(angle * kDeg2Rad), glm::normalize(axis));
+        }
         break;
     }
 
@@ -554,49 +607,74 @@ CsgNodePtr CsgEvaluator::evalIf(const IfNode& node, const glm::mat4& xform,
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform,
                                  const ColorAttr& color) {
-    // Build the sequence of iteration values
-    std::vector<Value> values;
+    // `for()` with no arguments at all (Parser::parseFor leaves node.clauses
+    // empty in this case). Matches real OpenSCAD's builtin_for(), which
+    // never instantiates the body when the module call's argument list is
+    // empty — there's no iteration set for zero variables, not a single
+    // vacuous pass.
+    if (node.clauses.empty())
+        return nullptr;
 
-    if (node.range.isRange) {
-        double start = m_interp->evalNumber(*node.range.start);
-        double end = m_interp->evalNumber(*node.range.end);
-        double step = node.range.step ? m_interp->evalNumber(*node.range.step) : 1.0;
-        values = m_interp->expandRange(start, step, end);
-    } else if (node.range.isBracketedList) {
-        // Bracketed list literal `[a, b, c]` — each element is its own loop
-        // value, even if it evaluates to a vector (e.g. a point list
-        // `[[1,2,3], [4,5,6]]` must yield two vector iterations, not six
-        // scalars).
-        for (const auto& e : node.range.list)
-            values.push_back(m_interp->evaluate(*e));
-    } else {
-        // Expression form `for (v = expr)` — expr must evaluate to a vector
-        // or a range (e.g. a variable holding one, or a general range
-        // literal used directly: `for (i = someRange)`); expand either so
-        // `for (pt = pts)` iterates over pts' elements.
-        for (const auto& e : node.range.list) {
-            Value v = m_interp->evaluate(*e);
-            for (auto& elem : m_interp->iterationValues(v))
-                values.push_back(std::move(elem));
-        }
-    }
-
-    // Each iteration gets a fresh copy of the enclosing scope: the loop
-    // variable and any local assignment inside the body must not leak into
-    // the next iteration or survive past the loop (matching OpenSCAD's
-    // per-iteration block scoping), so restore the pre-loop snapshot before
-    // each iteration rather than just saving/restoring node.var alone.
-    auto savedEnv = m_interp->snapshotEnv();
     std::vector<CsgNodePtr> all;
-    for (const Value& v : values) {
-        m_interp->restoreEnv(savedEnv);
-        m_interp->setVar(node.var, v);
-        for (const auto& child : node.children) {
-            if (auto c = evalNode(*child, xform, color))
-                all.push_back(std::move(c));
+
+    // Multi-variable for (var1 = ..., var2 = ..., ...) iterates the
+    // Cartesian product of all clauses as nested loops, outermost = first
+    // clause (matches real OpenSCAD). Recurse one clause at a time so a
+    // later clause's range expression can reference an earlier clause's
+    // already-bound variable (e.g. `for (i = [0:3], j = [0:i])`) — each
+    // clause's values are only computed once its own turn comes up, by
+    // which point every outer clause's variable is already set in m_env.
+    std::function<void(std::size_t)> runClause = [&](std::size_t idx) {
+        if (idx == node.clauses.size()) {
+            for (const auto& child : node.children)
+                if (auto c = evalNode(*child, xform, color))
+                    all.push_back(std::move(c));
+            return;
         }
-    }
-    m_interp->restoreEnv(std::move(savedEnv));
+
+        const ForClause& clause = node.clauses[idx];
+
+        // Build this clause's sequence of iteration values.
+        std::vector<Value> values;
+        if (clause.range.isRange) {
+            double start = m_interp->evalNumber(*clause.range.start);
+            double end   = m_interp->evalNumber(*clause.range.end);
+            double step  = clause.range.step ? m_interp->evalNumber(*clause.range.step) : 1.0;
+            values = m_interp->expandRange(start, step, end);
+        } else if (clause.range.isBracketedList) {
+            // Bracketed list literal `[a, b, c]` — each element is its own
+            // loop value, even if it evaluates to a vector (e.g. a point
+            // list `[[1,2,3], [4,5,6]]` must yield two vector iterations,
+            // not six scalars).
+            for (const auto& e : clause.range.list)
+                values.push_back(m_interp->evaluate(*e));
+        } else {
+            // Expression form `for (v = expr)` — expr must evaluate to a
+            // vector or a range (e.g. a variable holding one, or a general
+            // range literal used directly: `for (i = someRange)`); expand
+            // either so `for (pt = pts)` iterates over pts' elements.
+            for (const auto& e : clause.range.list) {
+                Value v = m_interp->evaluate(*e);
+                for (auto& elem : m_interp->iterationValues(v))
+                    values.push_back(std::move(elem));
+            }
+        }
+
+        // Each iteration of *this* clause gets a fresh copy of the scope as
+        // of just before this clause's loop started (i.e. with every outer
+        // clause's variable already bound, but none of this clause's own
+        // prior iterations' bindings or body-local assignments still
+        // hanging around) — matching OpenSCAD's per-iteration block
+        // scoping.
+        auto levelSnapshot = m_interp->snapshotEnv();
+        for (const Value& v : values) {
+            m_interp->restoreEnv(levelSnapshot);
+            m_interp->setVar(clause.var, v);
+            runClause(idx + 1);
+        }
+        m_interp->restoreEnv(std::move(levelSnapshot));
+    };
+    runClause(0);
 
     if (all.empty())
         return nullptr;
