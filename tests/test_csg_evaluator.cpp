@@ -394,6 +394,27 @@ TEST_CASE("CsgEval:multmatrix composes with outer translate", "[csg]") {
     REQUIRE(leaf.transform[3][0] == Approx(11.0f));
 }
 
+TEST_CASE("CsgEval:multmatrix() with no arguments is identity", "[csg][bugfix]") {
+    // parseTransform's "empty positional argument is optional" case (added
+    // for translate()/rotate()/scale()/mirror() — see the matching
+    // bugfix tests) also makes a bare multmatrix() parse, which raised a
+    // review question of whether that's correct or should instead error.
+    // Checked real OpenSCAD's source directly (src/core/TransformNode.cc's
+    // builtin_multmatrix()): it binds a single "m" parameter and only
+    // applies it `if (parameters["m"].type() == Value::Type::VECTOR)` —
+    // when "m" is absent (or any other non-vector value), that whole block
+    // is skipped with no error or warning, and the node's matrix stays at
+    // its constructor default of Identity(). So a bare multmatrix() being
+    // silently identity isn't ChiselCAD-only permissiveness — it's exactly
+    // real OpenSCAD's own documented behavior.
+    auto s = evaluate("multmatrix() cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    const glm::mat4 I{1.0f};
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            REQUIRE(leaf.transform[c][r] == Approx(I[c][r]).margin(1e-5));
+}
+
 // ---------------------------------------------------------------------------
 // render() groups children under an implicit union, no transform of its own
 // ---------------------------------------------------------------------------
