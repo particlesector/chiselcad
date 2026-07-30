@@ -371,11 +371,8 @@ exactly once unblocked.
 Confirmed via the same corpus subdirectory (`3D/features`) but **not yet
 fixed**:
 
-- [ ] **Non-planar polyhedron faces** (issue #86) (`polyhedron-nonplanar-tests`) still
-  mismatch after the winding fix (`2.94` vs `1.29`) — a real but distinct
-  issue: fan-triangulating a non-planar quad from vertex 0 picks a different
-  diagonal than whatever OpenSCAD/CGAL does, producing a different (smaller)
-  volume. Needs its own investigation, not just a winding flip.
+- [x] **Non-planar polyhedron faces** (issue #86) (`polyhedron-nonplanar-tests`) —
+  turned out **not** to be a fan-triangulation bug at all; see v3.11 below.
 - [x] **`linear_extrude()`'s default height was 1, not OpenSCAD's actual
   default of 100.** Found bisecting `linear_extrude-tests.scad` line by
   line: `linear_extrude(v=[3,2,5]) square([10,10])` (no `height=` given)
@@ -581,6 +578,54 @@ Issue #90's remaining scope: only the `3D/features` corpus subdirectory has
 been checked (matching v3.9's existing note); `2D`, `bugs`, `bugs2D`,
 `misc`, `issues` are still unexamined and may turn up further parse
 failures of their own.
+
+## v3.11 — issue #86 (non-planar polyhedron() faces) re-investigated and closed
+
+This environment turned out to have real `apt` network access after all
+(unlike the v3.10 pass): `apt-get install openscad` gives a live 2021.01
+oracle, and Manifold v3.5.2 builds from source in ~20s exactly as
+`tests/tools/README.md` describes, so this pass could go back to the actual
+volumetric `scad_to_stl`/`stl_diff` methodology instead of language-level
+checks only.
+
+- [x] **Issue #86 was misdiagnosed — not a fan-triangulation bug.**
+  `polyhedron-nonplanar-tests.scad`'s reported `2.94` (real OpenSCAD) vs.
+  `1.29` (ChiselCAD) mismatch was bisected by isolating each of the file's
+  three `polyhedron()` calls into its own `.scad` file and diffing each
+  individually against a live OpenSCAD 2021.01 + Manifold v3.5.2 oracle.
+  Two of the three (the slightly-non-planar hexahedron and the small
+  heptagon-pyramid) already matched to floating-point noise (`rel_error` ~
+  1e-7) — meaning the fan-triangulation-from-vertex-0 approach
+  `CsgEvaluator::evalPolyhedron` uses was never actually wrong for this
+  corpus file. The third — a real-world truncated icosidodecahedron wrapped
+  in `scale(0.02) polyhedron(...)` — reproduced the mismatch in isolation
+  (`volume_a=1.65443 volume_b=0`, confirmed by rebuilding at the exact
+  commit (`696522c`) the issue was filed against). The actual cause: `scale(
+  0.02)` is a **bare scalar**, and at that commit `CsgEvaluator::makeMatrix`
+  still had the pre-v3.10 `scale(<scalar>)` bug (see v3.10's `for`/`rotate`/
+  `scale` fixes) that scaled only the Z axis — turning this polyhedron into
+  a wildly non-uniform, self-intersecting mesh that Manifold's `Status()`
+  still reported as `NoError` but whose true volume collapsed to ~0 after
+  boolean cleanup. That bug was already fixed in commit `18f7a54` (filed
+  under issue #90, not #86) as an incidental side effect of unrelated
+  parser work — nobody had re-run the v3.9 volumetric corpus check
+  afterward to notice it also closed #86. Re-running it now:
+  `polyhedron-nonplanar-tests.scad`'s full file matches the oracle at
+  `rel_error=3.5e-6`, and the previously-broken `scale(0.02)` case alone
+  matches at `rel_error=1.4e-6` — both floating-point noise, no code change
+  needed to `CsgEvaluator::evalPolyhedron`/`PrimitiveGen` itself. Added
+  `tests/fixtures/headless/polyhedron_nonplanar_scale.scad` (the exact
+  reproducing case, straight from the OpenSCAD corpus) and a
+  `chiselcad_tests` regression pinning its volume to the oracle's
+  `1.6544281372`, so this doesn't silently regress independently of the
+  `scale(scalar)` unit test that already covers the actual root cause.
+- Takeaway for future corpus-mismatch triage: a mismatch reported against
+  a file with multiple unrelated constructs (here, both a genuinely
+  non-planar `polyhedron()` *and* a bare-scalar `scale()`) doesn't
+  necessarily implicate the construct the file is named after — isolating
+  each construct individually (as this pass and the original v3.9 harness-
+  bug triage both did) is worth doing before writing a fix for the wrong
+  code path.
 
 ## v4 — Tooling & Visual Quality
 
