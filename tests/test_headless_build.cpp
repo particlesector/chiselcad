@@ -109,6 +109,28 @@ TEST_CASE("runBuild: linear_extrude()'s default height is 100, not 1",
     CHECK(result.volume == Approx(10.0 * 10.0 * 100.0).margin(1e-6));
 }
 
+TEST_CASE("runBuild: non-planar polyhedron() under scale(<bare scalar>) matches real OpenSCAD",
+          "[headless][v39][bugfix]") {
+    // Issue #86 reported this file (a real-world truncated-icosidodecahedron
+    // polyhedron() from OpenSCAD's own test corpus, wrapped in scale(0.02))
+    // as a "fan-triangulation of non-planar faces" bug: volume 1.2887 here
+    // vs. real OpenSCAD's 1.6544. Bisecting individual polyhedron() calls
+    // from that corpus file against a live OpenSCAD 2021.01 + Manifold
+    // v3.5.2 oracle (see tests/tools/README.md) shows the fan-triangulated
+    // mesh itself was never the problem — the *actual* cause was the
+    // already-fixed scale(<bare scalar>) bug (see "CsgEval:scale(scalar)
+    // broadcasts to all three axes" in test_csg_evaluator.cpp): scale(0.02)
+    // was scaling only the Z axis, badly distorting this polyhedron into a
+    // self-intersecting mesh that Manifold's boolean cleanup collapsed to
+    // near-zero volume. With that fix in place this file already matches
+    // the oracle's 1.6544281 to ~1e-6 relative error; this test pins that
+    // so the two don't silently regress independently of each other again.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/polyhedron_nonplanar_scale.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    CHECK(result.volume == Approx(1.6544281372).margin(1e-5));
+}
+
 TEST_CASE("runBuild honors AbortFn by returning early", "[headless]") {
     chisel::csg::MeshCache cache;
     auto alwaysAbort = [] { return true; };
