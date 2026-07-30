@@ -128,7 +128,7 @@ TEST_CASE("runBuild: non-planar polyhedron() under scale(<bare scalar>) matches 
     chisel::csg::MeshCache cache;
     BuildResult result = runBuild(fixture("headless/polyhedron_nonplanar_scale.scad"), {}, {}, cache);
     REQUIRE(result.ok());
-    CHECK(result.volume == Approx(1.6544281372).margin(1e-3));
+    CHECK(result.volume == Approx(1.6544281372).margin(1e-5));
 }
 
 TEST_CASE("runBuild honors AbortFn by returning early", "[headless]") {
