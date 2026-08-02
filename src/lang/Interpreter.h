@@ -169,10 +169,28 @@ private:
     // carries several locals (snapshotEnv's unordered_map copy, arg vectors,
     // Value copies), and the smallest stack we need to fit under is MSVC's
     // default 1 MiB thread stack (Windows CI build has no custom /STACK).
-    // Empirically, an unguarded 1 MiB-stack GCC Release build overflows
-    // between depth 800-1000; this cap stays well under that with margin to
-    // spare for MSVC's likely-larger per-frame footprint.
-    static constexpr int kMaxCallDepth = 200;
+    //
+    // Re-measured for issue #83 (previous cap: 200) by driving unguarded
+    // recursion (via a scratch copy of this file with kMaxCallDepth raised
+    // to a no-op-large value) inside a pthread with an explicit 1 MiB stack,
+    // GCC 13 -O3 -DNDEBUG, catching the resulting SIGSEGV to binary-search
+    // the deepest surviving call. Two shapes were measured since per-call
+    // frame cost varies a lot by body: a bare numeric recursion
+    // (`f(n) = n<=0 ? 0 : f(n-1)`) survived to ~1180, while the heavier,
+    // more representative "recursive list-building" idiom this issue calls
+    // out (`f(n) = n<=0 ? [] : concat([n], f(n-1))`) only survived to ~680.
+    // 300 keeps a >2x margin under that worse-case measurement — deeper
+    // than the old 200, without eating into the safety margin the original
+    // conservative choice was protecting — while leaving headroom for
+    // MSVC's likely-larger per-frame footprint, which this pass could not
+    // measure directly (no Windows toolchain available). Not a full fix for
+    // #83: real OpenSCAD test files this was filed against
+    // (recursion-test-function/tail-recursion-tests/issue3118-recur-limit)
+    // aren't in this repo and weren't reachable to check their exact
+    // required depth, so this is a data-driven improvement, not a
+    // guaranteed parity fix — worth revisiting with an MSVC benchmark and/or
+    // those actual corpus files.
+    static constexpr int kMaxCallDepth = 300;
     int m_callDepth = 0;
 
     // Guards against a nested list comprehension's element count multiplying

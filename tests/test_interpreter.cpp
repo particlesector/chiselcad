@@ -492,11 +492,22 @@ TEST_CASE("Interp:unbounded function recursion returns undef instead of crashing
 }
 
 TEST_CASE("Interp:deep-but-bounded recursion still computes the correct result", "[interp][bugfix]") {
-    // Depth 100 is comfortably under kMaxCallDepth (200); the guard must not
+    // Depth 100 is comfortably under kMaxCallDepth (300); the guard must not
     // affect legitimate recursive functions at ordinary depths.
     auto ctx = loadEnvWithFuncs("function sum(n) = n <= 0 ? 0 : n + sum(n - 1);");
     ExprNode call = makeCall("sum", {100.0});
     REQUIRE(ctx.interp.evalNumber(call) == Approx(5050.0));
+}
+
+TEST_CASE("Interp:recursion depth just under the raised cap still succeeds (issue #83)",
+          "[interp][bugfix]") {
+    // kMaxCallDepth was raised from 200 to 300 (issue #83, see the comment
+    // on its definition in Interpreter.h for the measurement behind the new
+    // value) specifically so legitimate recursion in this 200-300 band —
+    // previously silently truncated to undef — now computes a real result.
+    auto ctx = loadEnvWithFuncs("function sum(n) = n <= 0 ? 0 : n + sum(n - 1);");
+    ExprNode call = makeCall("sum", {250.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(250.0 * 251.0 / 2.0));
 }
 
 // ---------------------------------------------------------------------------
