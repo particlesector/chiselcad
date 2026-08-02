@@ -184,6 +184,29 @@ TEST_CASE("runBuild: rotate_extrude(angle=0) produces no geometry",
     CHECK(result.triCount == 0);
 }
 
+TEST_CASE("runBuild: rotate_extrude() segment count tracks distance from the axis, "
+          "not the profile's own width",
+          "[headless][v87][bugfix]") {
+    // Both fixtures revolve the same 1x1 square (so the *same width* either
+    // way), just at a different offset from the axis: near = [1,2], far =
+    // [3,4]. Real OpenSCAD's own rotatePolygon() (GeometryEvaluator.cc)
+    // measures the segment-count radius as max_x-min_x with min_x/max_x
+    // *seeded at 0*, not the profile's true [minX,maxX] extent — so a
+    // profile's distance from the axis to its far edge drives the segment
+    // count, not its own width. A "fix" that used the true per-profile
+    // extent instead (i.e. always got 1 either way, since both squares are
+    // 1 wide) would make these come out with the *same* triangle count;
+    // real OpenSCAD (and this) instead gives far roughly double near's,
+    // since far's axis distance is roughly double near's.
+    chisel::csg::MeshCache cache;
+    BuildResult near = runBuild(fixture("headless/rotate_extrude_radius_near.scad"), {}, {}, cache);
+    BuildResult far  = runBuild(fixture("headless/rotate_extrude_radius_far.scad"), {}, {}, cache);
+
+    REQUIRE(near.ok());
+    REQUIRE(far.ok());
+    CHECK(far.triCount > near.triCount * 3 / 2);
+}
+
 TEST_CASE("runBuild honors AbortFn by returning early", "[headless]") {
     chisel::csg::MeshCache cache;
     auto alwaysAbort = [] { return true; };

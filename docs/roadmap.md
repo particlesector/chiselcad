@@ -670,12 +670,25 @@ branch, all in `src/csg/MeshEvaluator.cpp` (plus one in
   exactly the +a sweep with Y negated — and unlike `Revolve()`,
   `Mirror()`/`Transform()` keep winding correct on their own.
 - [x] **Segment count used a fixed proxy radius (10) instead of the
-  profile's own extent.** `resolveSegments()` was called with a hardcoded
-  `10.0` "good enough" placeholder regardless of the actual profile's
-  distance from the axis, rather than real OpenSCAD's
-  `Calc::get_fragments_from_r(max_x-min_x, ...)` (the profile's full X-span,
-  confirmed from 2021.01's own `rotateextrude.cc`/`GeometryEvaluator.cc`
-  source — not the near edge, not the centroid).
+  profile's own distance from the axis.** `resolveSegments()` was called
+  with a hardcoded `10.0` "good enough" placeholder regardless of the
+  actual profile, rather than real OpenSCAD's
+  `Calc::get_fragments_from_r(max_x-min_x, ...)`. Note this `max_x-min_x`
+  is **not** the profile's own true width: 2021.01's `rotatePolygon()`
+  (`GeometryEvaluator.cc`) seeds `min_x`/`max_x` at `0`, not the profile's
+  real extremes, so a profile that never touches the axis gets the
+  axis-to-far-edge distance, not its own span — a review comment on this
+  PR initially (reasonably) flagged that 0-seeding as a bug and proposed
+  seeding at ±infinity instead, which looked more "correct" but is a
+  regression against the actual oracle: re-verified against the live
+  2021.01 binary (`rotate_extrude(a=-45)` on a profile spanning
+  `x=[16,26]`, a width of 10 measured from `16`, but `26` measured from the
+  axis) — 2021.01 uses 24 segments, matching the axis-seeded formula
+  exactly, not the 16 a true-extent formula would give. Pinned with
+  `rotate_extrude_radius_near.scad`/`_far.scad` (same-width profiles at
+  different axis distances; a true-extent version of this code would give
+  them equal segment counts, the real fix gives `far` roughly double
+  `near`'s).
 - [x] **A partial sweep was tessellated at full-circle density.** Real
   OpenSCAD scales the full-circle fragment count down for a partial angle
   (`fragments = floor(get_fragments_from_r(...) * |angle|/360)`, minimum 1)

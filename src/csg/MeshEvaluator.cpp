@@ -472,6 +472,17 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
         // negative X" case, translate([-20,0]) square(10)). This used to
         // reject *any* point with x<0, including profiles entirely on the
         // negative side.
+        // minX/maxX are deliberately seeded at 0.0, not the true extremes —
+        // matching real OpenSCAD's own rotatePolygon() (GeometryEvaluator.cc
+        // in the 2021.01 oracle this was verified against), which does the
+        // same (`double min_x = 0; double max_x = 0;` before the same
+        // fmin/fmax scan). This isn't an oversight there: it means a profile
+        // that never touches the axis gets its segment-count radius (below)
+        // measured as the axis-to-far-edge distance, not the profile's own
+        // width — confirmed against a live 2021.01 binary, which uses 24
+        // segments (not the "true extent"-implied 16) for
+        // rotate_extrude(a=-45) applied to a profile spanning x=[16,26] (a
+        // width of 10, but 26 measured from the axis).
         constexpr double kAxisEps = 1e-4;
         double minX = 0.0, maxX = 0.0;
         for (const auto& poly : polys) {
@@ -509,11 +520,13 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
                 std::reverse(poly.begin(), poly.end());
             }
         }
-        // Segment count uses the profile's own X-extent as the radius proxy
-        // (matching real OpenSCAD's Calc::get_fragments_from_r(max_x-min_x,
-        // ...) — not a fixed stand-in radius, and not the distance from the
-        // axis to the near edge of the profile).
-        double radius = mirrored ? (maxX - minX) : maxX;
+        // Segment count uses (0-seeded) maxX-minX as the radius proxy,
+        // matching real OpenSCAD's Calc::get_fragments_from_r(max_x-min_x,
+        // ...) exactly — not a fixed stand-in radius (this used to be a
+        // hardcoded 10.0). Computed from the pre-mirror min/max: negating
+        // every x negates and swaps min/max, so this span is the same
+        // either way — no need to branch on `mirrored` here.
+        double radius = maxX - minX;
         int    segs   = gen.resolveSegments(radius, fnOvr);
         // Real OpenSCAD scales that full-circle count down for a partial
         // sweep (floor, matching OpenSCAD's own minimum of 1) rather than
