@@ -1,6 +1,7 @@
 #include "MeshEvaluator.h"
 #include <glm/glm.hpp>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <optional>
@@ -442,40 +443,122 @@ manifold::Manifold MeshEvaluator::evalExtrusion(const CsgExtrusion& e,
             result = result.Translate({0.0f, 0.0f,
                                        -static_cast<float>(height) * 0.5f});
     } else {
-        // rotate_extrude
+        // rotate_extrude — angle resolution matches real OpenSCAD's own
+        // (RotateExtrudeNode::instantiate/rotateextrude.cc, verified against
+        // a live 2021.01 binary): a missing, non-finite (NaN/+-Inf), or
+        // out-of-(-360,360] angle all fall back to a full 360° revolution.
+        // Confirmed against rotate_extrude-angle.scad's corpus cases, which
+        // exercise exactly these edges (unspecified, 0/0, 1/0, -1/0, 360,
+        // -360, 1000, -1000).
         double angle = getP("angle", 360.0);
+        if (!std::isfinite(angle) || angle <= -360.0 || angle > 360.0)
+            angle = 360.0;
+
+        // angle=0 is a distinct case from "unspecified"/"out of range" —
+        // real OpenSCAD's rotatePolygon() returns no geometry at all for it
+        // (not a degenerate zero-volume sweep), matching
+        // rotate_extrude-angle.scad's own "// show nothing" comment on its
+        // angle=0 case.
+        if (angle == 0.0) return {};
+
         double fnOvr = getP("$fn", 0.0);
-        int    segs  = gen.resolveSegments(10.0, fnOvr); // 10 = proxy radius
 
         manifold::Polygons polys = cs.ToPolygons();
 
-        // OpenSCAD requires the 2-D profile not cross the Y axis (Manifold's
-        // X axis here) — revolving a profile that straddles the rotation
-        // axis produces self-intersecting/degenerate geometry. Check before
-        // handing off to Revolve() rather than passing bad input through
-        // silently.
+        // Real OpenSCAD only rejects a profile that *straddles* the
+        // rotation axis (points strictly on both sides) — a profile lying
+        // entirely on the -X side is valid, it just revolves mirrored back
+        // onto +X (confirmed against rotate_extrude-tests.scad's "Object in
+        // negative X" case, translate([-20,0]) square(10)). This used to
+        // reject *any* point with x<0, including profiles entirely on the
+        // negative side.
+        // minX/maxX are deliberately seeded at 0.0, not the true extremes —
+        // matching real OpenSCAD's own rotatePolygon() (GeometryEvaluator.cc
+        // in the 2021.01 oracle this was verified against), which does the
+        // same (`double min_x = 0; double max_x = 0;` before the same
+        // fmin/fmax scan). This isn't an oversight there: it means a profile
+        // that never touches the axis gets its segment-count radius (below)
+        // measured as the axis-to-far-edge distance, not the profile's own
+        // width — confirmed against a live 2021.01 binary, which uses 24
+        // segments (not the "true extent"-implied 16) for
+        // rotate_extrude(a=-45) applied to a profile spanning x=[16,26] (a
+        // width of 10, but 26 measured from the axis).
         constexpr double kAxisEps = 1e-4;
-        bool crossesAxis = false;
+        double minX = 0.0, maxX = 0.0;
         for (const auto& poly : polys) {
             for (const auto& pt : poly) {
-                if (pt.x < -kAxisEps) { crossesAxis = true; break; }
+                minX = std::min(minX, static_cast<double>(pt.x));
+                maxX = std::max(maxX, static_cast<double>(pt.x));
             }
-            if (crossesAxis) break;
         }
 
-        if (crossesAxis) {
+        if (minX < -kAxisEps && maxX > kAxisEps) {
             chisel::lang::Diagnostic d;
             d.level   = chisel::lang::DiagLevel::Error;
             d.message = "rotate_extrude(): profile crosses the rotation axis "
-                        "(all points must satisfy x >= 0); geometry skipped";
+                        "(all points must have the same X sign); geometry skipped";
             m_diags.push_back(std::move(d));
             return {};
         }
 
+        // Manifold's own Revolve() only keeps x>=0 geometry (it silently
+        // clips away anything with x<0 rather than mirroring it), so a
+        // profile entirely on the -X side must be mirrored onto +X before
+        // handing it off. Revolving the mirrored profile through the same
+        // angle and then rotating the result 180° about Z reproduces the
+        // original sweep: (x*cos(a), x*sin(a)) for x<0 is identical to
+        // ((-x)*cos(a+180), (-x)*sin(a+180)) for -x>0. Negating x alone
+        // mirrors (and thus reverses the winding of) each polygon, so the
+        // vertex order is reversed too, to keep the outward-facing
+        // convention Revolve() expects — without this the mirrored solid
+        // comes out inside-out (negative volume).
+        bool mirrored = minX < -kAxisEps;
+        if (mirrored) {
+            for (auto& poly : polys) {
+                for (auto& pt : poly)
+                    pt.x = -pt.x;
+                std::reverse(poly.begin(), poly.end());
+            }
+        }
+        // Segment count uses (0-seeded) maxX-minX as the radius proxy,
+        // matching real OpenSCAD's Calc::get_fragments_from_r(max_x-min_x,
+        // ...) exactly — not a fixed stand-in radius (this used to be a
+        // hardcoded 10.0). Computed from the pre-mirror min/max: negating
+        // every x negates and swaps min/max, so this span is the same
+        // either way — no need to branch on `mirrored` here.
+        double radius = maxX - minX;
+        int    segs   = gen.resolveSegments(radius, fnOvr);
+        // Real OpenSCAD scales that full-circle count down for a partial
+        // sweep (floor, matching OpenSCAD's own minimum of 1) rather than
+        // tessellating the whole arc at full-circle density — passing the
+        // full-circle count straight through to Revolve() (as this used to)
+        // over-tessellates any angle<360 sweep relative to real OpenSCAD's
+        // actual output. The floor is 3, not 1: Manifold::Revolve() only
+        // honors an explicit circularSegments > 2, silently falling back to
+        // its own internal auto-quality segment count (built from a default
+        // it knows nothing about our angle/profile) for 0/1/2 — which
+        // produced degenerate/empty geometry here for a small-enough angle,
+        // not just an imprecise tessellation.
+        segs = std::max(3, static_cast<int>(segs * std::fabs(angle) / 360.0));
+
+        // Manifold::Revolve() winds its side faces correctly for a
+        // positive sweep but comes out inside-out (negative volume) for a
+        // literal negative revolveDegrees, so always sweep by the positive
+        // magnitude and mirror the *result* across the XZ plane (Y -> -Y)
+        // for an originally-negative angle instead: revolving a profile
+        // point through angle -A gives (x*cos(-A), x*sin(-A), y) =
+        // (x*cos(A), -x*sin(A), y), i.e. exactly the +A sweep with Y
+        // negated. Manifold's Mirror() (unlike Revolve()) is a generic
+        // transform and keeps winding correct on its own.
         result = manifold::Manifold::Revolve(
             polys,
             segs,
-            static_cast<float>(angle));
+            static_cast<float>(std::fabs(angle)));
+        if (angle < 0.0)
+            result = result.Mirror({0.0, 1.0, 0.0});
+
+        if (mirrored)
+            result = result.Rotate(0.0, 0.0, 180.0);
     }
 
     // Apply the outer 3-D world transform

@@ -131,6 +131,82 @@ TEST_CASE("runBuild: non-planar polyhedron() under scale(<bare scalar>) matches 
     CHECK(result.volume == Approx(1.6544281372).margin(1e-5));
 }
 
+// ---------------------------------------------------------------------------
+// issue #87 — rotate_extrude() volume mismatches. Found via volumetric
+// corpus comparison against a live OpenSCAD 2021.01 + Manifold v3.5.2 oracle
+// (docs/roadmap.md v3.9/v3.12): a profile entirely on the -X side used to be
+// rejected outright (only a straddling profile is actually invalid); a
+// negative angle= produced inside-out (negative-volume) geometry because
+// Manifold::Revolve() only winds correctly for a positive sweep; and the
+// segment count used a fixed proxy radius (10) plus the full-circle count
+// even for a partial sweep, instead of the profile's own X-extent scaled by
+// angle/360 the way real OpenSCAD's Calc::get_fragments_from_r() does.
+// ---------------------------------------------------------------------------
+TEST_CASE("runBuild: rotate_extrude() of a profile entirely on -X matches Pappus's theorem",
+          "[headless][v87][bugfix]") {
+    // translate([-20,0]) square([10,10]): area 100, centroid at x=-15 (15
+    // from the axis), entirely on the -X side (doesn't straddle) — a full
+    // revolution sweeps volume = 2*pi*area*centroidDistance (Pappus), same
+    // as if the profile were mirrored onto +X. This used to be rejected as
+    // "crosses the rotation axis" (any x<0 point, not just a straddling
+    // profile) and produced no geometry at all.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/rotate_extrude_negative_x.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    constexpr double kExpectedVolume = 2.0 * 3.14159265358979323846 * 100.0 * 15.0;
+    CHECK(result.volume == Approx(kExpectedVolume).margin(1.0));
+}
+
+TEST_CASE("runBuild: rotate_extrude() with a negative angle= has positive volume",
+          "[headless][v87][bugfix]") {
+    // translate([10,0]) square([10,10]): area 100, centroid at x=15, swept
+    // through |angle|=90 degrees (pi/2 rad) gives volume =
+    // area*centroidDistance*angleRadians (Pappus, partial sweep). A
+    // negative angle used to come out with exactly this magnitude but
+    // negated (inside-out geometry from Manifold::Revolve()'s winding for a
+    // literal negative revolveDegrees), so this also pins the *sign*.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/rotate_extrude_negative_angle.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    constexpr double kExpectedVolume = 100.0 * 15.0 * (3.14159265358979323846 / 2.0);
+    CHECK(result.volume == Approx(kExpectedVolume).margin(1.0));
+    CHECK(result.volume > 0.0);
+}
+
+TEST_CASE("runBuild: rotate_extrude(angle=0) produces no geometry",
+          "[headless][v87][bugfix]") {
+    // Real OpenSCAD's rotatePolygon() returns no geometry at all for a
+    // literal angle=0 (not a degenerate zero-volume sweep) — distinct from
+    // an *unspecified* angle, which means a full 360 circle.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/rotate_extrude_angle_zero.scad"), {}, {}, cache);
+    CHECK(result.volume == 0.0);
+    CHECK(result.triCount == 0);
+}
+
+TEST_CASE("runBuild: rotate_extrude() segment count tracks distance from the axis, "
+          "not the profile's own width",
+          "[headless][v87][bugfix]") {
+    // Both fixtures revolve the same 1x1 square (so the *same width* either
+    // way), just at a different offset from the axis: near = [1,2], far =
+    // [3,4]. Real OpenSCAD's own rotatePolygon() (GeometryEvaluator.cc)
+    // measures the segment-count radius as max_x-min_x with min_x/max_x
+    // *seeded at 0*, not the profile's true [minX,maxX] extent — so a
+    // profile's distance from the axis to its far edge drives the segment
+    // count, not its own width. A "fix" that used the true per-profile
+    // extent instead (i.e. always got 1 either way, since both squares are
+    // 1 wide) would make these come out with the *same* triangle count;
+    // real OpenSCAD (and this) instead gives far roughly double near's,
+    // since far's axis distance is roughly double near's.
+    chisel::csg::MeshCache cache;
+    BuildResult near = runBuild(fixture("headless/rotate_extrude_radius_near.scad"), {}, {}, cache);
+    BuildResult far  = runBuild(fixture("headless/rotate_extrude_radius_far.scad"), {}, {}, cache);
+
+    REQUIRE(near.ok());
+    REQUIRE(far.ok());
+    CHECK(far.triCount > near.triCount * 3 / 2);
+}
+
 TEST_CASE("runBuild honors AbortFn by returning early", "[headless]") {
     chisel::csg::MeshCache cache;
     auto alwaysAbort = [] { return true; };

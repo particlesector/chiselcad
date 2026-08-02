@@ -1061,6 +1061,18 @@ CsgNodePtr CsgEvaluator::evalExtrusion(const ExtrusionNode& e, const glm::mat4& 
         } else if (name == "center") {
             Value cv = m_interp->evaluate(*exprPtr);
             ext.params["center"] = bool(cv) ? 1.0 : 0.0;
+        } else if (name == "angle") {
+            // rotate_extrude()'s angle needs to keep a non-finite (NaN/
+            // +-Infinity) value distinguishable from a literal 0 — the
+            // blanket evalNumber() below collapses both to 0.0, but they
+            // mean opposite things: real OpenSCAD treats a non-finite angle
+            // as "not given" (full 360° circle), while an actual angle=0 is
+            // a distinct "no geometry at all" case MeshEvaluator special-
+            // cases. Resolve the non-finite case to 360 here, before that
+            // collapse, rather than losing the distinction.
+            Value av  = m_interp->evaluate(*exprPtr);
+            double raw = av.isNumber() ? av.asNumber() : 360.0;
+            ext.params["angle"] = std::isfinite(raw) ? raw : 360.0;
         } else {
             ext.params[name] = m_interp->evalNumber(*exprPtr);
         }

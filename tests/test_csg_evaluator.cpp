@@ -1454,6 +1454,36 @@ TEST_CASE("CsgEval:linear_extrude scale must be exactly a 2-vector, else no scal
     REQUIRE(good.params.at("scale_y") == Approx(5.0));
 }
 
+TEST_CASE("CsgEval:rotate_extrude angle keeps NaN/Infinity distinct from a literal 0",
+          "[csg][v87][bugfix]") {
+    // Real OpenSCAD (Value::getFiniteDouble()) treats a non-finite angle=
+    // as "not given" (full 360° circle), which is a completely different
+    // outcome from a literal angle=0 (MeshEvaluator's "no geometry at all"
+    // case) — but the generic evalNumber() path collapses any non-finite
+    // number to 0.0, which would silently turn a NaN/Infinity angle into
+    // the "no geometry" case instead of "full circle". evalExtrusion()
+    // special-cases "angle" to resolve non-finite values to 360 before that
+    // collapse can happen; this checks the resolved IR param, not
+    // MeshEvaluator's geometry (which isn't part of this Manifold-free test
+    // binary — see the file-header comment above).
+    auto nan = asExtrusion(evaluate("rotate_extrude(angle=0/0) circle(5);").roots[0]);
+    REQUIRE(nan.params.at("angle") == Approx(360.0));
+
+    auto posInf = asExtrusion(evaluate("rotate_extrude(angle=1/0) circle(5);").roots[0]);
+    REQUIRE(posInf.params.at("angle") == Approx(360.0));
+
+    auto negInf = asExtrusion(evaluate("rotate_extrude(angle=-1/0) circle(5);").roots[0]);
+    REQUIRE(negInf.params.at("angle") == Approx(360.0));
+
+    // A literal 0 is preserved as 0, not folded into the "not given" case.
+    auto zero = asExtrusion(evaluate("rotate_extrude(angle=0) circle(5);").roots[0]);
+    REQUIRE(zero.params.at("angle") == Approx(0.0));
+
+    // An ordinary finite angle is unaffected.
+    auto normal = asExtrusion(evaluate("rotate_extrude(angle=45) circle(5);").roots[0]);
+    REQUIRE(normal.params.at("angle") == Approx(45.0));
+}
+
 // ---------------------------------------------------------------------------
 // Recursive functions (Tier C — confirmed already working via Tier A impl)
 // ---------------------------------------------------------------------------
