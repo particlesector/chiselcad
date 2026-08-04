@@ -180,6 +180,25 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform,
         },
         node);
 
+    // A recursion abort discovered anywhere during this node's own
+    // evaluation — not just a nested child statement, but this node's own
+    // parameter/argument evaluation (e.g. evalPrimitive's `cube(crash())`,
+    // evalTransform's matrix params, a module call's own args) — must
+    // discard whatever `result` was just built rather than let it become
+    // part of the scene. Real OpenSCAD's exception-based unwind means the
+    // triggering statement never produces geometry at all, not even a
+    // degenerate leaf built from the resulting undef param; without this,
+    // only echo()/assert() (which have their own inline checks, needed
+    // separately since they push a side effect — an echo message or
+    // diagnostic — *during* evalModuleCall, before this point ever runs)
+    // got that right, and everything else funneling through evalNode
+    // (primitives, transforms, booleans, module calls, ...) would still
+    // contribute one partially-evaluated node before the *next* evalNode()
+    // call caught the abort.
+    checkRecursionAbort();
+    if (m_aborted)
+        return nullptr;
+
     if (!result || mods == ModNone)
         return result;
 

@@ -2288,3 +2288,20 @@ TEST_CASE("CsgEval:ordinary (non-runaway) recursion produces no recursion-abort 
     REQUIRE(s.echoMessages.size() == 1);
     REQUIRE(s.echoMessages[0].find("120") != std::string::npos);
 }
+
+TEST_CASE("CsgEval:recursion aborting inside a primitive's own parameter drops that primitive too",
+          "[csg][bugfix]") {
+    // Regression test for a review comment on PR #102: a recursion abort
+    // discovered while evaluating a *primitive's* own parameter (as opposed
+    // to echo()/assert(), which had their own inline checks from the start)
+    // must still discard that primitive's own geometry, not just halt
+    // whatever comes after it — matches real OpenSCAD's exception-based
+    // unwind, which never produces geometry for the statement that itself
+    // triggered the exception.
+    auto s = evaluate("function crash() = crash();"
+                      "cube(crash());"
+                      "cube(5);");
+    REQUIRE(s.roots.empty());
+    REQUIRE(s.evalDiags.size() == 1);
+    REQUIRE(s.evalDiags[0].message.find("Recursion detected") != std::string::npos);
+}
