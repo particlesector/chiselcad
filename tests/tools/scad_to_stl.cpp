@@ -62,8 +62,8 @@ int main(int argc, char** argv) {
     csgEval.fileTable = &loaded.files;
 
     lang::Interpreter interp;
-    interp.loadAssignments(ast);
     interp.loadFunctions(ast);
+    interp.loadAssignments(ast);
     auto scene = csgEval.evaluate(ast, interp);
 
     for (const auto& d : scene.evalDiags)

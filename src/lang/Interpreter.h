@@ -120,6 +120,14 @@ public:
     // scope, which this doesn't currently reconstruct.
     std::unordered_map<std::string, Value> beginCallScope();
 
+    // Same env swap as beginCallScope(), for the tail-call trampoline in
+    // evalFunctionBody(): each hop discards the previous hop's scope rather
+    // than restoring it (only the *outermost* call's pre-call env, saved
+    // once by beginCallScope() at the trampoline's entry point, ever gets
+    // restored — see evalFunctionBody()), so there's no caller env worth
+    // paying to copy and return here.
+    void beginTailCallScope();
+
     // Module-call-name stack backing parent_module()/$parent_modules. Module
     // calls are evaluated by CsgEvaluator, not here, so CsgEvaluator pushes/
     // pops around each user-module call (mirroring how it already sets
@@ -183,15 +191,30 @@ private:
     // than the old 200, without eating into the safety margin the original
     // conservative choice was protecting — while leaving headroom for
     // MSVC's likely-larger per-frame footprint, which this pass could not
-    // measure directly (no Windows toolchain available). Not a full fix for
-    // #83: real OpenSCAD test files this was filed against
-    // (recursion-test-function/tail-recursion-tests/issue3118-recur-limit)
-    // aren't in this repo and weren't reachable to check their exact
-    // required depth, so this is a data-driven improvement, not a
-    // guaranteed parity fix — worth revisiting with an MSVC benchmark and/or
-    // those actual corpus files.
+    // measure directly (no Windows toolchain available).
+    //
+    // This only needs to cover genuinely *non-tail* recursion now — see
+    // evalFunctionBody()/kMaxTailHops below for tail calls, which OpenSCAD's
+    // own tail-recursion-tests.scad (fetched directly from openscad/openscad
+    // to confirm, since it isn't in this repo) needs at depths from 2,000 to
+    // 50,000 that no native-stack cap could satisfy. Checked against that
+    // same file: its one genuinely non-tail-recursive case (`f3a`, `a + f3a
+    // (a - 1)` — the recursive call is an operand of `+`, not the whole tail
+    // expression) only goes to depth 100, well inside this cap either way.
     static constexpr int kMaxCallDepth = 300;
     int m_callDepth = 0;
+
+    // Bounds evalFunctionBody()'s tail-call trampoline — see its own comment
+    // for why a tail hop needs a completely different (much larger) budget
+    // than kMaxCallDepth above: each hop is a plain loop iteration, not a
+    // new native stack frame, so it costs no stack regardless of how large
+    // this is. Matches real OpenSCAD's own tail-call iteration cap exactly
+    // (`recursion_depth`'s 1,000,000 in FunctionCall::evaluate, upstream
+    // src/core/Expression.cc) rather than picking an arbitrary round number
+    // — confirmed empirically fast enough in practice (a few hundred ms) to
+    // still terminate an unconditionally-recursive tail call like
+    // `function f() = f();` promptly.
+    static constexpr int kMaxTailHops = 1'000'000;
 
     // Guards against a nested list comprehension's element count multiplying
     // out of control — each individual range is already capped at
@@ -222,6 +245,35 @@ private:
     // moment that happens.
     Value callClosure(Value fnVal,
                        const std::vector<std::pair<std::string, Value>>& orderedArgs);
+
+    // Evaluates a *named* user function's body, trampolining through any
+    // call in tail position instead of recursing — the fix for issue #83's
+    // real gap: OpenSCAD's own tail-recursion-tests.scad expects tail-
+    // recursive functions to reach depths (2,000-50,000) no reasonable
+    // native-stack cap could ever survive, because real OpenSCAD doesn't
+    // recurse for these either (see FunctionCall::evaluate's trampoline loop
+    // in openscad/openscad's src/core/Expression.cc, confirmed by reading
+    // it directly — this mirrors that design, not a guess).
+    //
+    // "Tail position" here means: the entire value of the function body,
+    // reachable by unwrapping only the chosen branch of a ternary and the
+    // body of a let (ChiselCAD's grammar has no assert()/echo()-as-
+    // expression forms to unwrap, unlike upstream — a tail call wrapped in
+    // one of those, e.g. tail-recursion-tests.scad's ftail_mixed, still
+    // falls back to ordinary recursion, or fails to parse at all if
+    // ChiselCAD doesn't support that form yet). Once unwrapping bottoms out
+    // at a FunctionCall naming another (or the same) m_funcDefs entry, that
+    // call is resolved and looped into directly: no new evaluate() stack
+    // frame, so m_callDepth is never touched by a tail hop — only
+    // kMaxTailHops bounds an unconditionally-recursive tail call (e.g.
+    // `function f() = f();`) from looping forever. Anything else — a
+    // variable bound to a function-literal value (which takes priority per
+    // FunctionCall's own evaluate() case), a builtin, or any non-Ternary/
+    // Let/FunctionCall expression shape — isn't tail-simplifiable, so the
+    // loop stops and defers to one ordinary (real, kMaxCallDepth-guarded)
+    // evaluate() call, matching this function's pre-trampoline behavior
+    // exactly for every case that isn't a bare tail call.
+    Value evalFunctionBody(const ExprNode& body);
 
     // Binds `params` in the current environment by replaying orderedArgs
     // (pairs of arg-name/value in original call-site textual order; an

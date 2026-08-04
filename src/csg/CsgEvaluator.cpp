@@ -37,8 +37,8 @@ static std::filesystem::path defaultFontPath() {
 // ---------------------------------------------------------------------------
 CsgScene CsgEvaluator::evaluate(const ParseResult& result) {
     Interpreter defaultInterp;
-    defaultInterp.loadAssignments(result);
     defaultInterp.loadFunctions(result);
+    defaultInterp.loadAssignments(result);
     return evaluate(result, defaultInterp);
 }
 
