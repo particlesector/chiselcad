@@ -46,6 +46,25 @@ public:
     // Evaluate an expression to a Value.
     Value evaluate(const ExprNode& expr);
 
+    // Set once a recursion guard (kMaxCallDepth or evalFunctionBody's
+    // kMaxTailHops) trips — matches real OpenSCAD's fatal "Recursion
+    // detected calling function 'X'" behavior (verified against a live
+    // OpenSCAD 2021.01 binary and openscad/openscad's own
+    // FunctionCall::evaluate), as opposed to every *other* Interpreter
+    // failure mode, which degrades gracefully to undef and keeps going.
+    // Once set, evaluate() itself short-circuits to undef immediately (see
+    // its first line) rather than doing any further work.
+    //
+    // Interpreter has no notion of "abort the whole script" on its own —
+    // that's CsgEvaluator's m_aborted, already used for a failed top-level
+    // assert() — so the caller driving evaluation (CsgEvaluator) is
+    // expected to check this after every expression it evaluates directly
+    // and fold it into that same mechanism. See CsgEvaluator::
+    // checkRecursionAbort().
+    bool recursionAborted() const { return m_recursionAborted; }
+    const std::string& recursionAbortedFunctionName() const { return m_recursionAbortedFnName; }
+    SourceLoc recursionAbortedLoc() const { return m_recursionAbortedLoc; }
+
     // Convenience: evaluate and coerce to double (undef → 0.0).
     double evalNumber(const ExprNode& expr);
 
@@ -215,6 +234,16 @@ private:
     // still terminate an unconditionally-recursive tail call like
     // `function f() = f();` promptly.
     static constexpr int kMaxTailHops = 1'000'000;
+
+    // Backing state for recursionAborted()/recursionAbortedFunctionName()/
+    // recursionAbortedLoc() above — set at the two recursion-guard trip
+    // sites (kMaxCallDepth in evaluate()'s FunctionCall case and callClosure(),
+    // kMaxTailHops in evalFunctionBody()), never cleared automatically since
+    // an Interpreter is constructed fresh per build/evaluation (see
+    // HeadlessBuild.cpp/CsgEvaluator.cpp) rather than reused across scripts.
+    bool        m_recursionAborted = false;
+    std::string m_recursionAbortedFnName;
+    SourceLoc   m_recursionAbortedLoc;
 
     // Guards against a nested list comprehension's element count multiplying
     // out of control — each individual range is already capped at

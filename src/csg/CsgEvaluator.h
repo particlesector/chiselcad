@@ -105,6 +105,21 @@ class CsgEvaluator {
     // this" semantics for `!`.
     std::vector<CsgNodePtr> m_rootOnlyNodes;
 
+    // Folds a freshly-detected Interpreter::recursionAborted() (see its own
+    // comment — set when a function-call recursion guard trips, matching
+    // real OpenSCAD's fatal "Recursion detected calling function 'X'") into
+    // this evaluator's own m_aborted, the same way a failed top-level
+    // assert() already does: pushes one Error diagnostic and halts the rest
+    // of the script. A no-op once m_aborted is already true (from this or
+    // any other cause), so it's safe to call liberally after any expression
+    // evaluation — called at evalNode()'s top for the general case (every
+    // statement funnels through there) and additionally right after
+    // echo()/assert()'s own argument evaluation below, since those two
+    // produce a visible side effect (an echo message / a diagnostic) in the
+    // same statement that could otherwise fire using the aborted undef
+    // result before the *next* evalNode() call ever gets a chance to check.
+    void checkRecursionAbort();
+
     CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform,
                         const ColorAttr& color);
     CsgNodePtr evalPrimitive(const chisel::lang::PrimitiveNode& p, const glm::mat4& xform,

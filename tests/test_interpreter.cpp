@@ -556,6 +556,34 @@ TEST_CASE("Interp:non-tail recursion (f3a shape) is unaffected by the trampoline
     REQUIRE(ctx.interp.evalNumber(call) == Approx(5050.0));
 }
 
+TEST_CASE("Interp:recursionAborted() is set once an unconditional tail call exhausts kMaxTailHops",
+          "[interp][bugfix]") {
+    // Matches upstream recursion-test-function.scad's `function crash() =
+    // crash();` — a bare tail self-call with no base case ever hits
+    // kMaxTailHops, not kMaxCallDepth (it never grows the native stack).
+    auto ctx = loadEnvWithFuncs("function crash() = crash();");
+    ExprNode call = makeCall("crash", {});
+    Value r = ctx.interp.evaluate(call);
+    REQUIRE(r.isUndef());
+    REQUIRE(ctx.interp.recursionAborted());
+    REQUIRE(ctx.interp.recursionAbortedFunctionName() == "crash");
+}
+
+TEST_CASE("Interp:recursionAborted() is also set by callClosure()'s kMaxCallDepth guard",
+          "[interp][bugfix]") {
+    // A closure bound to a variable name never goes through
+    // evalFunctionBody()'s trampoline (only named m_funcDefs entries do —
+    // see its own comment), so an unconditionally-recursive function
+    // literal exercises callClosure()'s separate kMaxCallDepth guard
+    // instead of evalFunctionBody()'s kMaxTailHops one.
+    auto ctx = loadEnvWithFuncs("f = function(x) f(x);");
+    ExprNode call = makeCall("f", {0.0});
+    Value r = ctx.interp.evaluate(call);
+    REQUIRE(r.isUndef());
+    REQUIRE(ctx.interp.recursionAborted());
+    REQUIRE(ctx.interp.recursionAbortedFunctionName() == "f");
+}
+
 // ---------------------------------------------------------------------------
 // loadFunctions()/loadAssignments() ordering (found while verifying #83
 // against upstream's tail-recursion-tests.scad, which assigns a tail-

@@ -260,7 +260,12 @@ Value Interpreter::evalFunctionBody(const ExprNode& startBody) {
             auto fit = isClosureVar ? m_funcDefs.end() : m_funcDefs.find(call->name);
             if (fit == m_funcDefs.end()) break;
 
-            if (hop >= kMaxTailHops) return Value::undef();
+            if (hop >= kMaxTailHops) {
+                m_recursionAborted    = true;
+                m_recursionAbortedFnName = call->name;
+                m_recursionAbortedLoc    = call->loc;
+                return Value::undef();
+            }
 
             std::vector<std::pair<std::string, Value>> orderedArgs;
             orderedArgs.reserve(call->args.size());
@@ -283,6 +288,7 @@ Value Interpreter::evalFunctionBody(const ExprNode& startBody) {
 // evaluate — dispatch on ExprNode variant
 // ---------------------------------------------------------------------------
 Value Interpreter::evaluate(const ExprNode& expr) {
+    if (m_recursionAborted) return Value::undef();
     return std::visit([&](const auto& node) -> Value {
         using T = std::decay_t<decltype(node)>;
 
@@ -587,7 +593,12 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             // Try user-defined function first
             auto fit = m_funcDefs.find(node.name);
             if (fit != m_funcDefs.end()) {
-                if (m_callDepth >= kMaxCallDepth) return Value::undef();
+                if (m_callDepth >= kMaxCallDepth) {
+                    m_recursionAborted       = true;
+                    m_recursionAbortedFnName = node.name;
+                    m_recursionAbortedLoc    = node.loc;
+                    return Value::undef();
+                }
 
                 const FunctionDef& def = *fit->second;
                 auto savedEnv = beginCallScope();
@@ -753,8 +764,14 @@ void Interpreter::assignVar(const std::string& name, const ExprNode& valueExpr) 
 // ---------------------------------------------------------------------------
 Value Interpreter::callClosure(Value fnVal,
                                 const std::vector<std::pair<std::string, Value>>& orderedArgs) {
-    if (!fnVal.closure || !fnVal.closure->def || m_callDepth >= kMaxCallDepth)
+    if (!fnVal.closure || !fnVal.closure->def) return Value::undef();
+    if (m_callDepth >= kMaxCallDepth) {
+        m_recursionAborted       = true;
+        m_recursionAbortedFnName =
+            fnVal.closure->selfName.empty() ? "function" : fnVal.closure->selfName;
+        m_recursionAbortedLoc    = fnVal.closure->def->loc;
         return Value::undef();
+    }
     const FunctionLit& def = *fnVal.closure->def;
 
     auto savedEnv = snapshotEnv();
