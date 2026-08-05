@@ -302,8 +302,17 @@ private:
     // m_env wholesale as its first step (to switch to the closure's own
     // captured scope) — a reference into the old map would dangle the
     // moment that happens.
-    Value callClosure(Value fnVal,
-                       const std::vector<std::pair<std::string, Value>>& orderedArgs);
+    //
+    // callLoc is the *call* expression's own location (FunctionCall::loc or
+    // CallExpr::loc at each of this function's two call sites) — deliberately
+    // not fnVal.closure->def->loc (the closure literal's definition site):
+    // a recursion abort's TRACE line for this frame must name where this
+    // particular call was textually made, the same as the sibling
+    // FunctionDef call path a few lines up in evaluate() (which pushes its
+    // own node.loc, not the callee's def->loc either), not the one fixed
+    // location every call of the same closure would otherwise share.
+    Value callClosure(Value fnVal, const std::vector<std::pair<std::string, Value>>& orderedArgs,
+                       const SourceLoc& callLoc);
 
     // Evaluates a *named* user function's body, trampolining through any
     // call in tail position instead of recursing — the fix for issue #83's

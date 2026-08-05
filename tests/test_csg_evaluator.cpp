@@ -2392,19 +2392,28 @@ TEST_CASE("CsgEval:recursion-detected abort TRACE lines walk ordinary (non-tail)
 // calls on a closure route through Interpreter::callClosure(), a separate
 // kMaxCallDepth check/m_callStack push site from evaluate()'s FunctionCall
 // case the tests above exercise (see PR #103 review).
+//
+// The fixture deliberately puts the recursive call `f(n)` on a *different*
+// line from the `function(n)` literal itself: callClosure() must report
+// each frame's location as the call site (this test's line 2), not the
+// closure's definition site (line 1) — pushing def->loc instead would still
+// pass a same-line version of this test undetected (see PR #103 review,
+// which caught exactly that on an earlier version of this test).
 TEST_CASE("CsgEval:recursion-detected abort TRACE lines cover the closure call-frame site too",
           "[csg][bugfix]") {
-    // Non-tail (the recursive call isn't the whole body) and ignores `n`,
-    // so this never terminates on its own.
-    auto s = evaluate("f = function(n) 1 + f(n);"
-                      "echo(f(0));");
+    auto s = evaluateFile(fixture("eval_diag/closure_recursion.scad"));
     REQUIRE(s.evalDiags.size() == 1);
     const std::string& msg = s.evalDiags[0].message;
-    REQUIRE(msg.find("Recursion detected calling function 'f'") != std::string::npos);
+    REQUIRE(msg.find("Recursion detected calling function 'f' in file closure_recursion.scad, "
+                      "line 2") != std::string::npos);
+    const std::string traceLine = "TRACE: called by 'f' in file closure_recursion.scad, line 2";
     std::size_t traceCount = 0;
-    for (std::size_t pos = 0; (pos = msg.find("TRACE: called by 'f'", pos)) != std::string::npos;
-         ++pos)
+    for (std::size_t pos = 0; (pos = msg.find(traceLine, pos)) != std::string::npos; ++pos)
         ++traceCount;
     REQUIRE(traceCount > 10);
-    REQUIRE(msg.find("TRACE: called by 'echo'") != std::string::npos);
+    // The definition site (line 1) must never appear — that would mean a
+    // frame fell back to def->loc instead of the call site.
+    REQUIRE(msg.find("line 1") == std::string::npos);
+    REQUIRE(msg.find("TRACE: called by 'echo' in file closure_recursion.scad, line 3") !=
+            std::string::npos);
 }

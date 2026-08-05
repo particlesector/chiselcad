@@ -591,7 +591,7 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             // exists under that name.
             auto varIt = m_env.find(node.name);
             if (varIt != m_env.end() && varIt->second.isFunction())
-                return callClosure(varIt->second, orderedArgs);
+                return callClosure(varIt->second, orderedArgs, node.loc);
 
             // Try user-defined function first
             auto fit = m_funcDefs.find(node.name);
@@ -645,7 +645,7 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 orderedArgs.push_back({arg.name, evaluate(*arg.value)});
 
             if (!callee.isFunction()) return Value::undef();
-            return callClosure(std::move(callee), orderedArgs);
+            return callClosure(std::move(callee), orderedArgs, node.loc);
         }
 
         return Value::undef();
@@ -771,14 +771,15 @@ void Interpreter::assignVar(const std::string& name, const ExprNode& valueExpr) 
 // callClosure — invoke a Value::Tag::Function closure
 // ---------------------------------------------------------------------------
 Value Interpreter::callClosure(Value fnVal,
-                                const std::vector<std::pair<std::string, Value>>& orderedArgs) {
+                                const std::vector<std::pair<std::string, Value>>& orderedArgs,
+                                const SourceLoc& callLoc) {
     if (!fnVal.closure || !fnVal.closure->def) return Value::undef();
     std::string selfName =
         fnVal.closure->selfName.empty() ? "function" : fnVal.closure->selfName;
     if (m_callDepth >= kMaxCallDepth) {
         m_recursionAborted       = true;
         m_recursionAbortedFnName = selfName;
-        m_recursionAbortedLoc    = fnVal.closure->def->loc;
+        m_recursionAbortedLoc    = callLoc;
         m_recursionAbortedStack.assign(m_callStack.rbegin(), m_callStack.rend());
         return Value::undef();
     }
@@ -795,7 +796,7 @@ Value Interpreter::callClosure(Value fnVal,
     bindOrderedArgs(def.params, orderedArgs);
 
     ++m_callDepth;
-    m_callStack.push_back({selfName, def.loc});
+    m_callStack.push_back({selfName, callLoc});
     Value result = evaluate(*def.body);
     m_callStack.pop_back();
     --m_callDepth;
