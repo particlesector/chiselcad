@@ -335,8 +335,8 @@ static InterpCtx loadEnvWithFuncs(std::string_view src) {
     Parser parser(std::move(tokens));
     InterpCtx ctx;
     ctx.result = parser.parse();
-    ctx.interp.loadAssignments(ctx.result);
     ctx.interp.loadFunctions(ctx.result);
+    ctx.interp.loadAssignments(ctx.result);
     return ctx;
 }
 
@@ -492,11 +492,118 @@ TEST_CASE("Interp:unbounded function recursion returns undef instead of crashing
 }
 
 TEST_CASE("Interp:deep-but-bounded recursion still computes the correct result", "[interp][bugfix]") {
-    // Depth 100 is comfortably under kMaxCallDepth (200); the guard must not
+    // Depth 100 is comfortably under kMaxCallDepth (300); the guard must not
     // affect legitimate recursive functions at ordinary depths.
     auto ctx = loadEnvWithFuncs("function sum(n) = n <= 0 ? 0 : n + sum(n - 1);");
     ExprNode call = makeCall("sum", {100.0});
     REQUIRE(ctx.interp.evalNumber(call) == Approx(5050.0));
+}
+
+TEST_CASE("Interp:recursion depth just under the raised cap still succeeds (issue #83)",
+          "[interp][bugfix]") {
+    // kMaxCallDepth was raised from 200 to 300 (issue #83, see the comment
+    // on its definition in Interpreter.h for the measurement behind the new
+    // value) specifically so legitimate recursion in this 200-300 band —
+    // previously silently truncated to undef — now computes a real result.
+    auto ctx = loadEnvWithFuncs("function sum(n) = n <= 0 ? 0 : n + sum(n - 1);");
+    ExprNode call = makeCall("sum", {250.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(250.0 * 251.0 / 2.0));
+}
+
+// ---------------------------------------------------------------------------
+// Tail-call optimization (issue #83) — matches upstream OpenSCAD's own
+// tests/data/scad/misc/tail-recursion-tests.scad, fetched directly from
+// openscad/openscad and run through scad_dump against these exact depths to
+// confirm parity (2000/50000 depths can only pass via a real trampoline, not
+// by raising kMaxCallDepth — see evalFunctionBody()'s comment in
+// Interpreter.h).
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:tail-recursive function reaches a depth no native stack could survive",
+          "[interp][bugfix][tco]") {
+    auto ctx = loadEnvWithFuncs("function f3c(a, ret = 0) = a <= 0 ? ret : f3c(a - 1, ret + a);");
+    ExprNode call = makeCall("f3c", {2000.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(2001000.0));
+}
+
+TEST_CASE("Interp:tail-recursive function builds a 50000-character string (upstream f2a)",
+          "[interp][bugfix][tco]") {
+    auto ctx = loadEnvWithFuncs(
+        "function c(a, b) = chr(a % 26 + b);"
+        "function f2a(x, y = 0, t = \"\") = x <= 0 ? t : f2a(x - 1, y + 2, str(t, c(y, 65)));");
+    ExprNode call = makeCall("f2a", {50000.0});
+    Value r = ctx.interp.evaluate(call);
+    REQUIRE(r.isString());
+    REQUIRE(r.asString().size() == 50000);
+}
+
+TEST_CASE("Interp:tail call to a different function still trampolines (mutual tail recursion)",
+          "[interp][bugfix][tco]") {
+    auto ctx = loadEnvWithFuncs(
+        "function isEven(n) = n <= 0 ? true : isOdd(n - 1);"
+        "function isOdd(n) = n <= 0 ? false : isEven(n - 1);");
+    ExprNode call = makeCall("isEven", {10000.0});
+    REQUIRE(bool(ctx.interp.evaluate(call)) == true);
+}
+
+TEST_CASE("Interp:non-tail recursion (f3a shape) is unaffected by the trampoline",
+          "[interp][bugfix][tco]") {
+    // The recursive call here is an operand of `+`, not the whole tail
+    // expression, so this must still go through ordinary (kMaxCallDepth-
+    // guarded) recursion rather than the trampoline — regression check that
+    // evalFunctionBody's terminal case still defers to plain evaluate().
+    auto ctx = loadEnvWithFuncs("function f3a(a) = a <= 0 ? 0 : a + f3a(a - 1);");
+    ExprNode call = makeCall("f3a", {100.0});
+    REQUIRE(ctx.interp.evalNumber(call) == Approx(5050.0));
+}
+
+TEST_CASE("Interp:recursionAborted() is set once an unconditional tail call exhausts kMaxTailHops",
+          "[interp][bugfix]") {
+    // Matches upstream recursion-test-function.scad's `function crash() =
+    // crash();` — a bare tail self-call with no base case ever hits
+    // kMaxTailHops, not kMaxCallDepth (it never grows the native stack).
+    auto ctx = loadEnvWithFuncs("function crash() = crash();");
+    ExprNode call = makeCall("crash", {});
+    Value r = ctx.interp.evaluate(call);
+    REQUIRE(r.isUndef());
+    REQUIRE(ctx.interp.recursionAborted());
+    REQUIRE(ctx.interp.recursionAbortedFunctionName() == "crash");
+}
+
+TEST_CASE("Interp:recursionAborted() is also set by callClosure()'s kMaxCallDepth guard",
+          "[interp][bugfix]") {
+    // A closure bound to a variable name never goes through
+    // evalFunctionBody()'s trampoline (only named m_funcDefs entries do —
+    // see its own comment), so an unconditionally-recursive function
+    // literal exercises callClosure()'s separate kMaxCallDepth guard
+    // instead of evalFunctionBody()'s kMaxTailHops one.
+    auto ctx = loadEnvWithFuncs("f = function(x) f(x);");
+    ExprNode call = makeCall("f", {0.0});
+    Value r = ctx.interp.evaluate(call);
+    REQUIRE(r.isUndef());
+    REQUIRE(ctx.interp.recursionAborted());
+    REQUIRE(ctx.interp.recursionAbortedFunctionName() == "f");
+}
+
+// ---------------------------------------------------------------------------
+// loadFunctions()/loadAssignments() ordering (found while verifying #83
+// against upstream's tail-recursion-tests.scad, which assigns a tail-
+// recursive call's result to a top-level variable — `s1 = f2a(50000);` —
+// before echoing it). Previously every real call site (CsgEvaluator::
+// evaluate's convenience overload, HeadlessBuild.cpp) called
+// loadAssignments() before loadFunctions(), so a top-level assignment could
+// never see any user-defined function and silently evaluated to undef.
+// loadFunctions() only registers non-owning pointers (no evaluation), so
+// swapping the order is strictly safe.
+// ---------------------------------------------------------------------------
+TEST_CASE("Interp:a top-level assignment can call a user-defined function", "[interp][bugfix]") {
+    Lexer  lexer("function f(x) = x * 2; y = f(3);");
+    auto   tokens = lexer.tokenize();
+    Parser parser(std::move(tokens));
+    auto   result = parser.parse();
+    Interpreter interp;
+    interp.loadFunctions(result);
+    interp.loadAssignments(result);
+    REQUIRE(interp.getVar("y").asNumber() == Approx(6.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,12 +1305,10 @@ TEST_CASE("Interp:calling the closure result of a named function call", "[interp
     // that result. Exercises CallExpr chained directly onto a FunctionCall,
     // not just onto a parenthesised FunctionLit. Built as a manual AST
     // (like the neighboring named-function tests above) rather than via a
-    // top-level source assignment: loadAssignments() runs before
-    // loadFunctions() in every call site (see loadEnvWithFuncs below), so a
-    // *source-level* `jj = adder(2)(5);` assignment would evaluate before
-    // "adder" is registered — an unrelated pre-existing load-order quirk
-    // that would otherwise make this test collide with, rather than
-    // exercise, the currying feature itself.
+    // source-level `jj = adder(2)(5);` assignment purely to stay consistent
+    // with its sibling tests above/below — loadFunctions() now runs before
+    // loadAssignments() (see loadEnvWithFuncs below), so a source-level
+    // assignment calling a function works fine here too.
     auto ctx = loadEnvWithFuncs("function adder(x) = function(y) x + y;");
 
     FunctionCall innerCall;

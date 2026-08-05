@@ -37,8 +37,8 @@ static std::filesystem::path defaultFontPath() {
 // ---------------------------------------------------------------------------
 CsgScene CsgEvaluator::evaluate(const ParseResult& result) {
     Interpreter defaultInterp;
-    defaultInterp.loadAssignments(result);
     defaultInterp.loadFunctions(result);
+    defaultInterp.loadAssignments(result);
     return evaluate(result, defaultInterp);
 }
 
@@ -102,16 +102,29 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
     return scene;
 }
 
+void CsgEvaluator::checkRecursionAbort() {
+    if (m_aborted || !m_interp || !m_interp->recursionAborted()) return;
+    lang::Diagnostic d;
+    d.level = lang::DiagLevel::Error;
+    d.loc = m_interp->recursionAbortedLoc();
+    d.filePath = resolveFilePath(d.loc.fileId);
+    d.message = "Recursion detected calling function '" + m_interp->recursionAbortedFunctionName() + "'";
+    if (m_scene) m_scene->evalDiags.push_back(std::move(d));
+    m_aborted = true;
+}
+
 // ---------------------------------------------------------------------------
 // Node dispatch
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform,
                                   const ColorAttr& color) {
-    // A failed assert() aborts the rest of the script (OpenSCAD semantics):
-    // every remaining statement anywhere in the tree — siblings, later
-    // module-body statements, later for-loop iterations, etc. — funnels
-    // through this function, so bailing out here halts all of them without
-    // needing a check in each individual loop.
+    // A failed assert() (or a hard recursion-detected abort — see
+    // checkRecursionAbort()) aborts the rest of the script (OpenSCAD
+    // semantics): every remaining statement anywhere in the tree —
+    // siblings, later module-body statements, later for-loop iterations,
+    // etc. — funnels through this function, so bailing out here halts all
+    // of them without needing a check in each individual loop.
+    checkRecursionAbort();
     if (m_aborted)
         return nullptr;
 
@@ -166,6 +179,25 @@ CsgNodePtr CsgEvaluator::evalNode(const AstNode& node, const glm::mat4& xform,
             return nullptr;
         },
         node);
+
+    // A recursion abort discovered anywhere during this node's own
+    // evaluation — not just a nested child statement, but this node's own
+    // parameter/argument evaluation (e.g. evalPrimitive's `cube(crash())`,
+    // evalTransform's matrix params, a module call's own args) — must
+    // discard whatever `result` was just built rather than let it become
+    // part of the scene. Real OpenSCAD's exception-based unwind means the
+    // triggering statement never produces geometry at all, not even a
+    // degenerate leaf built from the resulting undef param; without this,
+    // only echo()/assert() (which have their own inline checks, needed
+    // separately since they push a side effect — an echo message or
+    // diagnostic — *during* evalModuleCall, before this point ever runs)
+    // got that right, and everything else funneling through evalNode
+    // (primitives, transforms, booleans, module calls, ...) would still
+    // contribute one partially-evaluated node before the *next* evalNode()
+    // call caught the abort.
+    checkRecursionAbort();
+    if (m_aborted)
+        return nullptr;
 
     if (!result || mods == ModNone)
         return result;
@@ -758,6 +790,13 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
             bool first = true;
             for (const auto& arg : call.args) {
                 Value v = m_interp->evaluate(*arg.value);
+                // A recursion-detected abort mid-argument must suppress
+                // this echo's own message entirely (matches real OpenSCAD:
+                // `echo(crash())` never prints anything, since evaluating
+                // the argument never completes) rather than falling through
+                // to print whatever partial/undef value came back.
+                checkRecursionAbort();
+                if (m_aborted) return nullptr;
                 msg += first ? " " : ", ";
                 first = false;
                 if (!arg.name.empty()) msg += arg.name + " = ";
@@ -772,6 +811,12 @@ CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::m
     if (call.name == "assert") {
         if (!call.args.empty() && m_scene) {
             Value cond = m_interp->evaluate(*call.args[0].value);
+            // Same reasoning as echo() above: a recursion abort inside the
+            // condition itself should report as a recursion error, not an
+            // assert failure (bool(undef) would otherwise read as false and
+            // push the wrong diagnostic message below).
+            checkRecursionAbort();
+            if (m_aborted) return nullptr;
             if (!bool(cond)) {
                 lang::Diagnostic d;
                 d.level = lang::DiagLevel::Error;

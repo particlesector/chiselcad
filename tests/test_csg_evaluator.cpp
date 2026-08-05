@@ -2240,3 +2240,68 @@ TEST_CASE("CsgEval:a module call before its final redefinition still uses the la
     REQUIRE(s.echoMessages.size() == 1);
     REQUIRE(s.echoMessages[0].find("second") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// Recursion-detected hard abort (issue #83 follow-up) — matches real
+// OpenSCAD's fatal "Recursion detected calling function 'X'" behavior for
+// an unconditionally-recursive function, verified against a live OpenSCAD
+// 2021.01 binary and the actual upstream test files (recursion-test-
+// function.scad, issue3118-recur-limit.scad, fetched from openscad/openscad
+// since neither is in this repo): no echo output at all for the statement
+// whose argument triggers it, an Error diagnostic naming the function, and
+// every later top-level statement skipped — the same "rest of script halts"
+// semantics already used for a failed assert().
+// ---------------------------------------------------------------------------
+TEST_CASE("CsgEval:unconditional self-recursion aborts the script like a failed assert",
+          "[csg][bugfix]") {
+    auto s = evaluate("echo(\"before\");"
+                      "function crash() = crash();"
+                      "echo(crash());"
+                      "echo(\"after\");");
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("before") != std::string::npos);
+    REQUIRE(s.evalDiags.size() == 1);
+    REQUIRE(s.evalDiags[0].level == DiagLevel::Error);
+    REQUIRE(s.evalDiags[0].message.find("Recursion detected") != std::string::npos);
+    REQUIRE(s.evalDiags[0].message.find("crash") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:redefining a builtin to unconditionally call itself also aborts",
+          "[csg][bugfix]") {
+    // Matches upstream issue3118-recur-limit.scad exactly: redefining `sin`
+    // to ignore its argument and call itself.
+    auto s = evaluate("function sin(x) = sin();"
+                      "echo(sin(30));");
+    REQUIRE(s.echoMessages.empty());
+    REQUIRE(s.evalDiags.size() == 1);
+    REQUIRE(s.evalDiags[0].message.find("Recursion detected") != std::string::npos);
+    REQUIRE(s.evalDiags[0].message.find("sin") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:ordinary (non-runaway) recursion produces no recursion-abort diagnostic",
+          "[csg][bugfix]") {
+    // Regression check: the new abort path must not fire for legitimate
+    // recursion that actually terminates.
+    auto s = evaluate("function fact(n) = n <= 1 ? 1 : n * fact(n - 1);"
+                      "echo(fact(5));");
+    REQUIRE(s.evalDiags.empty());
+    REQUIRE(s.echoMessages.size() == 1);
+    REQUIRE(s.echoMessages[0].find("120") != std::string::npos);
+}
+
+TEST_CASE("CsgEval:recursion aborting inside a primitive's own parameter drops that primitive too",
+          "[csg][bugfix]") {
+    // Regression test for a review comment on PR #102: a recursion abort
+    // discovered while evaluating a *primitive's* own parameter (as opposed
+    // to echo()/assert(), which had their own inline checks from the start)
+    // must still discard that primitive's own geometry, not just halt
+    // whatever comes after it — matches real OpenSCAD's exception-based
+    // unwind, which never produces geometry for the statement that itself
+    // triggered the exception.
+    auto s = evaluate("function crash() = crash();"
+                      "cube(crash());"
+                      "cube(5);");
+    REQUIRE(s.roots.empty());
+    REQUIRE(s.evalDiags.size() == 1);
+    REQUIRE(s.evalDiags[0].message.find("Recursion detected") != std::string::npos);
+}

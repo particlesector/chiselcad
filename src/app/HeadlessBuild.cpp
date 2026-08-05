@@ -118,8 +118,8 @@ BuildResult runBuild(const std::filesystem::path& path,
     lang::Interpreter interp;
     interp.setViewport(viewport.vpr[0], viewport.vpr[1], viewport.vpr[2], viewport.vpt[0],
                         viewport.vpt[1], viewport.vpt[2], viewport.vpd, viewport.vpf);
-    interp.loadAssignments(ast);
     interp.loadFunctions(ast);
+    interp.loadAssignments(ast);
     auto scene = csgEval.evaluate(ast, interp);
 
     // Forward echo() output as Info diagnostics

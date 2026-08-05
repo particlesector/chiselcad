@@ -229,10 +229,66 @@ std::unordered_map<std::string, Value> Interpreter::beginCallScope() {
     return saved;
 }
 
+void Interpreter::beginTailCallScope() {
+    std::unordered_map<std::string, Value> fresh = m_globalEnv;
+    for (const auto& [k, v] : m_env)
+        if (!k.empty() && k[0] == '$') fresh[k] = v;
+    m_env = std::move(fresh);
+}
+
+Value Interpreter::evalFunctionBody(const ExprNode& startBody) {
+    const ExprNode* body = &startBody;
+
+    for (int hop = 0; ; ++hop) {
+        if (auto* t = std::get_if<TernaryExpr>(body)) {
+            body = (bool(evaluate(*t->condition)) ? t->then : t->else_).get();
+            continue;
+        }
+        if (auto* let = std::get_if<LetExpr>(body)) {
+            for (const auto& [name, valExpr] : let->bindings)
+                assignVar(name, *valExpr);
+            body = let->body.get();
+            continue;
+        }
+        if (auto* call = std::get_if<FunctionCall>(body)) {
+            // A variable bound to a function-literal value takes priority
+            // over a same-named `function` def (matches the ordinary
+            // FunctionCall case in evaluate()) and isn't tail-hoppable here
+            // — deferred to the terminal evaluate() call below instead.
+            auto varIt = m_env.find(call->name);
+            bool isClosureVar = varIt != m_env.end() && varIt->second.isFunction();
+            auto fit = isClosureVar ? m_funcDefs.end() : m_funcDefs.find(call->name);
+            if (fit == m_funcDefs.end()) break;
+
+            if (hop >= kMaxTailHops) {
+                m_recursionAborted    = true;
+                m_recursionAbortedFnName = call->name;
+                m_recursionAbortedLoc    = call->loc;
+                return Value::undef();
+            }
+
+            std::vector<std::pair<std::string, Value>> orderedArgs;
+            orderedArgs.reserve(call->args.size());
+            for (const auto& arg : call->args)
+                orderedArgs.push_back({arg.name, evaluate(*arg.value)});
+
+            const FunctionDef& def = *fit->second;
+            beginTailCallScope();
+            bindOrderedArgs(def.params, orderedArgs);
+            body = def.body.get();
+            continue;
+        }
+        break;
+    }
+
+    return evaluate(*body);
+}
+
 // ---------------------------------------------------------------------------
 // evaluate — dispatch on ExprNode variant
 // ---------------------------------------------------------------------------
 Value Interpreter::evaluate(const ExprNode& expr) {
+    if (m_recursionAborted) return Value::undef();
     return std::visit([&](const auto& node) -> Value {
         using T = std::decay_t<decltype(node)>;
 
@@ -537,7 +593,12 @@ Value Interpreter::evaluate(const ExprNode& expr) {
             // Try user-defined function first
             auto fit = m_funcDefs.find(node.name);
             if (fit != m_funcDefs.end()) {
-                if (m_callDepth >= kMaxCallDepth) return Value::undef();
+                if (m_callDepth >= kMaxCallDepth) {
+                    m_recursionAborted       = true;
+                    m_recursionAbortedFnName = node.name;
+                    m_recursionAbortedLoc    = node.loc;
+                    return Value::undef();
+                }
 
                 const FunctionDef& def = *fit->second;
                 auto savedEnv = beginCallScope();
@@ -545,7 +606,7 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 bindOrderedArgs(def.params, orderedArgs);
 
                 ++m_callDepth;
-                Value result = evaluate(*def.body);
+                Value result = evalFunctionBody(*def.body);
                 --m_callDepth;
                 restoreEnv(std::move(savedEnv));
                 return result;
@@ -703,8 +764,14 @@ void Interpreter::assignVar(const std::string& name, const ExprNode& valueExpr) 
 // ---------------------------------------------------------------------------
 Value Interpreter::callClosure(Value fnVal,
                                 const std::vector<std::pair<std::string, Value>>& orderedArgs) {
-    if (!fnVal.closure || !fnVal.closure->def || m_callDepth >= kMaxCallDepth)
+    if (!fnVal.closure || !fnVal.closure->def) return Value::undef();
+    if (m_callDepth >= kMaxCallDepth) {
+        m_recursionAborted       = true;
+        m_recursionAbortedFnName =
+            fnVal.closure->selfName.empty() ? "function" : fnVal.closure->selfName;
+        m_recursionAbortedLoc    = fnVal.closure->def->loc;
         return Value::undef();
+    }
     const FunctionLit& def = *fnVal.closure->def;
 
     auto savedEnv = snapshotEnv();
