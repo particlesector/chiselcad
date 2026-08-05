@@ -65,6 +65,21 @@ public:
     const std::string& recursionAbortedFunctionName() const { return m_recursionAbortedFnName; }
     SourceLoc recursionAbortedLoc() const { return m_recursionAbortedLoc; }
 
+    // One entry of the call chain leading to a recursion-detected abort —
+    // see m_callStack and recursionAbortedStack() below.
+    struct CallFrame {
+        std::string name;
+        SourceLoc   loc;
+    };
+
+    // The call chain *above* the abort site, innermost first, captured at
+    // the moment recursionAborted() was set — used to build OpenSCAD's
+    // "TRACE: called by 'X' in file F, line L" lines (one per frame; the
+    // abort site itself, matching recursionAbortedFunctionName()/
+    // recursionAbortedLoc(), is the implicit first TRACE line and isn't
+    // repeated in this list — see CsgEvaluator::checkRecursionAbort()).
+    const std::vector<CallFrame>& recursionAbortedStack() const { return m_recursionAbortedStack; }
+
     // Convenience: evaluate and coerce to double (undef → 0.0).
     double evalNumber(const ExprNode& expr);
 
@@ -244,6 +259,21 @@ private:
     bool        m_recursionAborted = false;
     std::string m_recursionAbortedFnName;
     SourceLoc   m_recursionAbortedLoc;
+    std::vector<CallFrame> m_recursionAbortedStack;
+
+    // Active named-call frames, outermost first (m_callStack.back() is the
+    // innermost/most-recently-entered call) — pushed just before a named
+    // function/closure call's body starts evaluating and popped right after
+    // it returns, in evaluate()'s FunctionCall case and in callClosure().
+    // Copied into m_recursionAbortedStack (innermost first, i.e. reversed)
+    // at each of the three recursion-abort trip sites: as a whole, for the
+    // ordinary evaluate()/callClosure() kMaxCallDepth checks (nothing's been
+    // pushed yet for the call that's about to be refused); with its own
+    // back() dropped, for evalFunctionBody()'s kMaxTailHops check (that
+    // back() *is* the frame currently tail-hopping — already represented by
+    // recursionAbortedFnName()/recursionAbortedLoc() — so including it too
+    // would duplicate the trace's first line).
+    std::vector<CallFrame> m_callStack;
 
     // Guards against a nested list comprehension's element count multiplying
     // out of control — each individual range is already capped at
@@ -272,8 +302,17 @@ private:
     // m_env wholesale as its first step (to switch to the closure's own
     // captured scope) — a reference into the old map would dangle the
     // moment that happens.
-    Value callClosure(Value fnVal,
-                       const std::vector<std::pair<std::string, Value>>& orderedArgs);
+    //
+    // callLoc is the *call* expression's own location (FunctionCall::loc or
+    // CallExpr::loc at each of this function's two call sites) — deliberately
+    // not fnVal.closure->def->loc (the closure literal's definition site):
+    // a recursion abort's TRACE line for this frame must name where this
+    // particular call was textually made, the same as the sibling
+    // FunctionDef call path a few lines up in evaluate() (which pushes its
+    // own node.loc, not the callee's def->loc either), not the one fixed
+    // location every call of the same closure would otherwise share.
+    Value callClosure(Value fnVal, const std::vector<std::pair<std::string, Value>>& orderedArgs,
+                       const SourceLoc& callLoc);
 
     // Evaluates a *named* user function's body, trampolining through any
     // call in tail position instead of recursing — the fix for issue #83's
