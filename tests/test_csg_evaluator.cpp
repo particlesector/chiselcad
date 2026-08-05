@@ -2386,3 +2386,25 @@ TEST_CASE("CsgEval:recursion-detected abort TRACE lines walk ordinary (non-tail)
     REQUIRE(traceCount > 10);
     REQUIRE(msg.find("TRACE: called by 'echo'") != std::string::npos);
 }
+
+// Same general case as above, but for a recursive *closure* (a function-
+// literal value bound to a variable) rather than a `function` def — self-
+// calls on a closure route through Interpreter::callClosure(), a separate
+// kMaxCallDepth check/m_callStack push site from evaluate()'s FunctionCall
+// case the tests above exercise (see PR #103 review).
+TEST_CASE("CsgEval:recursion-detected abort TRACE lines cover the closure call-frame site too",
+          "[csg][bugfix]") {
+    // Non-tail (the recursive call isn't the whole body) and ignores `n`,
+    // so this never terminates on its own.
+    auto s = evaluate("f = function(n) 1 + f(n);"
+                      "echo(f(0));");
+    REQUIRE(s.evalDiags.size() == 1);
+    const std::string& msg = s.evalDiags[0].message;
+    REQUIRE(msg.find("Recursion detected calling function 'f'") != std::string::npos);
+    std::size_t traceCount = 0;
+    for (std::size_t pos = 0; (pos = msg.find("TRACE: called by 'f'", pos)) != std::string::npos;
+         ++pos)
+        ++traceCount;
+    REQUIRE(traceCount > 10);
+    REQUIRE(msg.find("TRACE: called by 'echo'") != std::string::npos);
+}
