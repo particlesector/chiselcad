@@ -73,6 +73,19 @@ class CsgEvaluator {
     // Each user module call pushes its children; evalChildren pops/re-pushes for nesting.
     std::vector<ChildrenFrame> m_childrenStack;
 
+    // One entry of the module/builtin-call chain currently active — pushed
+    // at the top of evalModuleCall() for *every* call (children(), echo,
+    // assert, every other builtin, and every user module), popped when it
+    // returns. Lets checkRecursionAbort() name the enclosing construct(s)
+    // (e.g. "echo", or a user module several calls deep) in a recursion
+    // abort's TRACE lines the same way Interpreter::m_callStack names the
+    // enclosing function call(s) — see that member's own comment.
+    struct CallCtxFrame {
+        std::string name;
+        chisel::lang::SourceLoc loc;
+    };
+    std::vector<CallCtxFrame> m_ctxStack;
+
     // Non-owning pointer to the scene being built — valid during evaluate().
     CsgScene* m_scene = nullptr;
 
@@ -119,6 +132,10 @@ class CsgEvaluator {
     // same statement that could otherwise fire using the aborted undef
     // result before the *next* evalNode() call ever gets a chance to check.
     void checkRecursionAbort();
+
+    // Appends " in file X, line Y" to msg for loc, if loc's file is known
+    // — see definition.
+    void appendFileLine(std::string& msg, const chisel::lang::SourceLoc& loc) const;
 
     CsgNodePtr evalNode(const chisel::lang::AstNode& node, const glm::mat4& xform,
                         const ColorAttr& color);

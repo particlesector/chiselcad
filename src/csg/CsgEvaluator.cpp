@@ -98,8 +98,20 @@ CsgScene CsgEvaluator::evaluate(const ParseResult& result, Interpreter& interp) 
     m_scene = nullptr;
     m_moduleDefs.clear();
     m_childrenStack.clear();
+    m_ctxStack.clear();
     m_rootOnlyNodes.clear();
     return scene;
+}
+
+// Appends " in file X, line Y" to msg for loc, if loc's file is known —
+// bare filename (not the full resolved path), 1-based line number (loc.line
+// is 0-based internally) — matching OpenSCAD's exact wording. Shared by the
+// ERROR line and every TRACE line checkRecursionAbort() builds below.
+void CsgEvaluator::appendFileLine(std::string& msg, const lang::SourceLoc& loc) const {
+    std::string fp = resolveFilePath(loc.fileId);
+    if (!fp.empty())
+        msg += " in file " + std::filesystem::path(fp).filename().string() + ", line " +
+               std::to_string(loc.line + 1);
 }
 
 void CsgEvaluator::checkRecursionAbort() {
@@ -109,13 +121,31 @@ void CsgEvaluator::checkRecursionAbort() {
     d.loc = m_interp->recursionAbortedLoc();
     d.filePath = resolveFilePath(d.loc.fileId);
     d.message = "Recursion detected calling function '" + m_interp->recursionAbortedFunctionName() + "'";
-    // Matches OpenSCAD's exact wording (e.g. "... in file
-    // recursion-test-function.scad, line 1") — bare filename, not the full
-    // resolved path, and 1-based like every other user-facing line number
-    // in this codebase (SourceLoc::line is 0-based internally).
-    if (!d.filePath.empty())
-        d.message += " in file " + std::filesystem::path(d.filePath).filename().string() +
-                     ", line " + std::to_string(d.loc.line + 1);
+    appendFileLine(d.message, d.loc);
+
+    // TRACE lines: real OpenSCAD's own diagnostic is this ERROR line
+    // followed by one "TRACE: called by 'X' in file F, line L" per unwound
+    // call frame, innermost first — reproduced here as more lines baked
+    // into this same Diagnostic's message (there's no separate DiagLevel for
+    // "trace"; every consumer that prints d.message verbatim, e.g.
+    // tests/tools/scad_dump.cpp, reproduces OpenSCAD's multi-line block
+    // as-is this way). The first TRACE line always mirrors the ERROR line
+    // itself (OpenSCAD's exception is caught by the very call frame that
+    // detected the recursion, which reports its own current call again) —
+    // then each enclosing Interpreter-level function/closure call
+    // (Interpreter::recursionAbortedStack()), then each enclosing
+    // CsgEvaluator-level module/builtin call (m_ctxStack — e.g. "echo", or a
+    // user module several calls deep), both innermost to outermost.
+    auto appendTrace = [&](const std::string& name, const lang::SourceLoc& loc) {
+        d.message += "\nTRACE: called by '" + name + "'";
+        appendFileLine(d.message, loc);
+    };
+    appendTrace(m_interp->recursionAbortedFunctionName(), m_interp->recursionAbortedLoc());
+    for (const auto& frame : m_interp->recursionAbortedStack())
+        appendTrace(frame.name, frame.loc);
+    for (auto it = m_ctxStack.rbegin(); it != m_ctxStack.rend(); ++it)
+        appendTrace(it->name, it->loc);
+
     if (m_scene) m_scene->evalDiags.push_back(std::move(d));
     m_aborted = true;
 }
@@ -786,6 +816,15 @@ std::string CsgEvaluator::formatValue(const Value& v) {
 // ---------------------------------------------------------------------------
 CsgNodePtr CsgEvaluator::evalModuleCall(const ModuleCallNode& call, const glm::mat4& xform,
                                         const ColorAttr& color) {
+    // Pushed for every call this function handles (children(), echo, every
+    // other builtin, every user module) and popped on any return path via
+    // RAII — see m_ctxStack's own comment.
+    m_ctxStack.push_back({call.name, call.loc});
+    struct CtxPopper {
+        std::vector<CallCtxFrame>& stack;
+        ~CtxPopper() { stack.pop_back(); }
+    } ctxPopper{m_ctxStack};
+
     // ---- Built-in: children() ----
     if (call.name == "children")
         return evalChildren(call, xform, color);

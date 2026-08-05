@@ -264,6 +264,9 @@ Value Interpreter::evalFunctionBody(const ExprNode& startBody) {
                 m_recursionAborted    = true;
                 m_recursionAbortedFnName = call->name;
                 m_recursionAbortedLoc    = call->loc;
+                // m_callStack.back() is this same tail-hopping call, already
+                // captured above — see m_callStack's own comment.
+                m_recursionAbortedStack.assign(m_callStack.rbegin() + 1, m_callStack.rend());
                 return Value::undef();
             }
 
@@ -597,6 +600,9 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                     m_recursionAborted       = true;
                     m_recursionAbortedFnName = node.name;
                     m_recursionAbortedLoc    = node.loc;
+                    // Nothing's been pushed for this (refused) call yet, so
+                    // the whole current stack is "outer" frames.
+                    m_recursionAbortedStack.assign(m_callStack.rbegin(), m_callStack.rend());
                     return Value::undef();
                 }
 
@@ -606,7 +612,9 @@ Value Interpreter::evaluate(const ExprNode& expr) {
                 bindOrderedArgs(def.params, orderedArgs);
 
                 ++m_callDepth;
+                m_callStack.push_back({node.name, node.loc});
                 Value result = evalFunctionBody(*def.body);
+                m_callStack.pop_back();
                 --m_callDepth;
                 restoreEnv(std::move(savedEnv));
                 return result;
@@ -765,11 +773,13 @@ void Interpreter::assignVar(const std::string& name, const ExprNode& valueExpr) 
 Value Interpreter::callClosure(Value fnVal,
                                 const std::vector<std::pair<std::string, Value>>& orderedArgs) {
     if (!fnVal.closure || !fnVal.closure->def) return Value::undef();
+    std::string selfName =
+        fnVal.closure->selfName.empty() ? "function" : fnVal.closure->selfName;
     if (m_callDepth >= kMaxCallDepth) {
         m_recursionAborted       = true;
-        m_recursionAbortedFnName =
-            fnVal.closure->selfName.empty() ? "function" : fnVal.closure->selfName;
+        m_recursionAbortedFnName = selfName;
         m_recursionAbortedLoc    = fnVal.closure->def->loc;
+        m_recursionAbortedStack.assign(m_callStack.rbegin(), m_callStack.rend());
         return Value::undef();
     }
     const FunctionLit& def = *fnVal.closure->def;
@@ -785,7 +795,9 @@ Value Interpreter::callClosure(Value fnVal,
     bindOrderedArgs(def.params, orderedArgs);
 
     ++m_callDepth;
+    m_callStack.push_back({selfName, def.loc});
     Value result = evaluate(*def.body);
+    m_callStack.pop_back();
     --m_callDepth;
     restoreEnv(std::move(savedEnv));
     return result;
