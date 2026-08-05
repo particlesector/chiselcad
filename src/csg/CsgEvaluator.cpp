@@ -109,6 +109,13 @@ void CsgEvaluator::checkRecursionAbort() {
     d.loc = m_interp->recursionAbortedLoc();
     d.filePath = resolveFilePath(d.loc.fileId);
     d.message = "Recursion detected calling function '" + m_interp->recursionAbortedFunctionName() + "'";
+    // Matches OpenSCAD's exact wording (e.g. "... in file
+    // recursion-test-function.scad, line 1") — bare filename, not the full
+    // resolved path, and 1-based like every other user-facing line number
+    // in this codebase (SourceLoc::line is 0-based internally).
+    if (!d.filePath.empty())
+        d.message += " in file " + std::filesystem::path(d.filePath).filename().string() +
+                     ", line " + std::to_string(d.loc.line + 1);
     if (m_scene) m_scene->evalDiags.push_back(std::move(d));
     m_aborted = true;
 }

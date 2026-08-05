@@ -2305,3 +2305,17 @@ TEST_CASE("CsgEval:recursion aborting inside a primitive's own parameter drops t
     REQUIRE(s.evalDiags.size() == 1);
     REQUIRE(s.evalDiags[0].message.find("Recursion detected") != std::string::npos);
 }
+
+// Issue #101: when the recursion-abort site's file is known (i.e. evaluated
+// via a real loaded file with a fileTable, unlike the inline-source tests
+// above), the diagnostic wording should carry OpenSCAD's "in file X, line Y"
+// location suffix rather than just the bare function name.
+TEST_CASE("CsgEval:recursion-detected abort message carries file and line when known",
+          "[csg][bugfix]") {
+    auto s = evaluateFile(fixture("eval_diag/function_recursion.scad"));
+    REQUIRE(s.evalDiags.size() == 1);
+    REQUIRE(s.evalDiags[0].message.find("Recursion detected calling function 'crash'") !=
+            std::string::npos);
+    REQUIRE(s.evalDiags[0].message.find("in file function_recursion.scad, line 1") !=
+            std::string::npos);
+}
