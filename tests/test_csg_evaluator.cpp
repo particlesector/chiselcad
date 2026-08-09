@@ -2305,3 +2305,115 @@ TEST_CASE("CsgEval:recursion aborting inside a primitive's own parameter drops t
     REQUIRE(s.evalDiags.size() == 1);
     REQUIRE(s.evalDiags[0].message.find("Recursion detected") != std::string::npos);
 }
+
+// Issue #101: full diagnostic-wording parity, including the "TRACE: called
+// by ..." call-stack lines, verified byte-for-byte (modulo the fixture's own
+// filename) against real OpenSCAD 2021.01's actual output for its own
+// upstream test files — both fixtures below are untouched copies of
+// recursion-test-function.scad/issue3118-recur-limit.scad (fetched from
+// openscad/openscad, neither is otherwise in this repo).
+TEST_CASE("CsgEval:recursion-detected abort message matches OpenSCAD's file/line/TRACE wording",
+          "[csg][bugfix]") {
+    auto s = evaluateFile(fixture("eval_diag/function_recursion.scad"));
+    REQUIRE(s.evalDiags.size() == 1);
+    REQUIRE(s.evalDiags[0].message ==
+            "Recursion detected calling function 'crash' in file function_recursion.scad, line 1\n"
+            "TRACE: called by 'crash' in file function_recursion.scad, line 1\n"
+            "TRACE: called by 'echo' in file function_recursion.scad, line 3");
+}
+
+TEST_CASE("CsgEval:recursion-detected abort matches OpenSCAD wording for a redefined builtin too",
+          "[csg][bugfix]") {
+    // Matches upstream issue3118-recur-limit.scad exactly: redefining `sin`
+    // to ignore its argument and call itself.
+    auto s = evaluateFile(fixture("eval_diag/issue3118_recur_limit.scad"));
+    REQUIRE(s.evalDiags.size() == 1);
+    REQUIRE(s.evalDiags[0].message ==
+            "Recursion detected calling function 'sin' in file issue3118_recur_limit.scad, line 3\n"
+            "TRACE: called by 'sin' in file issue3118_recur_limit.scad, line 3\n"
+            "TRACE: called by 'echo' in file issue3118_recur_limit.scad, line 4");
+}
+
+// General case (no upstream oracle for this exact shape, unlike the two
+// byte-exact tests above — but a straightforward extension of the same
+// mechanism): nested user-module calls should each contribute their own
+// TRACE line, innermost to outermost, ending at the echo() that triggered
+// evaluation.
+TEST_CASE("CsgEval:recursion-detected abort TRACE lines walk nested module calls", "[csg][bugfix]") {
+    auto s = evaluate("function crash() = crash();"
+                      "module b() { echo(crash()); }"
+                      "module a() { b(); }"
+                      "a();");
+    REQUIRE(s.evalDiags.size() == 1);
+    const std::string& msg = s.evalDiags[0].message;
+    auto posCrash = msg.find("Recursion detected calling function 'crash'");
+    auto posTraceCrash = msg.find("TRACE: called by 'crash'");
+    auto posEcho = msg.find("TRACE: called by 'echo'");
+    auto posB = msg.find("TRACE: called by 'b'");
+    auto posA = msg.find("TRACE: called by 'a'");
+    REQUIRE(posCrash != std::string::npos);
+    REQUIRE(posTraceCrash != std::string::npos);
+    REQUIRE(posEcho != std::string::npos);
+    REQUIRE(posB != std::string::npos);
+    REQUIRE(posA != std::string::npos);
+    // Innermost (crash's own self-call) to outermost (a() at the top level).
+    REQUIRE(posCrash < posTraceCrash);
+    REQUIRE(posTraceCrash < posEcho);
+    REQUIRE(posEcho < posB);
+    REQUIRE(posB < posA);
+}
+
+// General case, ordinary (non-tail) recursion via kMaxCallDepth rather than
+// evalFunctionBody()'s tail-hop trampoline: each real nested call is its own
+// Interpreter::m_callStack frame, so the abort's TRACE should walk all of
+// them (unlike the collapsed single self-line a pure tail call produces
+// above).
+TEST_CASE("CsgEval:recursion-detected abort TRACE lines walk ordinary (non-tail) call frames",
+          "[csg][bugfix]") {
+    // `1 + f(n)` is not a tail call (the recursive call isn't the whole
+    // body), so this recurses for real rather than trampolining.
+    auto s = evaluate("function f(n) = 1 + f(n);"
+                      "echo(f(0));");
+    REQUIRE(s.evalDiags.size() == 1);
+    const std::string& msg = s.evalDiags[0].message;
+    REQUIRE(msg.find("Recursion detected calling function 'f'") != std::string::npos);
+    std::size_t traceCount = 0;
+    for (std::size_t pos = 0; (pos = msg.find("TRACE: called by 'f'", pos)) != std::string::npos;
+         ++pos)
+        ++traceCount;
+    // One TRACE line per real recursive call frame beneath the abort site —
+    // comfortably more than the single collapsed line a tail call produces.
+    REQUIRE(traceCount > 10);
+    REQUIRE(msg.find("TRACE: called by 'echo'") != std::string::npos);
+}
+
+// Same general case as above, but for a recursive *closure* (a function-
+// literal value bound to a variable) rather than a `function` def — self-
+// calls on a closure route through Interpreter::callClosure(), a separate
+// kMaxCallDepth check/m_callStack push site from evaluate()'s FunctionCall
+// case the tests above exercise (see PR #103 review).
+//
+// The fixture deliberately puts the recursive call `f(n)` on a *different*
+// line from the `function(n)` literal itself: callClosure() must report
+// each frame's location as the call site (this test's line 2), not the
+// closure's definition site (line 1) — pushing def->loc instead would still
+// pass a same-line version of this test undetected (see PR #103 review,
+// which caught exactly that on an earlier version of this test).
+TEST_CASE("CsgEval:recursion-detected abort TRACE lines cover the closure call-frame site too",
+          "[csg][bugfix]") {
+    auto s = evaluateFile(fixture("eval_diag/closure_recursion.scad"));
+    REQUIRE(s.evalDiags.size() == 1);
+    const std::string& msg = s.evalDiags[0].message;
+    REQUIRE(msg.find("Recursion detected calling function 'f' in file closure_recursion.scad, "
+                      "line 2") != std::string::npos);
+    const std::string traceLine = "TRACE: called by 'f' in file closure_recursion.scad, line 2";
+    std::size_t traceCount = 0;
+    for (std::size_t pos = 0; (pos = msg.find(traceLine, pos)) != std::string::npos; ++pos)
+        ++traceCount;
+    REQUIRE(traceCount > 10);
+    // The definition site (line 1) must never appear — that would mean a
+    // frame fell back to def->loc instead of the call site.
+    REQUIRE(msg.find("line 1") == std::string::npos);
+    REQUIRE(msg.find("TRACE: called by 'echo' in file closure_recursion.scad, line 3") !=
+            std::string::npos);
+}
