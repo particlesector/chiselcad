@@ -184,6 +184,10 @@ struct ForNode {
     std::vector<AstNodePtr> children;
     SourceLoc               loc;
     uint8_t                 modifiers = ModNone;
+    // true for intersection_for(...) { ... } — every iteration's
+    // instantiated children are combined with Intersection instead of
+    // Union once the loop finishes (see CsgEvaluator::evalFor).
+    bool                    isIntersection = false;
 };
 
 inline AstNodePtr makeFor(ForNode n) {

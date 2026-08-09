@@ -39,6 +39,8 @@ static const std::unordered_map<std::string_view, TokenKind> kBuiltinNodeNames =
     {"rotate_extrude", TokenKind::RotateExtrude},
     {"offset", TokenKind::Offset},
     {"projection", TokenKind::Projection},
+    {"intersection_for", TokenKind::IntersectionFor},
+    {"assign", TokenKind::Assign},
 };
 
 // A token can be used as a named-parameter name (e.g. `scale=`) if it's an
@@ -372,6 +374,18 @@ AstNodePtr Parser::parseNodeInner() {
                     return parseRender();
                 case TokenKind::Color:
                     return parseColor();
+                case TokenKind::IntersectionFor:
+                    return parseFor(/*isIntersection=*/true);
+                case TokenKind::Assign:
+                    // assign(x = ..., ...) { ... } is the deprecated
+                    // statement form of let() — identical grammar and
+                    // semantics (block-scoped bindings, children evaluated
+                    // with those bindings in effect), so it reuses
+                    // parseLetNode() outright. parseLetNode() only ever
+                    // advances past whatever token is at the current
+                    // position without checking its kind, so it works
+                    // unchanged whether that token spells "let" or "assign".
+                    return parseLetNode();
                 default:
                     // Every kBuiltinNodeNames value is handled above; reaching
                     // here means the map and this switch have diverged (a
@@ -651,12 +665,14 @@ AstNodePtr Parser::parseIf() {
 // upstream test corpus's for-tests.scad) — node.clauses stays empty in that
 // case.
 // ---------------------------------------------------------------------------
-AstNodePtr Parser::parseFor() {
-    const Token& kw = advance(); // consume 'for'
+AstNodePtr Parser::parseFor(bool isIntersection) {
+    const Token& kw = advance(); // consume 'for' or 'intersection_for'
     ForNode node;
     node.loc = kw.loc;
+    node.isIntersection = isIntersection;
 
-    expect(TokenKind::LParen, "expected '(' after 'for'");
+    expect(TokenKind::LParen,
+           isIntersection ? "expected '(' after 'intersection_for'" : "expected '(' after 'for'");
 
     while (!check(TokenKind::RParen) && !atEnd()) {
         const size_t prevPos = m_pos; // guard against zero-progress infinite loops

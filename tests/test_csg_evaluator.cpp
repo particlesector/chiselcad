@@ -820,6 +820,56 @@ TEST_CASE("CsgEval:for() with no arguments under a transform still yields no geo
     REQUIRE(s.roots.empty());
 }
 
+TEST_CASE("CsgEval:intersection_for combines iterations with Intersection, not Union",
+          "[csg][bugfix]") {
+    // intersection_for(...) shares for()'s entire grammar/iteration
+    // machinery (see Parser::parseFor's isIntersection flag) but must
+    // combine the instantiated children with CsgBoolean::Op::Intersection
+    // instead of Op::Union — this is what distinguishes it from a plain
+    // for() loop, per OpenSCAD's own documented semantics ("a variant of
+    // the for statement that intersects the children rather than doing a
+    // union"). See issue #89: the parser previously didn't recognise
+    // intersection_for at all, so it fell through to an undefined
+    // module-call and produced no geometry whatsoever.
+    auto s = evaluate("intersection_for(i = [0:2]) translate([i*5, 0, 0]) cube(10);");
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Intersection);
+    REQUIRE(b.children.size() == 3);
+}
+
+TEST_CASE("CsgEval:intersection_for empty range yields no geometry", "[csg][bugfix]") {
+    auto s = evaluate("intersection_for(i = [5:3]) sphere(r=1);");
+    REQUIRE(s.roots.empty());
+}
+
+TEST_CASE("CsgEval:intersection_for with a single iteration yields that child directly",
+          "[csg][bugfix]") {
+    // Matches plain for()'s existing single-iteration behavior (see
+    // CsgEvaluator::evalFor: all.size() == 1 returns the child as-is rather
+    // than wrapping a single-child boolean node).
+    auto s = evaluate("intersection_for(i = [0:0]) sphere(r=1);");
+    REQUIRE(s.roots.size() == 1);
+    asLeaf(s.roots[0]); // would throw std::bad_variant_access if wrapped in a CsgBoolean
+}
+
+TEST_CASE("CsgEval:assign() is the deprecated statement form of let()", "[csg][bugfix]") {
+    // assign(x = ..., ...) { ... } is OpenSCAD's original (later deprecated)
+    // syntax for what let() does today — block-scoped bindings visible to
+    // its children only. See issue #89: the parser previously didn't
+    // recognise assign() as a builtin at all, so it fell through to an
+    // undefined module-call and produced no geometry whatsoever.
+    auto s = evaluate("assign(x = 5, y = x + 1) cube(y);");
+    REQUIRE(s.roots.size() == 1);
+    REQUIRE(asLeaf(s.roots[0]).params.at("x") == Approx(6.0));
+}
+
+TEST_CASE("CsgEval:assign() bindings do not leak past the block", "[csg][bugfix]") {
+    auto s = evaluate("x = 99; assign(x = 5) cube(x); cube(x);");
+    REQUIRE(s.roots.size() == 2);
+    REQUIRE(asLeaf(s.roots[0]).params.at("x") == Approx(5.0));
+    REQUIRE(asLeaf(s.roots[1]).params.at("x") == Approx(99.0));
+}
+
 TEST_CASE("CsgEval:multi-variable for() iterates the Cartesian product of all clauses",
           "[csg][bugfix]") {
     // for (x=[0:1], y=[0:1], z=[0:1]) — real OpenSCAD's multi-variable

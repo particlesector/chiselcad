@@ -43,7 +43,10 @@ private:
     AstNodePtr parseRender();
     AstNodePtr parseColor();
     AstNodePtr parseIf();
-    AstNodePtr parseFor();
+    // isIntersection: true for intersection_for(...) { ... }, which shares
+    // for()'s entire grammar and only differs in how CsgEvaluator combines
+    // the iterations' results (intersection instead of union).
+    AstNodePtr parseFor(bool isIntersection = false);
     AstNodePtr parseModuleCall();
     AstNodePtr parseExtrusion(TokenKind k);
     AstNodePtr parseOffset();

@@ -416,11 +416,14 @@ fixed**:
   above), `primitive-inf-tests` (83%), `ifelse-tests` (175%),
   `module-recursion`, `resize-tests` (1.5%), `surface-simple` — real
   mismatches, not yet individually triaged.
-- [ ] `assign-tests` and `intersection_for-tests` (issue #89) still produce zero valid
+- [x] `assign-tests` and `intersection_for-tests` (issue #89) still produce zero valid
   geometry even after the harness fix — unlike the files that fix unblocked,
   these appear to genuinely fail in `MeshEvaluator`/`PrimitiveGen` itself
   (every root invalid, not just one), not just in the test tool. Needs the
   same per-root `chiselcad_cli --stats` triage the harness bug above got.
+  Root-caused and fixed in v3.13 — not a `MeshEvaluator`/`PrimitiveGen` bug
+  at all, but `assign()`/`intersection_for()` not being recognized as
+  builtins by the parser.
 - [ ] Several other files (issue #90) (`polyhedron-tests`, `minkowski3-difference-test`,
   `scale3D-tests`, `for-nested-tests`, `render-tests`, `mirror-tests`,
   `for-tests`, `edge-cases`, `rotate-parameters`,
@@ -758,6 +761,64 @@ cases:
   one matching any clean closed-form guess tried against 2021.01's own
   ring-angle formula — left as a known, low-priority gap rather than
   guessed at further.
+
+## v3.13 — issue #89 (`assign-tests`/`intersection_for-tests` zero geometry) root-caused and fixed
+
+Followed issue #89's own suggested triage: rather than assuming a
+`MeshEvaluator`/`PrimitiveGen` bug, checked whether ChiselCAD's parser
+recognized `assign()`/`intersection_for()` as builtins at all. It didn't —
+neither name appeared anywhere in `src/lang/Parser.cpp`'s `kBuiltinNodeNames`
+table (the mechanism real builtin module names are recognized through, since
+they aren't reserved lexer keywords — see the table's own comment). A
+statement-position call to either name fell through to `parseModuleCall()`,
+which looks up a *user-defined* module of that name; since neither file
+defines one, every top-level statement in both files resolved to nothing,
+explaining "zero valid combined geometry" for every root in both files (not
+just one bad root among otherwise-valid ones, matching the issue's own
+observation that these two are unlike the harness-bug files).
+
+- [x] **`assign(x = ..., ...) { ... }` — the deprecated statement form of
+  `let()` — wasn't recognized as a builtin at all.** Real OpenSCAD's
+  `assign()` predates `let()` and is semantically identical: block-scoped
+  bindings visible only to its children. `Parser::parseLetNode()` already
+  implements exactly this grammar/semantics and doesn't care which keyword
+  spelling it was invoked through (it just `advance()`s past whatever token
+  is at the current position), so `assign` was added to `kBuiltinNodeNames`
+  and routed straight to the existing `parseLetNode()` — no new AST node or
+  evaluator code needed.
+- [x] **`intersection_for(i = ...) { ... }` — the `for()` variant that
+  intersects its iterations instead of unioning them — wasn't recognized as
+  a builtin at all.** Added `intersection_for` to `kBuiltinNodeNames` and
+  gave `Parser::parseFor()` a new `isIntersection` parameter (default
+  `false`, so every existing `for()` call site is unaffected) that's
+  threaded onto a new `ForNode::isIntersection` field. `CsgEvaluator::evalFor`
+  now combines the loop's flattened, iterations-worth-of-children list with
+  `CsgBoolean::Op::Intersection` instead of `Op::Union` when the flag is set
+  — the only behavioral difference from a plain `for()` loop, matching real
+  OpenSCAD's documented semantics ("intersects the children rather than
+  doing a union").
+
+Verified for real: this environment's network egress is scoped to
+`particlesector/chiselcad` only (no `vcpkg`/Manifold download), so — same
+approach as v3.10 — compiled the actual `src/lang`/`src/csg` sources
+(GPU/Manifold-free, per `tests/tools/README.md`) against real `glm` and a
+from-source-built Catch2 (`extras/catch_amalgamated.*` from the upstream
+Catch2 repo), then ran the real `tests/test_parser.cpp`/
+`tests/test_csg_evaluator.cpp`/`tests/test_lexer.cpp`/
+`tests/test_interpreter.cpp`/`tests/test_source_loader.cpp` suites: 580 test
+cases / 3266 assertions, all passing, including 7 new regression tests for
+both fixes (parser-shape tests for each, plus evaluator tests confirming
+`intersection_for`'s combine-with-Intersection behavior, its
+empty-range/single-iteration edge cases, and `assign()`'s let()-equivalent
+scoping). Also hand-fed OpenSCAD-corpus-shaped snippets of both constructs
+(loop-and-rotate `intersection_for`, nested `assign()` shadowing an outer
+variable) through the real `CsgEvaluator` directly and confirmed each now
+produces non-empty geometry where it previously produced none. Exact
+volumetric correctness against a live OpenSCAD oracle (the v3.9-style
+`sym_diff_volume` check) is still unverified — this pass had no oracle
+available — but the root cause (both constructs being completely
+unrecognized, not a `MeshEvaluator`/`PrimitiveGen` tessellation bug) is
+confirmed, closing the specific question issue #89 asked.
 
 ## v4 — Tooling & Visual Quality
 
