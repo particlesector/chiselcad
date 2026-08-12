@@ -1595,6 +1595,12 @@ TEST_CASE("CsgEval:linear_extrude non-finite scale is rejected, not passed throu
     REQUIRE_FALSE(vecInf.params.count("scale_x"));
     REQUIRE_FALSE(vecInf.params.count("scale_y"));
 
+    // Symmetric case: non-finite in the second component only.
+    auto vecInf2 = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=[2, 1/0]) square(10);").roots[0]);
+    REQUIRE_FALSE(vecInf2.params.count("scale_x"));
+    REQUIRE_FALSE(vecInf2.params.count("scale_y"));
+
     // A finite scale is unaffected.
     auto finite = asExtrusion(
         evaluate("linear_extrude(height=20, scale=2) square(10);").roots[0]);
