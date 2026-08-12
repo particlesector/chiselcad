@@ -97,6 +97,105 @@ TEST_CASE("runBuild: cylinder r2 defaults to 1.0 independently of r1, not mirror
     CHECK(result.volume == Approx(kExpectedFrustumVolume).margin(1.0));
 }
 
+TEST_CASE("runBuild: a non-finite cylinder radius renders as empty, not a garbage cone",
+          "[headless][v39][bugfix]") {
+    // cylinder(h=10, r1=1, r2=1/0) — confirmed against real OpenSCAD (which
+    // renders no geometry at all for any non-finite primitive dimension,
+    // matching its own general "invalid parameter -> no geometry" behavior
+    // for cube/cylinder/sphere — see docs/roadmap.md, issue #88's
+    // primitive-inf-tests.scad corpus mismatch). Before this fix, `1/0` was
+    // folded to 0.0 well before reaching PrimitiveGen (Interpreter::
+    // evalNumber()'s blanket non-finite -> 0.0 coercion), turning an
+    // infinite r2 into a *valid* r2=0 cone with real, nonzero volume instead
+    // of empty geometry — a silent, wrong-shape bug, not just a missing
+    // error.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/cylinder_infinite_r2.scad"), {}, {}, cache);
+    CHECK(result.volume == Approx(0.0).margin(1e-9));
+    CHECK(result.triCount == 0);
+}
+
+TEST_CASE("runBuild: a non-finite $fn clamps to the minimum 3 segments",
+          "[headless][v39][bugfix]") {
+    // cylinder($fn=1/0) — confirmed against real OpenSCAD: renders as a
+    // 3-sided prism (Facets: 5 in its own stats output), volume
+    // 1.5*sin(120 deg) ~= 1.299038 for the default r=1,h=1. Before this fix,
+    // two compounding bugs inflated this: (1) Interpreter::evalNumber()
+    // folded the non-finite $fn to 0.0, which PrimitiveGen::resolveSegments
+    // treats as "no override" and falls back to the *global* auto-resolution
+    // segment count instead of clamping to 3; (2) even with the raw inf
+    // value reaching resolveSegments, `static_cast<int>(std::round(inf))` is
+    // undefined behavior that empirically yields INT_MAX on this platform
+    // (not a small/negative value some other platform's UB might produce),
+    // so an unguarded std::max(3, ...) wouldn't have clamped it either.
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/cylinder_fn_infinite.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    constexpr double kExpectedVolume = 1.5 * 0.86602540378; // 1.5*sin(120 deg)
+    CHECK(result.volume == Approx(kExpectedVolume).margin(1e-6));
+    CHECK(result.triCount == 8); // 3 sides * 2 tris + 2 triangular caps
+}
+
+TEST_CASE("runBuild: resize() with a negative newsize component leaves that axis unchanged",
+          "[headless][v39][bugfix]") {
+    // resize([-5,0,0]) cube() — confirmed against real OpenSCAD
+    // (GeometryUtils::getResizeTransform(): `if (newsize[i] > 0) scale[i] =
+    // newsize[i]/bbox.sizes()[i]` — a *strictly positive* check, so a
+    // negative newsize leaves that axis's scale at the default 1.0, same as
+    // an axis omitted entirely) — the whole resize() here is a no-op,
+    // volume stays 1 (the unit cube unchanged). Before this fix,
+    // MeshEvaluator::evalResize() only excluded exactly-zero newsize values
+    // from being "explicit", so -5 was treated as a real (negative) scale
+    // factor, giving a wrong, nonzero-magnitude resize (issue #88).
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/resize_negative_newsize.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    CHECK(result.volume == Approx(1.0).margin(1e-6));
+}
+
+TEST_CASE("runBuild: resize() auto= with an all-negative-or-zero newsize is also a no-op",
+          "[headless][v39][bugfix]") {
+    // resize([-5,0,0],auto=3) cube() — confirmed against real OpenSCAD:
+    // still a complete no-op (volume 1), not the 5^3=125 the pre-fix
+    // `maxExplicit` logic gave by treating auto='s scale factor as the
+    // largest *scale* among explicitly-resized axes (which included the
+    // negative -5/1 = -5 factor) rather than real's actual rule: the scale
+    // of whichever axis has the largest *raw* newsize value, which here is
+    // one of the two 0-valued axes (0 > -5), and 0 isn't > 0 either, so its
+    // own scale — and therefore the auto-scale broadcast to every axis — is
+    // the default 1.0.
+    chisel::csg::MeshCache cache;
+    BuildResult result =
+        runBuild(fixture("headless/resize_negative_newsize_auto.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    CHECK(result.volume == Approx(1.0).margin(1e-6));
+}
+
+TEST_CASE("runBuild: an explicit r1 wins over ambiguous r for its own slot, not vice versa",
+          "[headless][v39][bugfix]") {
+    // cylinder(h=5, r=5, r1=0, center=true) — confirmed against real
+    // OpenSCAD (which warns "Cylinder parameters ambiguous" but still
+    // renders a frustum, not nothing): r1 stays 0 and r2 takes r's value
+    // (5), the same frustum as cylinder(h=5, r1=5, r2=0) (frustum volume is
+    // symmetric in r1/r2, so the two are numerically indistinguishable —
+    // both give the same expected volume below). Before this fix,
+    // PrimitiveGen unconditionally set *both* r1 and r2 to r's value
+    // whenever r was given (r >= 0.0), ignoring the explicit r1=0 entirely
+    // and rendering a uniform r=5 cylinder instead of a frustum — a much
+    // larger, wrong volume (issue #88).
+    chisel::csg::MeshCache cache;
+    BuildResult result = runBuild(fixture("headless/cylinder_ambiguous_r_r1.scad"), {}, {}, cache);
+    REQUIRE(result.ok());
+    // Compare against the equivalent unambiguous cylinder(h=5, r1=0, r2=5) —
+    // same tessellation, so this is an exact match rather than an idealized
+    // continuous-frustum formula subject to its own tessellation-loss
+    // margin. A uniform r=5 cylinder (the pre-fix bug) gives pi*25*5 ≈
+    // 392.7 — clearly distinct from either.
+    BuildResult unambiguous = runBuild(fixture("headless/cylinder_r1_0_r2_5.scad"), {}, {}, cache);
+    REQUIRE(unambiguous.ok());
+    CHECK(result.volume == Approx(unambiguous.volume).margin(1e-6));
+}
+
 TEST_CASE("runBuild: linear_extrude()'s default height is 100, not 1",
           "[headless][v39][bugfix]") {
     // Confirmed against real OpenSCAD's STL output for

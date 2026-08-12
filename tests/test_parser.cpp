@@ -93,6 +93,22 @@ TEST_CASE("Parser:cube centered", "[parser]") {
     REQUIRE(asPrim(r.roots[0]).center == true);
 }
 
+TEST_CASE("Parser:cube centered via positional bool", "[parser]") {
+    // cube(size, center) — OpenSCAD's positional form (issue #88's
+    // ifelse-tests.scad corpus mismatch used this exact shape). A bare
+    // `true`/`false` positional arg used to fall into the generic
+    // `_posN` bucket, which no CsgEvaluator case reads, so the cube came
+    // out uncentered.
+    auto r1 = parse("cube(2, true);");
+    REQUIRE(asPrim(r1.roots[0]).center == true);
+
+    auto r2 = parse("cube(2, false);");
+    REQUIRE(asPrim(r2.roots[0]).center == false);
+
+    auto r3 = parse("square(2, true);");
+    REQUIRE(asPrim(r3.roots[0]).center == true);
+}
+
 TEST_CASE("Parser:sphere with r", "[parser]") {
     auto r = parse("sphere(r = 5);");
     auto& p = asPrim(r.roots[0]);

@@ -282,10 +282,15 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
         leaf.kind = CsgLeaf::Kind::Cube;
         // Resolve scalar params ($fn, etc.) — skip "size"/"_pos0", which may
         // be vectors, so they aren't coerced to 0 by the blanket evalNumber.
+        // Uses evalNumberPreserveNonFinite() (not evalNumber()) so a
+        // non-finite dimension (e.g. `cube(1/0)`) reaches PrimitiveGen as
+        // inf/nan rather than being silently folded to a *different*, finite
+        // shape (0) — PrimitiveGen explicitly checks std::isfinite() on
+        // these before handing them to Manifold (issue #88).
         for (const auto& [name, exprPtr] : p.params) {
             if (name == "size" || name == "_pos0")
                 continue;
-            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+            leaf.params[name] = m_interp->evalNumberPreserveNonFinite(*exprPtr);
         }
         // Named "size=" takes priority; otherwise a bare positional arg
         // (cube(5) or cube(v) where v is a vector variable) is "size".
@@ -312,8 +317,9 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
     // ---- sphere(r) / sphere(d) ---------------------------------------------
     case PrimitiveNode::Kind::Sphere:
         leaf.kind = CsgLeaf::Kind::Sphere;
+        // See the Cube case above for why evalNumberPreserveNonFinite().
         for (const auto& [name, exprPtr] : p.params)
-            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+            leaf.params[name] = m_interp->evalNumberPreserveNonFinite(*exprPtr);
         // diameter → radius: d always wins over r when both are given
         // (order-independent — confirmed against real OpenSCAD, which
         // resolves d before r regardless of argument order), not just when
@@ -325,8 +331,9 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
     // ---- cylinder(h, r) / cylinder(h=, r=/r1=/r2=/d=/d1=/d2=) --------------
     case PrimitiveNode::Kind::Cylinder:
         leaf.kind = CsgLeaf::Kind::Cylinder;
+        // See the Cube case above for why evalNumberPreserveNonFinite().
         for (const auto& [name, exprPtr] : p.params)
-            leaf.params[name] = m_interp->evalNumber(*exprPtr);
+            leaf.params[name] = m_interp->evalNumberPreserveNonFinite(*exprPtr);
         // Bare positional args: cylinder(h) / cylinder(h, r)
         if (!leaf.params.count("h") && leaf.params.count("_pos0"))
             leaf.params["h"] = leaf.params["_pos0"];
@@ -423,6 +430,25 @@ CsgNodePtr CsgEvaluator::evalPrimitive(const PrimitiveNode& p, const glm::mat4& 
     return makeLeaf(std::move(leaf));
 }
 
+// A child statement that isn't actually a geometry statement at all —
+// echo()/assert(), a local `x = expr;` assignment, or a local module/
+// function definition — always evaluates to nullptr, same as a genuine
+// empty-geometry result (e.g. a bare `render();`/`minkowski();` with no
+// body). intersection() (see evalBoolean below) needs to tell these apart:
+// "intersected with nothing" must make the whole intersection empty, but a
+// non-geometric statement mixed into an intersection() block (upstream's
+// own corpus test: "Non-geometry (echo) statement as first child should be
+// ignored") must simply be skipped, not treated as an empty operand.
+static bool isNonGeometricStatement(const AstNode& node) {
+    if (std::holds_alternative<AssignStmt>(node) ||
+        std::holds_alternative<LocalModuleDefStmt>(node) ||
+        std::holds_alternative<LocalFunctionDefStmt>(node))
+        return true;
+    if (const auto* call = std::get_if<ModuleCallNode>(&node))
+        return call->name == "echo" || call->name == "assert";
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // Boolean — preserve the tree structure, pass xform down to children
 // ---------------------------------------------------------------------------
@@ -458,11 +484,40 @@ CsgNodePtr CsgEvaluator::evalBoolean(const BooleanNode& b, const glm::mat4& xfor
     // scoped to this block: save/restore around the whole child list so they
     // don't leak into whatever follows this node in the enclosing scope.
     auto savedEnv = m_interp->snapshotEnv();
+    // A child statement that itself produces no geometry (e.g. a bare
+    // `render();`/`linear_extrude();` with no body of its own) evaluates to
+    // nullptr here — for union()/difference()/hull() that's correctly a
+    // no-op contribution (dropping it changes nothing), but for
+    // intersection() specifically, "intersected with nothing" must make the
+    // *whole* intersection empty (confirmed against real OpenSCAD — issue
+    // #88's intersection-tests.scad corpus mismatch: `intersection() {
+    // cube(4, center=true); render(); }` renders nothing, not the bare
+    // cube). Silently dropping the nullptr child instead left the other
+    // operand un-intersected. Still evaluate every child (not short-
+    // circuited) so side effects like nested `assign()`s and diagnostics
+    // aren't skipped.
+    bool anyChildEmpty = false;
     for (const auto& child : b.children) {
-        if (auto c = evalNode(*child, childXform, color))
+        if (auto c = evalNode(*child, childXform, color)) {
             bnode.children.push_back(std::move(c));
+        } else if (bnode.op == CsgBoolean::Op::Intersection &&
+                   !isNonGeometricStatement(*child) &&
+                   !(astModifiers(*child) & (ModDisable | ModBackground))) {
+            // A '*'-disabled or '%'-backgrounded child also evaluates to
+            // nullptr here, same as genuinely empty geometry, but for an
+            // unrelated reason: it was deliberately excluded from the main
+            // CSG tree, not "intersected with nothing" (background-
+            // modifier2.scad's own corpus mismatch after the fix above
+            // first landed: `intersection() { %sphere(10); cube(15,
+            // center=true); }` must still intersect down to the cube
+            // alone, not become empty because the backgrounded sphere
+            // isn't part of the main tree).
+            anyChildEmpty = true;
+        }
     }
     m_interp->restoreEnv(std::move(savedEnv));
+    if (anyChildEmpty && bnode.op == CsgBoolean::Op::Intersection)
+        return nullptr;
     return makeBoolean(std::move(bnode));
 }
 
@@ -581,9 +636,23 @@ glm::mat4 CsgEvaluator::makeMatrix(const TransformNode& t) const {
             float rx = static_cast<float>(vx * kDeg2Rad);
             float ry = static_cast<float>(vy * kDeg2Rad);
             float rz = static_cast<float>(vz * kDeg2Rad);
-            m = glm::rotate(m, rx, glm::vec3(1.0f, 0.0f, 0.0f));
-            m = glm::rotate(m, ry, glm::vec3(0.0f, 1.0f, 0.0f));
+            // Real OpenSCAD's rotate([x,y,z]) rotates about X, then Y, then
+            // Z, in that order — i.e. a point is transformed as
+            // Rz*(Ry*(Rx*p)), X innermost/first. glm::rotate(m, angle, axis)
+            // post-multiplies (m*R), so to build up that composed matrix
+            // (Rz*Ry*Rx) via successive post-multiplies from identity, the
+            // *calls* must happen in the reverse order (Z, then Y, then X) —
+            // confirmed against real OpenSCAD (docs/roadmap.md, issue #88's
+            // module-recursion.scad corpus mismatch): `rotate([40,0,0])` and
+            // `rotate([0,0,180])` alone each matched real OpenSCAD exactly,
+            // but `rotate([40,0,180])` (both axes at once) didn't — only a
+            // composition-order bug explains one-axis-at-a-time working
+            // while the combination doesn't. Applying the calls in this
+            // source order (rx, ry, rz) had been building Rx*Ry*Rz instead
+            // (Z innermost) — the reverse of OpenSCAD's own order.
             m = glm::rotate(m, rz, glm::vec3(0.0f, 0.0f, 1.0f));
+            m = glm::rotate(m, ry, glm::vec3(0.0f, 1.0f, 0.0f));
+            m = glm::rotate(m, rx, glm::vec3(1.0f, 0.0f, 0.0f));
         } else {
             // rotate(a) / rotate(a, v) / rotate(a=..., v=...) / rotate() —
             // 'a' is a scalar angle in degrees (0 if absent or not a

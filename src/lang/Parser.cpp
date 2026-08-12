@@ -787,6 +787,21 @@ void Parser::parseParamList(std::unordered_map<std::string, ExprPtr>& params,
             continue;
         }
 
+        // Positional `true`/`false` — every one of this function's callers
+        // (cube/square's `center`) only ever takes a bare boolean literal
+        // positionally for the `center` flag, so a literal `true`/`false`
+        // token here is unambiguously that argument (mirrors the named
+        // `center=true`/`center=false` handling above), not a numbered
+        // positional param. Without this, `cube(2, true)` silently dropped
+        // the `true` into `_pos1` — never read by any CsgEvaluator case —
+        // so the cube came out uncentered.
+        if (check(TokenKind::True) || check(TokenKind::False)) {
+            center = (peek().kind == TokenKind::True);
+            advance();
+            match(TokenKind::Comma);
+            continue;
+        }
+
         // Positional number/expression — indexed _pos0, _pos1, ... so that
         // multiple positional args don't collide into a single key.
         if (!check(TokenKind::RParen)) {

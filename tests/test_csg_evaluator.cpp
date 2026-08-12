@@ -5,6 +5,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <filesystem>
 
 using namespace chisel::lang;
@@ -364,6 +365,33 @@ TEST_CASE("CsgEval:rotate([x,y,z] vector) ignores a 'v' axis argument", "[csg][b
             REQUIRE(a.transform[c][r] == Approx(b.transform[c][r]).margin(1e-5));
 }
 
+TEST_CASE("CsgEval:rotate([x,y,z]) composes X, then Y, then Z, matching real OpenSCAD",
+          "[csg][bugfix]") {
+    // Confirmed against real OpenSCAD (docs/roadmap.md, issue #88's
+    // module-recursion.scad corpus mismatch): rotate([x,y,z]) rotates a
+    // point about X first, then Y, then Z — i.e. Rz*(Ry*(Rx*p)). A single
+    // non-zero axis alone can't distinguish composition order (nothing to
+    // compose), so this uses two: rotate([40,0,180]) applied to (0,1,0)
+    // must equal Rz(180) applied to (Rx(40) applied to (0,1,0)), not the
+    // reverse (Rx applied to Rz's result) — the bug this regresses had the
+    // three glm::rotate() calls composing in the opposite (Z-first) order.
+    auto s = evaluate("rotate([40,0,180]) cube([1,1,1]);");
+    const auto& leaf = asLeaf(s.roots[0]);
+    glm::vec4 p = leaf.transform * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+
+    constexpr double kPi = 3.14159265358979323846;
+    const double rx = 40.0 * kPi / 180.0;
+    const double cosRx = std::cos(rx), sinRx = std::sin(rx);
+    // Rx(40) * (0,1,0) = (0, cos40, sin40); Rz(180) then negates x and y.
+    const float expectedX = 0.0f;
+    const float expectedY = static_cast<float>(-cosRx);
+    const float expectedZ = static_cast<float>(sinRx);
+
+    REQUIRE(p.x == Approx(expectedX).margin(1e-4));
+    REQUIRE(p.y == Approx(expectedY).margin(1e-4));
+    REQUIRE(p.z == Approx(expectedZ).margin(1e-4));
+}
+
 // ---------------------------------------------------------------------------
 // multmatrix() folds the given 4x4 rows straight into the leaf transform
 // ---------------------------------------------------------------------------
@@ -632,6 +660,34 @@ TEST_CASE("CsgEval:empty union has no children", "[csg]") {
     auto s = evaluate("union() {};");
     const auto& b = asBool(s.roots[0]);
     REQUIRE(b.children.empty());
+}
+
+TEST_CASE("CsgEval:intersection with a no-geometry operand (render()) yields nothing",
+          "[csg][bugfix]") {
+    // Confirmed against real OpenSCAD (issue #88's intersection-tests.scad
+    // corpus mismatch): `intersection() { cube(4, center=true); render(); }`
+    // renders no geometry at all, not the bare cube. A childless render()
+    // evaluates to nullptr (no geometry of its own) — before this fix, that
+    // nullptr child was silently dropped from the intersection's child
+    // list instead of making the whole intersection empty, so it fell back
+    // to returning the sole remaining cube operand unintersected.
+    auto s = evaluate("intersection() { cube(4, center=true); render(); }");
+    REQUIRE(s.roots.empty());
+}
+
+TEST_CASE("CsgEval:intersection ignores a non-geometry echo() statement, not the whole result",
+          "[csg][bugfix]") {
+    // Confirmed against real OpenSCAD (the same corpus file's own comment:
+    // "Non-geometry (echo) statement as first child should be ignored").
+    // echo() also evaluates to nullptr, like render() above, but for the
+    // opposite reason — it was never a geometry statement to begin with —
+    // so it must be skipped rather than nullifying the intersection.
+    auto s = evaluate("intersection() { echo(\"hi\"); cube([5,5,5], center=true); "
+                       "cylinder(r=2, h=20, center=true); }");
+    REQUIRE(s.roots.size() == 1);
+    const auto& b = asBool(s.roots[0]);
+    REQUIRE(b.op == CsgBoolean::Op::Intersection);
+    REQUIRE(b.children.size() == 2); // echo() itself contributes no child
 }
 
 // ---------------------------------------------------------------------------
@@ -1726,9 +1782,10 @@ TEST_CASE("CsgEval:surface() with file=, center=, and invert= named arguments", 
     REQUIRE(s.roots.size() == 1);
     const auto& leaf = asLeaf(s.roots[0]);
     REQUIRE(leaf.kind == CsgLeaf::Kind::Mesh);
-    // Center cell (grid index 4): was the peak (z=5), inverted -> 0, then
-    // centered around the [0,5] span -> shifted by -2.5.
-    REQUIRE(leaf.meshPositions[4].z == Approx(-2.5));
+    // Center cell (grid index 4): was the peak (z=5), inverted -> 0. `center`
+    // only ever offsets X/Y in real OpenSCAD, never Z (see SurfaceLoader.cpp),
+    // so the inverted low point stays at z=0.
+    REQUIRE(leaf.meshPositions[4].z == Approx(0.0));
 }
 
 TEST_CASE("CsgEval:surface() honors an outer transform and color", "[csg][tier-e]") {

@@ -121,8 +121,19 @@ double PrimitiveGen::getParam(const std::unordered_map<std::string, double>& p,
 int PrimitiveGen::resolveSegments(double r, double fnOverride, double faOverride,
                                    double fsOverride) const {
     double fn = (fnOverride > 0.0) ? fnOverride : globalFn;
-    if (fn > 0.0)
+    if (fn > 0.0) {
+        // A non-finite $fn (e.g. `$fn = 1/0`) can't be meaningfully rounded
+        // to a segment count: casting an out-of-range double to int is
+        // undefined behavior, and empirically this platform's cast yields
+        // INT_MAX (not INT_MIN, as `std::max(3, ...)` alone would need to
+        // safely clamp), silently building a huge/degenerate mesh instead
+        // of erroring. Real OpenSCAD's own equivalent clamps to the minimum
+        // of 3 sides here — confirmed against a live export:
+        // `cylinder($fn=1/0)` renders as a 3-sided prism (5 facets total).
+        if (!std::isfinite(fn))
+            return 3;
         return std::max(3, static_cast<int>(std::round(fn)));
+    }
 
     double fa = (faOverride > 0.0) ? faOverride : globalFa;
     double fs = (fsOverride > 0.0) ? fsOverride : globalFs;
@@ -146,6 +157,14 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
         double x = getParam(p, "x", 1.0);
         double y = getParam(p, "y", 1.0);
         double z = getParam(p, "z", 1.0);
+        // A non-finite dimension (e.g. `cube(1/0)`) isn't a shape Manifold
+        // can construct — real OpenSCAD rejects it outright and renders no
+        // geometry at all (confirmed live: `cube(1/0)` exports an empty
+        // STL, no warning). Without this check, an infinite param sometimes
+        // reaches Manifold::Cube() and comes back with a non-empty but
+        // garbage/degenerate mesh instead (docs/roadmap.md, issue #88).
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+            return {};
         return manifold::Manifold::Cube(
             {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)},
             leaf.center);
@@ -156,6 +175,10 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
     // ------------------------------------------------------------------
     case CsgLeaf::Kind::Sphere: {
         double r = getParam(p, "r", getParam(p, "_pos0", 1.0));
+        // See the Cube case above: a non-finite radius (`sphere(1/0)`)
+        // renders as nothing in real OpenSCAD, not a degenerate mesh.
+        if (!std::isfinite(r))
+            return {};
         double fnOvr = getParam(p, "$fn", 0.0);
         double faOvr = getParam(p, "$fa", 0.0);
         double fsOvr = getParam(p, "$fs", 0.0);
@@ -175,8 +198,28 @@ manifold::Manifold PrimitiveGen::generate(const CsgLeaf& leaf) const {
         // default to 1.0 — r2 does NOT mirror r1 (confirmed against real
         // OpenSCAD: cylinder(h=5, r1=5) tapers from r1=5 down to r2=1, not a
         // uniform r=5 cylinder — see docs/roadmap.md v3.9).
-        double r1 = (r >= 0.0) ? r : getParam(p, "r1", 1.0);
-        double r2 = (r >= 0.0) ? r : getParam(p, "r2", 1.0);
+        //
+        // When *both* r and r1 (or r and r2) are given — real OpenSCAD warns
+        // "Cylinder parameters ambiguous" but still renders something, not
+        // nothing — an explicitly-given r1/r2 wins for its own slot and `r`
+        // only fills in the *other*, unspecified slot; `r` does not blanket-
+        // override an explicit r1/r2 the way this used to unconditionally do
+        // (confirmed against real OpenSCAD: `cylinder(h=5, r=5, r1=0,
+        // center=true)` renders the same frustum volume as `cylinder(h=5,
+        // r1=5, r2=0)`, i.e. r1 stays 0 — not a uniform r=5 cylinder, which
+        // is what checking only `r >= 0.0` here used to produce regardless
+        // of an explicit r1/r2 — issue #88's cylinder-tests.scad corpus
+        // mismatch).
+        double r1 = p.count("r1") ? p.at("r1") : ((r >= 0.0) ? r : 1.0);
+        double r2 = p.count("r2") ? p.at("r2") : ((r >= 0.0) ? r : 1.0);
+        // See the Cube case above: a non-finite height/radius (e.g.
+        // `cylinder(h=10, r1=1, r2=1/0)`) renders as nothing in real
+        // OpenSCAD. Without this check, an infinite r2 in particular used
+        // to reach Manifold::Cylinder() and silently come back as a
+        // degenerate cone collapsed to a point instead of empty/erroring —
+        // a real (not just cosmetic) volume bug (issue #88).
+        if (!std::isfinite(h) || !std::isfinite(r1) || !std::isfinite(r2))
+            return {};
         double fnOvr = getParam(p, "$fn", 0.0);
         double faOvr = getParam(p, "$fa", 0.0);
         double fsOvr = getParam(p, "$fs", 0.0);

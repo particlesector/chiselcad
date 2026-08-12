@@ -86,11 +86,13 @@ HeightGrid parseGrid(std::ifstream& f) {
 // forced to RGB by requesting STBI_rgb regardless of the source PNG's actual
 // channel count, so grayscale/palette/RGBA inputs all take the same path),
 // linearly scaled from [0, 255] to [0, 100] — i.e. black = 0, white = 100.
-// Alpha, if present, is ignored (not requested). Image row 0 (the top row of
-// pixels) maps to grid row 0, matching the .dat format's own "first line is
-// the far/max-Y edge" convention (see loadSurfaceMesh's row/col-to-XY
-// mapping below) so a PNG and an equivalent hand-written .dat produce the
-// same orientation.
+// Alpha, if present, is ignored (not requested). loadSurfaceMesh's row index
+// maps directly to Y (row 0 -> min Y), matching real OpenSCAD's own .dat
+// convention (confirmed against a live export — see the comment there), so
+// to keep a PNG heightmap the same way up as the equivalent hand-written
+// .dat, image row 0 (the top row of pixels) must land at *max* Y: flip
+// during storage into grid row (height-1-r), the same
+// `data[x + width*(height-1-y)]` flip SurfaceNode::convert_image() does.
 HeightGrid pngToGrid(const std::filesystem::path& path) {
     HeightGrid grid;
 
@@ -126,7 +128,7 @@ HeightGrid pngToGrid(const std::filesystem::path& path) {
 
     grid.rows.resize(static_cast<std::size_t>(height));
     for (int r = 0; r < height; ++r) {
-        std::vector<double>& row = grid.rows[static_cast<std::size_t>(r)];
+        std::vector<double>& row = grid.rows[static_cast<std::size_t>(height - 1 - r)];
         row.resize(static_cast<std::size_t>(width));
         for (int c = 0; c < width; ++c) {
             const unsigned char* px = pixels + (static_cast<std::size_t>(r) * width + c) * 3;
@@ -174,25 +176,31 @@ RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, b
     // point that was the original maximum) — only the non-inverted case can
     // have a negative effective minimum.
     const double effMinH = invert ? 0.0 : minH;
-    const double effMaxH = invert ? (maxH - minH) : maxH;
-    // Base at 0 in the common case (all-non-negative heights); if the data
-    // dips below 0, drop the base to match so the solid never folds back
-    // through its own top surface.
-    const double baseZ = std::min(0.0, effMinH);
+    // Real OpenSCAD's base is always exactly one unit below the data's own
+    // minimum (SurfaceNode::createGeometry(): `min_val = data.min_value() -
+    // 1`), never clamped to 0 and never affected by `center` — confirmed
+    // against a live OpenSCAD export: surface-simple.dat's heights span
+    // [0,3], and the exported STL's flat bottom face sits at z=-1, not z=0.
+    // `center` only ever offsets X/Y (`ox`/`oy` in that same function); Z is
+    // left exactly as the raw data (plus this base), never centered either.
+    const double bottomZ = effMinH - 1.0;
     const double xOff = center ? -static_cast<double>(numCols - 1) / 2.0 : 0.0;
     const double yOff = center ? -static_cast<double>(numRows - 1) / 2.0 : 0.0;
-    const double zOff = center ? -(baseZ + effMaxH) / 2.0 : 0.0;
-    const double bottomZ = baseZ + zOff;
 
     auto heightAt = [&](std::size_t r, std::size_t c) {
         double h = grid.rows[r][c];
-        return (invert ? (maxH - h) : h) + zOff;
+        return invert ? (maxH - h) : h;
     };
     auto xAt = [&](std::size_t c) {
         return static_cast<double>(c) + xOff;
     };
     auto yAt = [&](std::size_t r) {
-        return static_cast<double>(numRows - 1 - r) + yOff;
+        // Real OpenSCAD maps the data's row index directly to Y (row 0 ->
+        // min Y, last row -> max Y) — confirmed against a live OpenSCAD
+        // export of an asymmetric grid. Not flipped, despite this file's
+        // PNG loader comment above claiming a "first row = far/max-Y edge"
+        // convention for .dat too; that claim was itself wrong.
+        return static_cast<double>(r) + yOff;
     };
 
     const std::size_t gridN = numRows * numCols;
@@ -230,33 +238,35 @@ RawSurfaceMesh loadSurfaceMesh(const std::filesystem::path& path, bool center, b
 
     // Top surface (+Z-facing) and bottom (-Z-facing — reversed winding),
     // one quad (2 triangles) per grid cell. Winding derived so that, since
-    // grid row r maps to y = numRows-1-r (row 0 = max Y), [topIdx(r,c),
-    // topIdx(r+1,c), topIdx(r,c+1)] has an outward (+Z) normal.
+    // grid row r now maps directly to y = r (row 0 = min Y — see yAt()
+    // above), [topIdx(r,c), topIdx(r,c+1), topIdx(r+1,c)] has an outward
+    // (+Z) normal: (C-A)x(B-A) with A=(c,r), B=(c,r+1), C=(c+1,r) in (x,y)
+    // is (1,0)x(0,1) = +1 (CCW from +Z).
     for (std::size_t r = 0; r + 1 < numRows; ++r) {
         for (std::size_t c = 0; c + 1 < numCols; ++c) {
-            pushTri(topIdx(r, c), topIdx(r + 1, c), topIdx(r, c + 1));
-            pushTri(topIdx(r + 1, c), topIdx(r + 1, c + 1), topIdx(r, c + 1));
+            pushTri(topIdx(r, c), topIdx(r, c + 1), topIdx(r + 1, c));
+            pushTri(topIdx(r + 1, c), topIdx(r, c + 1), topIdx(r + 1, c + 1));
 
-            pushTri(bottomIdx(r, c), bottomIdx(r, c + 1), bottomIdx(r + 1, c));
-            pushTri(bottomIdx(r + 1, c), bottomIdx(r, c + 1), bottomIdx(r + 1, c + 1));
+            pushTri(bottomIdx(r, c), bottomIdx(r + 1, c), bottomIdx(r, c + 1));
+            pushTri(bottomIdx(r + 1, c), bottomIdx(r + 1, c + 1), bottomIdx(r, c + 1));
         }
     }
 
     // Side walls: walk the grid's outer boundary counter-clockwise (as seen
-    // from +Z) — front edge (r=numRows-1) toward +X, right edge (c=numCols-1)
-    // toward +Y, back edge (r=0) toward -X, left edge (c=0) toward -Y — and
-    // connect each edge's top/bottom vertices with outward-facing winding.
-    // Each corner is added exactly once (by whichever segment reaches it
-    // first); the loop closes via `(i+1) % boundary.size()`.
+    // from +Z) — near edge (r=0) toward +X, right edge (c=numCols-1)
+    // toward +Y, far edge (r=numRows-1) toward -X, left edge (c=0) toward -Y
+    // — and connect each edge's top/bottom vertices with outward-facing
+    // winding. Each corner is added exactly once (by whichever segment
+    // reaches it first); the loop closes via `(i+1) % boundary.size()`.
     std::vector<std::pair<std::size_t, std::size_t>> boundary;
     boundary.reserve(numBoundaryEdges);
     for (std::size_t c = 0; c < numCols; ++c)
-        boundary.emplace_back(numRows - 1, c);
-    for (std::size_t r = numRows - 1; r-- > 0;)
+        boundary.emplace_back(0, c);
+    for (std::size_t r = 1; r < numRows; ++r)
         boundary.emplace_back(r, numCols - 1);
     for (std::size_t c = numCols - 1; c-- > 0;)
-        boundary.emplace_back(0, c);
-    for (std::size_t r = 1; r + 1 < numRows; ++r)
+        boundary.emplace_back(numRows - 1, c);
+    for (std::size_t r = numRows - 1; r-- > 1;)
         boundary.emplace_back(r, 0);
 
     for (std::size_t i = 0; i < boundary.size(); ++i) {
