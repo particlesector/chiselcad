@@ -67,7 +67,10 @@ private:
     AstNodePtr  parseLocalFunctionDef();
 
     // ---- let statement ---------------------------------------------------
-    AstNodePtr parseLetNode();
+    // isAssign: true when reached via assign(...) { ... } — the deprecated
+    // statement form of let() — so error messages can name the keyword the
+    // caller actually wrote instead of always saying "let".
+    AstNodePtr parseLetNode(bool isAssign = false);
 
     // ---- expressions (Pratt parser) --------------------------------------
     ExprPtr parseExpr(int minPrec = 0);

@@ -381,11 +381,8 @@ AstNodePtr Parser::parseNodeInner() {
                     // statement form of let() — identical grammar and
                     // semantics (block-scoped bindings, children evaluated
                     // with those bindings in effect), so it reuses
-                    // parseLetNode() outright. parseLetNode() only ever
-                    // advances past whatever token is at the current
-                    // position without checking its kind, so it works
-                    // unchanged whether that token spells "let" or "assign".
-                    return parseLetNode();
+                    // parseLetNode() outright.
+                    return parseLetNode(/*isAssign=*/true);
                 default:
                     // Every kBuiltinNodeNames value is handled above; reaching
                     // here means the map and this switch have diverged (a
@@ -1245,13 +1242,16 @@ ExprPtr Parser::parseFunctionLit() {
 
 // ---------------------------------------------------------------------------
 // let statement — let(x = expr, ...) { children }
+// Also reused for assign(x = expr, ...) { children }, the deprecated
+// statement form of let() — identical grammar/semantics, see parseNodeInner.
 // ---------------------------------------------------------------------------
-AstNodePtr Parser::parseLetNode() {
-    const Token& kw = advance(); // consume 'let'
+AstNodePtr Parser::parseLetNode(bool isAssign) {
+    const Token& kw = advance(); // consume 'let' or 'assign'
     LetNode node;
     node.loc = kw.loc;
 
-    expect(TokenKind::LParen, "expected '(' after 'let'");
+    expect(TokenKind::LParen,
+           isAssign ? "expected '(' after 'assign'" : "expected '(' after 'let'");
     while (!check(TokenKind::RParen) && !atEnd()) {
         // Binding name: ident or $special (e.g. let($fn=64) ...) — see the
         // matching ModuleCallNode comment for why $special must be accepted
