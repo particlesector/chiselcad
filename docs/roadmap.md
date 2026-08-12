@@ -411,11 +411,12 @@ fixed**:
   this is parameter-specific (likely the `angle=` partial-revolution case
   given `-angle` is the worse of the two) rather than a blanket
   `rotate_extrude` bug. Fixed — see v3.12.
-- [ ] (issue #88) `intersection-tests` (6.4%), `cylinder-tests` (13%, improved from
+- [x] (issue #88) `intersection-tests` (6.4%), `cylinder-tests` (13%, improved from
   totally-blocked but still a real remaining gap after the harness fix
   above), `primitive-inf-tests` (83%), `ifelse-tests` (175%),
   `module-recursion`, `resize-tests` (1.5%), `surface-simple` — real
-  mismatches, not yet individually triaged.
+  mismatches, not yet individually triaged. All seven individually
+  root-caused and fixed — see v3.14.
 - [x] `assign-tests` and `intersection_for-tests` (issue #89) still produce zero valid
   geometry even after the harness fix — unlike the files that fix unblocked,
   these appear to genuinely fail in `MeshEvaluator`/`PrimitiveGen` itself
@@ -819,6 +820,166 @@ volumetric correctness against a live OpenSCAD oracle (the v3.9-style
 available — but the root cause (both constructs being completely
 unrecognized, not a `MeshEvaluator`/`PrimitiveGen` tessellation bug) is
 confirmed, closing the specific question issue #89 asked.
+
+## v3.14 — issue #88 (seven untriaged corpus mismatches) individually root-caused and fixed
+
+Rebuilt the full v3.9 volumetric-comparison toolchain (real OpenSCAD 2021.01
+oracle via `apt`, Manifold v3.5.2 from source, `chiselcad_core` headless via
+`cmake -DCHISELCAD_BUILD_GUI=OFF`, `scad_to_stl`/`stl_diff` linked against
+the real compiled mesh pipeline — see `tests/tools/README.md`) and bisected
+each of issue #88's seven files individually, the same technique the
+already-fixed `sphere-tests.scad`/`linear_extrude-tests.scad`/
+`rotate_extrude-*` cases used. All seven are now real bugs found and fixed,
+not tessellation noise — each file's `sym_diff_volume` is now at
+floating-point-noise level against the live oracle:
+
+- [x] **`ifelse-tests.scad` (175% → exact):** not an `if`/`else` bug at all
+  — `cube(size, center)`'s *positional* `center` argument (`cube(2, true)`)
+  was silently dropped. `Parser::parseParamList()` only recognized
+  `center=true`/`center=false` in *named* form; a bare positional `true`/
+  `false` token fell into the generic `_posN` bucket, which no
+  `CsgEvaluator` case reads, so the cube came out uncentered. Every branch
+  in the corpus file happened to use this exact positional form, which is
+  why the volumes still summed to the same total (12 same-sized cubes) while
+  the symmetric difference was large (each one shifted). Fixed by checking
+  for a bare `true`/`false` token before falling through to the positional-
+  expression case.
+- [x] **`primitive-inf-tests.scad` (83% → exact):** `Interpreter::
+  evalNumber()`'s blanket "fold non-finite (inf/nan) to 0.0" — added
+  defensively, per its own comment, because "those aren't safe to hand to
+  Manifold" — silently turned `cylinder(r2=1/0)` into a *valid* `r2=0` cone
+  instead of the empty geometry real OpenSCAD renders for any non-finite
+  primitive dimension. Fixed at the correct layer instead of patching around
+  it: added a new `evalNumberPreserveNonFinite()` for cube/sphere/cylinder's
+  parameter resolution specifically, paired with explicit `std::isfinite()`
+  checks in `PrimitiveGen::generate()` that return an empty `Manifold` for a
+  non-finite dimension — matching real OpenSCAD's own behavior instead of
+  relying on Manifold's inconsistent handling of infinite inputs (some
+  silently "succeeded" with garbage, as `r2=inf` did; others correctly
+  flagged `InvalidConstruction`, which `MeshEvaluator::checkStatus()` logged
+  but still passed the garbage mesh through unchanged — also fixed, it now
+  returns an empty `Manifold` on any error status). A related, separate bug
+  in the same file: a non-finite `$fn` (`cylinder($fn=1/0)`) reached
+  `PrimitiveGen::resolveSegments()`, whose `static_cast<int>(std::round(fn))`
+  is undefined behavior for an out-of-range double — empirically `INT_MAX`
+  on this platform, not the small/negative value that would make an
+  unguarded `std::max(3, ...)` clamp harmlessly — inflating the segment
+  count instead of clamping to real OpenSCAD's own minimum of 3. Fixed with
+  an explicit `!std::isfinite(fn)` check ahead of the cast.
+- [x] **`surface-simple.scad` (82% → exact):** two compounding bugs in
+  `SurfaceLoader.cpp`, both confirmed against a live OpenSCAD export byte-
+  for-byte: (1) the solid's base was clamped to `min(0.0, minHeight)`
+  instead of real OpenSCAD's actual rule, unconditionally `minHeight - 1`
+  (`SurfaceNode::createGeometry()`: `min_val = data.min_value() - 1`) — a
+  surface with an all-non-negative heightmap (like this file's `[0,3]`
+  span) got a flat base at `z=0` instead of `z=-1`, losing exactly the
+  "one unit of skirt" real OpenSCAD always adds; (2) `center=` was also
+  re-centering Z, but real OpenSCAD's `center` only ever offsets X/Y
+  (`ox`/`oy` in the same function) — Z is left as the raw height data
+  regardless. A third, latent bug surfaced while fixing the first two: the
+  row-to-Y mapping was flipped (row 0 was treated as *max* Y) relative to
+  real OpenSCAD's actual convention (row 0 -> *min* Y, confirmed via an
+  asymmetric test grid) — harmless for this file's specific 2x2 grid
+  contents by coincidence of the volume check, but a real orientation bug
+  fixed alongside the other two (with a matching flip added to the PNG
+  loader, which had been relying on the wrong row mapping to *accidentally*
+  land in the right place before this fix, and needed its own explicit
+  top-row-is-max-Y flip to stay correct afterward). Triangle winding for the
+  top/bottom faces and the boundary-wall traversal direction both needed
+  re-deriving from scratch to stay outward-facing under the corrected Y
+  mapping (the pre-fix code was exporting a negative-volume mesh once the
+  row flip alone was corrected).
+- [x] **`module-recursion.scad` (31% → exact):** `rotate([x,y,z])`
+  composed its three axis rotations in the wrong order. Real OpenSCAD
+  rotates about X, then Y, then Z (a point transforms as `Rz*(Ry*(Rx*p))`,
+  X innermost) — confirmed by isolating `rotate([40,0,0])` and
+  `rotate([0,0,180])` (each matched real OpenSCAD exactly alone) against
+  `rotate([40,0,180])` (badly mismatched combined), which only a
+  composition-order bug explains. `CsgEvaluator::makeMatrix()`'s three
+  `glm::rotate(m, angle, axis)` post-multiply calls were issued in
+  `rx, ry, rz` source order, which builds `Rx*Ry*Rz` (Z innermost) — the
+  reverse of OpenSCAD's own order, and of this same function's own
+  pre-existing doc comment ("Rotation order: Z first, then Y, then X
+  (OpenSCAD convention)"), which the code had never actually matched.
+  Fixed by issuing the calls in the reverse order (`rz, ry, rx`) so the
+  composed matrix comes out as `Rz*Ry*Rx`, matching both real OpenSCAD and
+  the function's own documented intent.
+- [x] **`resize-tests.scad` (1.5% → exact):** `MeshEvaluator::evalResize()`
+  had generalized real OpenSCAD's `GeometryUtils::getResizeTransform()`
+  instead of porting it verbatim, and the generalization was wrong in two
+  ways: (1) an axis was "explicitly resized" whenever its `newsize` was
+  non-zero, not — as real OpenSCAD requires — *strictly positive*, so
+  `resize([-5,0,0])` scaled that axis by `|-5|` instead of leaving it
+  unresized (real OpenSCAD: any negative `newsize` component makes the
+  *whole* `resize()` call a no-op, confirmed live); (2) `auto=`'s broadcast
+  scale factor was computed as the largest *scale factor* among the
+  explicitly-resized axes, not — as real OpenSCAD computes it — the scale
+  of whichever axis has the largest *raw* `newsize` value (which may itself
+  default to 1.0 if that axis isn't itself `>0`); the two only coincide
+  when extents happen to be uniform across axes. Rewrote the scale
+  computation as a direct, verbatim port of the real algorithm instead of a
+  reimplementation.
+- [x] **`intersection-tests.scad` (6.4% → exact):** a child statement that
+  itself produces no geometry (a bare `render();`/`linear_extrude();`/etc.
+  with no body of its own) evaluates to `nullptr` in `CsgEvaluator`; that
+  `nullptr` was silently dropped from a boolean op's child list — correct
+  for `union()`/`difference()`/`hull()` (dropping an empty operand changes
+  nothing), but wrong for `intersection()` specifically, where "intersected
+  with nothing" must make the *whole* intersection empty (real OpenSCAD:
+  `intersection() { cube(4, center=true); render(); }` renders nothing, not
+  the bare cube). Fixed by tracking whether any `intersection()` child came
+  back empty and returning `nullptr` for the whole node if so — but only
+  for genuinely empty *geometry* children, not statements that were never
+  geometry to begin with (`echo()`/`assert()`, local `x=expr;` assignments,
+  local module/function defs, or a `*`-disabled child all also evaluate to
+  `nullptr`, and the corpus file's own comment confirms real OpenSCAD
+  simply ignores a non-geometry `echo()` mixed into an `intersection()`
+  rather than nullifying it) — a new `isNonGeometricStatement()` helper
+  distinguishes the two cases by inspecting the child AST node directly. A
+  `%`-backgrounded child (excluded from the main CSG tree on purpose, also
+  a `nullptr` return) needed the same carve-out — caught by re-running the
+  *entire* `3D/features` corpus (not just this issue's seven files) after
+  this specific fix, which turned up a real regression this fix introduced
+  in `background-modifier2.scad` (`intersection() { %sphere(10); cube(15,
+  center=true); } ` must still intersect down to the cube alone, not become
+  empty just because the backgrounded sphere isn't part of the main tree)
+  — fixed by exempting `ModBackground` alongside `ModDisable` in the same
+  check.
+- [x] **`cylinder-tests.scad` (13% → exact):** when both `r` and `r1` (or
+  `r` and `r2`) were given — real OpenSCAD warns "Cylinder parameters
+  ambiguous" but still renders a frustum, not nothing — `PrimitiveGen` let
+  `r` unconditionally overwrite *both* `r1` and `r2` whenever `r` was given,
+  ignoring an explicitly-given `r1`/`r2` entirely. Real OpenSCAD instead
+  lets the explicit `r1`/`r2` win for its own slot and only uses `r` to
+  fill in the *other*, unspecified slot (confirmed live: `cylinder(h=5,
+  r=5, r1=0, center=true)` renders the same frustum as `cylinder(h=5, r1=5,
+  r2=0)`, i.e. `r1` stays 0 — not a uniform `r=5` cylinder). Fixed by
+  checking for an explicit `r1`/`r2` key in the leaf's params before
+  falling back to `r`.
+
+All fixes verified against the real `chiselcad_tests` suite (3679
+assertions, 664 test cases, all passing, including 9 new regression tests:
+a parser-level test for positional `cube`/`square` centering, two
+mesh-level tests for non-finite cylinder dimensions and `$fn`, a CsgEvaluator-level
+test for `rotate([x,y,z])`'s composition order, two mesh-level tests for
+`resize()`'s negative-`newsize` no-op behavior, two CsgEvaluator-level tests
+for `intersection()`'s empty-operand-vs-echo() distinction, and a mesh-level
+test for the ambiguous `r`/`r1` precedence) and re-verified against the live
+OpenSCAD oracle across the *entire* `3D/features` corpus subdirectory (72
+of its 73 files — the remaining one, `linear_extrude-parameter-tests.scad`,
+crashes ChiselCAD's mesh pipeline with a heap-corruption `free(): invalid
+next size (fast)` before and after this pass alike, confirmed via a clean
+worktree build of the pre-this-pass commit; a real bug, but pre-existing
+and unrelated to issue #88 — filed as issue #105 for separate triage), not
+just the seven files this issue named — this is what caught the
+`%`-modifier regression above before it landed. Every file that already matched real OpenSCAD
+before this pass still does; the small number that already had a real,
+different remaining gap (`child-modifier`, `for-nested-tests`, `for-tests`,
+`linear_extrude-scale-zero-tests`, `linear_extrude_invisible-tests`,
+`minkowski3-erosion`, `rotate_extrude-angle`, `rotate_extrude-tests`,
+`scale3D-tests` — none named by issue #88) are unchanged or, for two
+(`rotate-parameters`, `transform-tests` — also not issue #88's), improved
+by the `rotate([x,y,z])` composition-order fix above; none regressed.
 
 ## v4 — Tooling & Visual Quality
 

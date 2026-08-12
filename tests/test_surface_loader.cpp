@@ -19,8 +19,10 @@ static std::filesystem::path fixture(const std::string& relPath) {
 //   0 0 0
 //   0 5 0
 //   0 0 0
-// Row 0 -> y=2 (far edge), row 2 -> y=0 (near edge); the peak sits at
-// grid(r=1,c=1) -> (x=1, y=1, z=5).
+// Row 0 -> y=0 (near edge), row 2 -> y=2 (far edge) — real OpenSCAD maps a
+// data row directly to Y (SurfaceNode::createGeometry(), confirmed against
+// a live export of an asymmetric grid); the peak sits at grid(r=1,c=1) ->
+// (x=1, y=1, z=5) either way since this fixture is row-symmetric.
 
 TEST_CASE("SurfaceLoader:loads a valid grid and builds a closed solid",
           "[surface-loader][tier-e]") {
@@ -40,7 +42,7 @@ TEST_CASE("SurfaceLoader:loads a valid grid and builds a closed solid",
     REQUIRE(peak.z == Approx(5.0));
 }
 
-TEST_CASE("SurfaceLoader:center shifts the footprint and Z extent onto the origin",
+TEST_CASE("SurfaceLoader:center shifts the X/Y footprint but never Z",
           "[surface-loader][tier-e]") {
     auto mesh = loadSurfaceMesh(fixture("surface/simple.dat"), /*center=*/true, /*invert=*/false);
     REQUIRE(mesh.error.empty());
@@ -48,7 +50,12 @@ TEST_CASE("SurfaceLoader:center shifts the footprint and Z extent onto the origi
     const auto& peak = mesh.positions[4]; // grid(1,1), the center cell
     REQUIRE(peak.x == Approx(0.0));
     REQUIRE(peak.y == Approx(0.0));
-    REQUIRE(peak.z == Approx(2.5)); // (0 + 5) span, centered -> [-2.5, 2.5]
+    // Real OpenSCAD's `center` only ever offsets X/Y (SurfaceNode::
+    // createGeometry()'s `ox`/`oy`) — Z is left as the raw data value
+    // regardless of `center`, confirmed against a live OpenSCAD export
+    // (surface-simple.scad's centered call still has its top surface at
+    // the raw heights, not re-based around 0).
+    REQUIRE(peak.z == Approx(5.0));
 }
 
 TEST_CASE("SurfaceLoader:invert flips heights about the grid's own maximum",
@@ -113,7 +120,7 @@ TEST_CASE("SurfaceLoader:PNG heightmap honors center and invert like .dat",
     auto centered =
         loadSurfaceMesh(fixture("surface/simple.png"), /*center=*/true, /*invert=*/false);
     REQUIRE(centered.error.empty());
-    REQUIRE(centered.positions[4].z == Approx(50.0)); // [0,100] span, centered -> peak at +50
+    REQUIRE(centered.positions[4].z == Approx(100.0)); // center never affects Z, only X/Y
 
     auto inverted =
         loadSurfaceMesh(fixture("surface/simple.png"), /*center=*/false, /*invert=*/true);

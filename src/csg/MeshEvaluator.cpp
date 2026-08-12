@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -208,8 +207,17 @@ manifold::Manifold MeshEvaluator::checkStatus(manifold::Manifold m, const std::s
         chisel::lang::Diagnostic d;
         d.level   = chisel::lang::DiagLevel::Error;
         d.message = context + ": invalid geometry (" + manifoldErrorName(status) +
-                    "); result may be empty or degenerate";
+                    "); rendered as empty";
         m_diags.push_back(std::move(d));
+        // Discard the Manifold returned alongside an error status
+        // rather than passing it through: it isn't a best-effort partial
+        // result, it's whatever partially-constructed/garbage state Manifold
+        // was in when the operation failed (e.g. a non-finite cylinder
+        // radius previously came back as a finite-looking but wrong cone
+        // collapsed to a point — a real, silent volume bug, not just a
+        // cosmetic one). Real OpenSCAD renders no geometry at all for an
+        // invalid primitive/op, which {} matches (issue #88).
+        return {};
     }
     return m;
 }
@@ -582,41 +590,41 @@ manifold::Manifold MeshEvaluator::evalResize(const CsgResize& r, const Primitive
         result = result + evalNode(*r.children[i], gen);
 
     manifold::Box box = result.BoundingBox();
-    const double extentX = static_cast<double>(box.max.x - box.min.x);
-    const double extentY = static_cast<double>(box.max.y - box.min.y);
-    const double extentZ = static_cast<double>(box.max.z - box.min.z);
-
-    // An axis is "explicitly resized" when newsize for it is non-zero and
-    // the current extent is non-degenerate; anything else defaults to an
-    // unchanged (1.0) scale unless auto= kicks in below.
-    auto explicitScale = [](double newsize, double extent) -> std::optional<double> {
-        if (newsize == 0.0 || extent <= 1e-9) return std::nullopt;
-        return newsize / extent;
+    const double extent[3] = {
+        static_cast<double>(box.max.x - box.min.x),
+        static_cast<double>(box.max.y - box.min.y),
+        static_cast<double>(box.max.z - box.min.z),
     };
-    std::optional<double> sxExplicit = explicitScale(r.newX, extentX);
-    std::optional<double> syExplicit = explicitScale(r.newY, extentY);
-    std::optional<double> szExplicit = explicitScale(r.newZ, extentZ);
+    const double newsize[3] = {r.newX, r.newY, r.newZ};
+    const bool autosize[3] = {r.autoX, r.autoY, r.autoZ};
 
-    // OpenSCAD's auto=: an axis with newsize 0 and auto=true scales by the
-    // largest explicit scale factor among the OTHER axes, so the shape
-    // grows/shrinks proportionally along that axis instead of staying put;
-    // falls back to 1 (unchanged) if no axis was explicitly resized.
-    double maxExplicit = 1.0;
-    bool haveExplicit = false;
-    for (auto s : {sxExplicit, syExplicit, szExplicit}) {
-        if (!s) continue;
-        maxExplicit = haveExplicit ? std::max(maxExplicit, *s) : *s;
-        haveExplicit = true;
-    }
+    // Matches real OpenSCAD's GeometryUtils::getResizeTransform() exactly
+    // (confirmed against a live export — docs/roadmap.md, issue #88's
+    // resize-tests.scad corpus mismatch: `resize([-5,0,0])` leaves the
+    // shape completely unresized in real OpenSCAD, not scaled by |-5|).
+    // Two things this codebase previously got wrong by generalizing instead
+    // of porting verbatim: (1) an axis is only "explicitly resized" when
+    // newsize is *strictly positive* (`newsize[i] > 0`), not merely
+    // non-zero — a negative newsize is silently ignored, not scaled by its
+    // magnitude; (2) `auto=`'s scale factor is the scale of whichever axis
+    // has the largest *raw* newsize value (which may itself default to 1.0
+    // if that axis isn't itself >0), not the largest *scale factor* among
+    // the explicitly-resized axes — those two only coincide when extents
+    // happen to be uniform across axes.
+    int maxdim = 0;
+    for (int i = 1; i < 3; ++i)
+        if (newsize[i] > newsize[maxdim]) maxdim = i;
 
-    auto resolveAxis = [&](std::optional<double> explicitS, bool autoFlag) -> double {
-        if (explicitS) return *explicitS;
-        return autoFlag ? maxExplicit : 1.0;
-    };
+    double scale[3] = {1.0, 1.0, 1.0};
+    for (int i = 0; i < 3; ++i)
+        if (newsize[i] > 0.0 && extent[i] > 1e-9) scale[i] = newsize[i] / extent[i];
 
-    const double sx = resolveAxis(sxExplicit, r.autoX);
-    const double sy = resolveAxis(syExplicit, r.autoY);
-    const double sz = resolveAxis(szExplicit, r.autoZ);
+    const double autoscale = scale[maxdim];
+    double newscale[3];
+    for (int i = 0; i < 3; ++i)
+        newscale[i] = (!autosize[i] || newsize[i] > 0.0) ? scale[i] : autoscale;
+
+    const double sx = newscale[0], sy = newscale[1], sz = newscale[2];
 
     result = result.Scale({static_cast<float>(sx), static_cast<float>(sy), static_cast<float>(sz)});
 

@@ -83,6 +83,18 @@ public:
     // Convenience: evaluate and coerce to double (undef → 0.0).
     double evalNumber(const ExprNode& expr);
 
+    // Like evalNumber(), but preserves inf/nan instead of folding them to
+    // 0.0 — matching real OpenSCAD, which lets arithmetic on primitive
+    // dimensions (e.g. `cylinder(r2=1/0)`) propagate inf/nan through to the
+    // geometry generator, which then rejects the whole primitive as invalid
+    // (renders nothing) rather than silently substituting a *different*,
+    // finite shape (e.g. 1/0 folded to 0 turns an infinite radius into a
+    // valid zero radius). Only safe for consumers that explicitly check
+    // std::isfinite() before handing the value to Manifold — currently
+    // PrimitiveGen's cube/sphere/cylinder parameter resolution in
+    // CsgEvaluator (see docs/roadmap.md, issue #88).
+    double evalNumberPreserveNonFinite(const ExprNode& expr);
+
     // Evaluate a VectorLit and return the first three elements as doubles.
     std::array<double, 3> evalVec3(const ExprNode& expr);
 

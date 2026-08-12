@@ -668,6 +668,13 @@ double Interpreter::evalNumber(const ExprNode& expr) {
     return 0.0;
 }
 
+double Interpreter::evalNumberPreserveNonFinite(const ExprNode& expr) {
+    Value v = evaluate(expr);
+    if (v.isNumber()) return v.asNumber();
+    if (v.isBool())   return v.asBool() ? 1.0 : 0.0;
+    return 0.0;
+}
+
 // ---------------------------------------------------------------------------
 // evalVec3 — evaluate and return first three elements as doubles
 // ---------------------------------------------------------------------------
