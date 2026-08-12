@@ -518,6 +518,41 @@ TEST_CASE("Parser:multi-variable for() parses one clause per comma-separated bin
     REQUIRE(f.clauses[2].range.list.size() == 3);
 }
 
+TEST_CASE("Parser:intersection_for parses like for() with isIntersection set",
+          "[parser][bugfix]") {
+    // intersection_for(i = ...) { ... } previously wasn't recognised as a
+    // builtin at all — it fell through to parseModuleCall() looking for a
+    // user-defined module named "intersection_for", which doesn't exist, so
+    // the whole construct silently produced no geometry (issue #89).
+    auto r = parse("intersection_for(i = [0:2]) { translate([i,0,0]) cube(10); }");
+    REQUIRE(r.roots.size() == 1);
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.isIntersection == true);
+    REQUIRE(f.clauses.size() == 1);
+    REQUIRE(f.clauses[0].var == "i");
+    REQUIRE(f.children.size() == 1);
+}
+
+TEST_CASE("Parser:plain for() is not isIntersection", "[parser]") {
+    auto r = parse("for (i = [0:2]) cube(10);");
+    auto& f = asFor(r.roots[0]);
+    REQUIRE(f.isIntersection == false);
+}
+
+TEST_CASE("Parser:assign() parses as the deprecated statement form of let()",
+          "[parser][bugfix]") {
+    // assign(x = ..., ...) { ... } previously wasn't recognised as a builtin
+    // either, for the same reason as intersection_for above — it fell
+    // through to an undefined module call named "assign" (issue #89).
+    auto r = parse("assign(x = 1, y = x + 1) { cube(y); }");
+    REQUIRE(r.roots.size() == 1);
+    const auto& letNode = std::get<LetNode>(*r.roots[0]);
+    REQUIRE(letNode.bindings.size() == 2);
+    REQUIRE(letNode.bindings[0].first == "x");
+    REQUIRE(letNode.bindings[1].first == "y");
+    REQUIRE(letNode.children.size() == 1);
+}
+
 TEST_CASE("Parser:rotate() with no arguments parses", "[parser][bugfix]") {
     // Real OpenSCAD accepts a bare rotate() (seen in the upstream test
     // corpus's rotate-parameters.scad: "rotate() //same as undef").

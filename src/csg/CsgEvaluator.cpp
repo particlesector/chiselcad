@@ -751,7 +751,9 @@ CsgNodePtr CsgEvaluator::evalFor(const ForNode& node, const glm::mat4& xform,
         return all[0];
 
     CsgBoolean u;
-    u.op = CsgBoolean::Op::Union;
+    // intersection_for(...) combines every iteration's children with
+    // Intersection instead of Union — otherwise identical to for().
+    u.op = node.isIntersection ? CsgBoolean::Op::Intersection : CsgBoolean::Op::Union;
     u.color = color;
     u.children = std::move(all);
     return makeBoolean(std::move(u));

@@ -95,6 +95,13 @@ enum class TokenKind : uint8_t {
     // 3-D → 2-D operations (see Ident above — not a Lexer-level keyword)
     Projection,
 
+    // intersection_for(i = ...) { ... } — a for() variant that intersects
+    // its iterations instead of unioning them; assign(x = ...) { ... } — the
+    // deprecated statement form of let(). Neither is a Lexer-level keyword,
+    // same as the other builtins above.
+    IntersectionFor,
+    Assign,
+
     // Range separator
     Colon, // :
 

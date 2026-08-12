@@ -43,7 +43,10 @@ private:
     AstNodePtr parseRender();
     AstNodePtr parseColor();
     AstNodePtr parseIf();
-    AstNodePtr parseFor();
+    // isIntersection: true for intersection_for(...) { ... }, which shares
+    // for()'s entire grammar and only differs in how CsgEvaluator combines
+    // the iterations' results (intersection instead of union).
+    AstNodePtr parseFor(bool isIntersection = false);
     AstNodePtr parseModuleCall();
     AstNodePtr parseExtrusion(TokenKind k);
     AstNodePtr parseOffset();
@@ -64,7 +67,10 @@ private:
     AstNodePtr  parseLocalFunctionDef();
 
     // ---- let statement ---------------------------------------------------
-    AstNodePtr parseLetNode();
+    // isAssign: true when reached via assign(...) { ... } — the deprecated
+    // statement form of let() — so error messages can name the keyword the
+    // caller actually wrote instead of always saying "let".
+    AstNodePtr parseLetNode(bool isAssign = false);
 
     // ---- expressions (Pratt parser) --------------------------------------
     ExprPtr parseExpr(int minPrec = 0);
