@@ -1560,6 +1560,48 @@ TEST_CASE("CsgEval:linear_extrude scale must be exactly a 2-vector, else no scal
     REQUIRE(good.params.at("scale_y") == Approx(5.0));
 }
 
+TEST_CASE("CsgEval:linear_extrude non-finite scale is rejected, not passed through",
+          "[csg][v105][bugfix]") {
+    // Issue #105: linear_extrude-parameter-tests.scad crashed with heap
+    // corruption ("free(): invalid next size (fast)"). Root cause: scale=
+    // is a real IEEE-754 Number for 1/0, -1/0, and 0/0 (evaluate()'s
+    // arithmetic propagates non-finite doubles), so it passed the
+    // sv.isNumber() check here — but unlike the generic param path (which
+    // routes through evalNumber() and folds non-finite to 0.0) and unlike
+    // "angle" (which is explicitly resolved to a finite fallback), this
+    // branch used to assign the raw inf/nan straight into scale_x/scale_y.
+    // MeshEvaluator/Manifold::Extrude then lerped every extruded vertex
+    // toward that non-finite scale, corrupting the heap. Non-finite scale
+    // must leave scale_x/scale_y unset (MeshEvaluator's default: no
+    // scaling), same as any other malformed scale value.
+    auto posInf = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=1/0) square(10);").roots[0]);
+    REQUIRE_FALSE(posInf.params.count("scale_x"));
+    REQUIRE_FALSE(posInf.params.count("scale_y"));
+
+    auto negInf = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=-1/0) square(10);").roots[0]);
+    REQUIRE_FALSE(negInf.params.count("scale_x"));
+    REQUIRE_FALSE(negInf.params.count("scale_y"));
+
+    auto nan = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=0/0) square(10);").roots[0]);
+    REQUIRE_FALSE(nan.params.count("scale_x"));
+    REQUIRE_FALSE(nan.params.count("scale_y"));
+
+    // Same for a 2-vector with a non-finite component.
+    auto vecInf = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=[1/0, 2]) square(10);").roots[0]);
+    REQUIRE_FALSE(vecInf.params.count("scale_x"));
+    REQUIRE_FALSE(vecInf.params.count("scale_y"));
+
+    // A finite scale is unaffected.
+    auto finite = asExtrusion(
+        evaluate("linear_extrude(height=20, scale=2) square(10);").roots[0]);
+    REQUIRE(finite.params.at("scale_x") == Approx(2.0));
+    REQUIRE(finite.params.at("scale_y") == Approx(2.0));
+}
+
 TEST_CASE("CsgEval:rotate_extrude angle keeps NaN/Infinity distinct from a literal 0",
           "[csg][v87][bugfix]") {
     // Real OpenSCAD (Value::getFiniteDouble()) treats a non-finite angle=
