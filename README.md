@@ -93,6 +93,15 @@ export, and a few other known gaps — is tracked as
 
 ---
 
+## Download
+
+Don't want to build from source? Grab a prebuilt binary from the
+[Releases page](https://github.com/particlesector/chiselcad/releases/latest) —
+Windows and Linux x64 archives are attached to every release. Unzip/untar and
+run `chiselcad` (or `chiselcad_cli` for headless `.scad` → STL conversion).
+ChiselCAD is still early/prerelease software — see [Project Status](#project-status)
+below.
+
 ## Building
 
 ### Prerequisites
