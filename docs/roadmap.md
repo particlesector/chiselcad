@@ -7,12 +7,8 @@
 
 Core CSG engine, full OpenSCAD language support, and corpus-validated
 correctness (echo-output and volumetric comparison against real OpenSCAD)
-are complete — see git history / closed issues for that work. The only
-currently open issue is
-[#85](https://github.com/particlesector/chiselcad/issues/85) (cosmetic:
-ChiselCAD doesn't emit OpenSCAD's arity-mismatch/file-not-found diagnostic
-*wording*, though computed values already match — low priority, would
-require porting a large chunk of OpenSCAD's diagnostic message catalog).
+are complete — see git history / closed issues for that work. No open
+issues remain.
 
 ## Known gaps (not yet implemented)
 
