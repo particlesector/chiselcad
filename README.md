@@ -21,14 +21,16 @@ transforms, control flow, user-defined functions/modules and function
 literals, 2D extrusion, `color()`/`offset()`/`projection()`, and file I/O
 (`include`/`use`/`import`/`surface`/`text`). See
 [Supported Language](#supported-language) below for the full breakdown and
-[docs/roadmap.md](docs/roadmap.md) for the small number of constructs still
-missing — mainly `assert()`/`echo()` used as chained expressions inside
-function bodies, multi-variable/C-style list comprehensions, and `roof()`.
+the repo's [open issues](https://github.com/particlesector/chiselcad/issues)
+for the small number of constructs still missing — mainly `assert()`/
+`echo()` used as chained expressions inside function bodies, and
+multi-variable/C-style list comprehensions.
 
 Correctness has been validated against real OpenSCAD both by source audit
 and by diffing output against a live OpenSCAD binary on its own test corpus
 (see `tests/tools/README.md`); every bug found that way is fixed and closed.
-Remaining gaps are tracked in [docs/roadmap.md](docs/roadmap.md).
+Remaining gaps are tracked as
+[GitHub issues](https://github.com/particlesector/chiselcad/issues).
 
 ```scad
 difference() {
@@ -85,9 +87,9 @@ difference() {
 The OpenSCAD language and CSG engine are feature-complete and validated
 against real OpenSCAD, both by source audit and by diffing output against a
 live OpenSCAD binary on its own test corpus. What's left — `assert()`/
-`echo()` as expressions, multi-variable list comprehensions, `roof()`,
-non-STL export, and a few other known gaps — is tracked in
-[docs/roadmap.md](docs/roadmap.md).
+`echo()` as expressions, multi-variable list comprehensions, non-STL
+export, and a few other known gaps — is tracked as
+[GitHub issues](https://github.com/particlesector/chiselcad/issues).
 
 ---
 

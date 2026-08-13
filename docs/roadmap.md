@@ -7,23 +7,9 @@
 
 Core CSG engine, full OpenSCAD language support, and corpus-validated
 correctness (echo-output and volumetric comparison against real OpenSCAD)
-are complete — see git history / closed issues for that work. No open
-issues remain.
-
-## Known gaps (not yet implemented)
-
-- `assert()`/`echo()` as chainable **expressions** (valid OpenSCAD since
-  2019.05) — currently statement-only; would need a diagnostics/echo sink
-  threaded through `Interpreter::evaluate`, which has none today.
-- List comprehensions don't support multi-variable `for` clauses, C-style
-  `for(init; cond; next)`, or nested `for` clauses within one bracket.
-- `roof()` (OpenSCAD 2021.01+, still experimental upstream) not implemented.
-- `textmetrics()`/`fontmetrics()` text-layout introspection not implemented.
-- `linear_extrude()`'s `segments=` parameter (edge subdivision for
-  twisted/non-uniformly-scaled extrusions) is parsed nowhere — real
-  OpenSCAD uses it to smooth the swept surface in that case.
-- OpenSCAD corpus validation has only covered the `3D/features`
-  subdirectory; `2D`, `bugs`, `bugs2D`, `misc`, `issues` are unexamined.
+are complete — see git history / closed issues for that work. Remaining
+known language/testing gaps are tracked as GitHub issues (labeled
+`help wanted`) rather than listed here.
 
 ## v4 — Tooling & Visual Quality
 
