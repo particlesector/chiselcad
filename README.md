@@ -21,21 +21,16 @@ transforms, control flow, user-defined functions/modules and function
 literals, 2D extrusion, `color()`/`offset()`/`projection()`, and file I/O
 (`include`/`use`/`import`/`surface`/`text`). See
 [Supported Language](#supported-language) below for the full breakdown and
-[docs/roadmap.md](docs/roadmap.md) (v3.7/v3.8) for the small number of constructs
-still missing — mainly `assert()`/`echo()` used as chained expressions inside
-function bodies, multi-variable/C-style list comprehensions, and `roof()`.
+the repo's [open issues](https://github.com/particlesector/chiselcad/issues)
+for the small number of constructs still missing — mainly `assert()`/
+`echo()` used as chained expressions inside function bodies, and
+multi-variable/C-style list comprehensions.
 
-All 33 issues from the original correctness audit (v3) are closed. A July
-2026 completeness re-audit (v3.7) fixed three gaps found by re-reading the
-source against the OpenSCAD manual (`log()`/`ln()` were swapped, `str()`
-dropped vector/range arguments, `$vpf` was missing), and a follow-up pass
-(v3.8) went further — running OpenSCAD's own test corpus through a live,
-installed OpenSCAD binary and diffing against ChiselCAD's output — which
-found a parser crash on `$special=value` call arguments (fixed) plus a
-handful of confirmed-but-still-open gaps (dot-member access like `v.x`,
-calling a function-literal expression's result directly, named/positional
-argument ordering, and some Unicode-string edge cases). See
-[docs/roadmap.md](docs/roadmap.md) (v3.8) for the full list.
+Correctness has been validated against real OpenSCAD both by source audit
+and by diffing output against a live OpenSCAD binary on its own test corpus
+(see `tests/tools/README.md`); every bug found that way is fixed and closed.
+Remaining gaps are tracked as
+[GitHub issues](https://github.com/particlesector/chiselcad/issues).
 
 ```scad
 difference() {
@@ -89,15 +84,23 @@ difference() {
 | Quality | `$fn`, `$fs`, `$fa`, `$vpr`/`$vpt`/`$vpd`/`$vpf` (global and per-node) |
 | Export | Binary STL |
 
-v3–v3.6 (see [docs/roadmap.md](docs/roadmap.md)) are complete. v3.7/v3.8
-found and fixed further gaps (`log()`/`ln()`, `str()` on vectors, `$vpf`,
-a `$special=value` call-argument parser crash) via both source audit and
-corpus testing against a live OpenSCAD binary. What's left — `assert()`/
-`echo()` as expressions, multi-variable list comprehensions, `roof()`,
-non-STL export, vector dot-member access, and a few other confirmed gaps —
-is tracked in [docs/roadmap.md](docs/roadmap.md).
+The OpenSCAD language and CSG engine are feature-complete and validated
+against real OpenSCAD, both by source audit and by diffing output against a
+live OpenSCAD binary on its own test corpus. What's left — `assert()`/
+`echo()` as expressions, multi-variable list comprehensions, non-STL
+export, and a few other known gaps — is tracked as
+[GitHub issues](https://github.com/particlesector/chiselcad/issues).
 
 ---
+
+## Download
+
+Don't want to build from source? Grab a prebuilt binary from the
+[Releases page](https://github.com/particlesector/chiselcad/releases/latest) —
+Windows and Linux x64 archives are attached to every release. Unzip/untar and
+run `chiselcad` (or `chiselcad_cli` for headless `.scad` → STL conversion).
+ChiselCAD is still early/prerelease software — see [Project Status](#project-status)
+below.
 
 ## Building
 
@@ -165,9 +168,8 @@ ChiselCAD is in **active development**. The core rendering pipeline, CSG
 evaluator, and nearly all of the OpenSCAD language are implemented and
 working (see [Supported Language](#supported-language) above). Current focus
 is closing the remaining language gaps tracked in
-[docs/roadmap.md](docs/roadmap.md) (v3.8) — found via corpus testing against
-a live OpenSCAD binary, see `tests/tools/README.md` — and the v4 tooling/
-visual-quality work, before making a full drop-in-replacement claim.
+[docs/roadmap.md](docs/roadmap.md) and the v4 tooling/visual-quality work,
+before making a full drop-in-replacement claim.
 
 If you want to follow along or contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 

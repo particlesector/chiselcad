@@ -395,8 +395,8 @@ precomputed bottom-up hash.
 **Known scoping limitation:** the `Interpreter`'s variable environment is a
 single flat map, not a real lexical scope stack. Every block-producing
 `evalXxx()` (boolean/transform/if/for/extrusion/offset/projection/color)
-now snapshots it before evaluating its children and restores it after
-(`docs/roadmap.md` v3 Phase 1), so a local assignment inside a block is
+now snapshots it before evaluating its children and restores it after,
+so a local assignment inside a block is
 visible to later statements in that same block but doesn't leak past it —
 this fixed the previous silent-discard bug. What snapshot/restore doesn't
 fix: unbound function/module parameters can still resolve to a same-named

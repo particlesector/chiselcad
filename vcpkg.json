@@ -1,6 +1,6 @@
 {
   "name": "chiselcad",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A fast, precise, GPU-accelerated CSG modeler with OpenSCAD-compatible syntax",
   "dependencies": [
     "glm",
